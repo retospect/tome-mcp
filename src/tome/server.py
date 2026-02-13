@@ -42,14 +42,27 @@ from tome.errors import (
 mcp_server = FastMCP("Tome")
 
 # ---------------------------------------------------------------------------
-# Paths — resolved relative to TOME_ROOT (env) or cwd
+# Paths — resolved relative to TOME_ROOT (env), set_root(), or cwd
 # ---------------------------------------------------------------------------
+
+_runtime_root: Path | None = None
 
 
 def _project_root() -> Path:
-    """Project root: TOME_ROOT env var, or cwd as fallback."""
+    """Project root: runtime override > TOME_ROOT env var.
+
+    Raises TomeError if neither is set. Use set_root() or TOME_ROOT env var.
+    """
+    if _runtime_root is not None:
+        return _runtime_root
     root = os.environ.get("TOME_ROOT")
-    return Path(root) if root else Path.cwd()
+    if root:
+        return Path(root)
+    raise TomeError(
+        "No project root configured. "
+        "Call set_root(path='/path/to/project') first, "
+        "or set the TOME_ROOT environment variable."
+    )
 
 
 def _tome_dir() -> Path:
@@ -1269,6 +1282,41 @@ def stats() -> str:
             "doi_status": doi_stats,
             "pending_figures": pending_figs,
             "open_requests": open_reqs,
+        },
+        indent=2,
+    )
+
+
+@mcp_server.tool()
+def set_root(path: str) -> str:
+    """Switch Tome's project root directory at runtime.
+
+    Use this when working with multiple projects. Call at the start of a
+    conversation to point Tome at the correct project. Tome looks for
+    tome/references.bib, .tome/, and sections/*.tex under this root.
+
+    Priority: set_root() > TOME_ROOT env > cwd.
+
+    Args:
+        path: Absolute path to the project root (e.g. '/Users/bots/repos/myProject').
+    """
+    global _runtime_root
+    p = Path(path)
+    if not p.is_absolute():
+        return json.dumps({"error": "Path must be absolute."})
+    if not p.is_dir():
+        return json.dumps({"error": f"Directory not found: {path}"})
+
+    _runtime_root = p
+    tome_dir = p / "tome"
+    has_bib = (tome_dir / "references.bib").exists()
+
+    return json.dumps(
+        {
+            "status": "root_changed",
+            "root": str(p),
+            "tome_dir_exists": tome_dir.is_dir(),
+            "references_bib": has_bib,
         },
         indent=2,
     )
