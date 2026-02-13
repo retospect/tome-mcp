@@ -14,6 +14,8 @@ import os
 from pathlib import Path
 from typing import Any, Sequence
 
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
+
 import chromadb
 from chromadb.api.types import EmbeddingFunction, Embeddings, Documents
 
@@ -51,9 +53,10 @@ def get_client(chroma_dir: Path) -> chromadb.ClientAPI:
     return chromadb.PersistentClient(path=str(chroma_dir))
 
 
-def get_embed_fn() -> OllamaEmbeddingFunction:
-    """Create an OllamaEmbeddingFunction with current config."""
-    return OllamaEmbeddingFunction()
+def get_embed_fn() -> EmbeddingFunction | None:
+    """Get the embedding function. Returns None to use ChromaDB's default
+    (all-MiniLM-L6-v2, in-process, no external dependency)."""
+    return None
 
 
 def get_collection(
@@ -66,14 +69,35 @@ def get_collection(
     Args:
         client: ChromaDB client.
         name: Collection name.
-        embed_fn: Embedding function. Uses Ollama by default.
+        embed_fn: Embedding function. None = ChromaDB default (all-MiniLM-L6-v2).
 
     Returns:
         The collection.
     """
-    if embed_fn is None:
-        embed_fn = get_embed_fn()
-    return client.get_or_create_collection(name=name, embedding_function=embed_fn)
+    kwargs: dict[str, Any] = {"name": name}
+    if embed_fn is not None:
+        kwargs["embedding_function"] = embed_fn
+    return client.get_or_create_collection(**kwargs)
+
+
+_CHROMA_BATCH_LIMIT = 5000  # ChromaDB max is 5461; stay safely under
+
+
+def _batched_upsert(
+    collection: chromadb.Collection,
+    ids: list[str],
+    documents: list[str],
+    metadatas: list[dict[str, Any]],
+    batch_size: int = _CHROMA_BATCH_LIMIT,
+) -> None:
+    """Upsert in batches to stay within ChromaDB's per-call limit."""
+    for start in range(0, len(ids), batch_size):
+        end = start + batch_size
+        collection.upsert(
+            ids=ids[start:end],
+            documents=documents[start:end],
+            metadatas=metadatas[start:end],
+        )
 
 
 def upsert_paper_pages(
@@ -107,7 +131,7 @@ def upsert_paper_pages(
         for i in range(len(pages))
     ]
 
-    collection.upsert(ids=ids, documents=pages, metadatas=metadatas)
+    _batched_upsert(collection, ids, pages, metadatas)
     return len(pages)
 
 
@@ -145,7 +169,7 @@ def upsert_paper_chunks(
         for i in range(len(chunks))
     ]
 
-    collection.upsert(ids=ids, documents=chunks, metadatas=metadatas)
+    _batched_upsert(collection, ids, chunks, metadatas)
     return len(chunks)
 
 
@@ -185,7 +209,7 @@ def upsert_corpus_chunks(
             meta.update(chunk_markers[i])
         metadatas.append(meta)
 
-    collection.upsert(ids=ids, documents=chunks, metadatas=metadatas)
+    _batched_upsert(collection, ids, chunks, metadatas)
     return len(chunks)
 
 

@@ -1243,6 +1243,12 @@ def rebuild(key: str = "") -> str:
     entries = [bib.get_entry(lib, key)] if key else lib.entries
     pdf_dir = _tome_dir() / "pdf"
 
+    try:
+        client = store.get_client(_chroma_dir())
+        embed_fn = store.get_embed_fn()
+    except Exception as e:
+        return json.dumps({"error": f"ChromaDB/embed init failed: {e}"})
+
     for entry in entries:
         k = entry.key
         pdf = pdf_dir / f"{k}.pdf"
@@ -1251,6 +1257,25 @@ def rebuild(key: str = "") -> str:
 
         try:
             ext_result = extract.extract_pdf_pages(pdf, _raw_dir(), k, force=True)
+
+            # Read extracted pages and upsert into ChromaDB
+            pages = []
+            for page_num in range(1, ext_result.pages + 1):
+                pages.append(extract.read_page(_raw_dir(), k, page_num))
+
+            sha = checksum.sha256_file(pdf)
+            store.upsert_paper_pages(
+                store.get_collection(client, store.PAPER_PAGES, embed_fn),
+                k, pages, sha,
+            )
+
+            chunks = chunk.chunk_text("\n".join(pages))
+            page_indices = list(range(len(chunks)))
+            store.upsert_paper_chunks(
+                store.get_collection(client, store.PAPER_CHUNKS, embed_fn),
+                k, chunks, page_indices, sha,
+            )
+
             results["rebuilt"].append({"key": k, "pages": ext_result.pages})
         except Exception as e:
             results["errors"].append({"key": k, "error": str(e)})
@@ -1311,12 +1336,39 @@ def set_root(path: str) -> str:
     tome_dir = p / "tome"
     has_bib = (tome_dir / "references.bib").exists()
 
+    # Auto-create starter config.yaml if tome/ exists but config doesn't
+    config_status = "missing"
+    config_info: dict[str, Any] = {}
+    if tome_dir.is_dir():
+        from tome import config as tome_config
+
+        cfg_path = tome_config.config_path(tome_dir)
+        if not cfg_path.exists():
+            tome_config.create_default(tome_dir)
+            config_status = "created_default"
+            config_info["hint"] = (
+                "Edit tome/config.yaml to register project-specific LaTeX macros "
+                "for indexing. Add document roots and tracked patterns."
+            )
+        else:
+            try:
+                cfg = tome_config.load_config(tome_dir)
+                config_status = "loaded"
+                config_info["roots"] = cfg.roots
+                config_info["tracked_patterns"] = len(cfg.track)
+                config_info["tex_globs"] = cfg.tex_globs
+            except Exception as e:
+                config_status = "error"
+                config_info["error"] = str(e)
+
     return json.dumps(
         {
             "status": "root_changed",
             "root": str(p),
             "tome_dir_exists": tome_dir.is_dir(),
             "references_bib": has_bib,
+            "config": config_status,
+            **config_info,
         },
         indent=2,
     )
