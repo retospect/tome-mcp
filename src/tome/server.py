@@ -29,8 +29,10 @@ from tome import (
     summaries,
     validate,
 )
+from tome import openalex
 from tome import semantic_scholar as s2
 from tome import store
+from tome import unpaywall
 from tome.errors import (
     BibParseError,
     DuplicateKey,
@@ -1066,6 +1068,140 @@ def discover(query: str, n: int = 10) -> str:
         )
 
     return json.dumps({"count": len(output), "results": output}, indent=2)
+
+
+@mcp_server.tool()
+def discover_openalex(query: str, n: int = 10) -> str:
+    """Search OpenAlex for papers. Complement to Semantic Scholar discover.
+    Use when S2 returns few results or for older/non-CS papers.
+    Flags papers already in the library.
+
+    Args:
+        query: Natural language search query.
+        n: Maximum results (default 10).
+    """
+    results = openalex.search(query, limit=n)
+    if not results:
+        return json.dumps(
+            {"count": 0, "results": [], "message": "No results from OpenAlex."}
+        )
+
+    # Get library DOIs for flagging
+    lib_dois: set[str] = set()
+    try:
+        lib = _load_bib()
+        for entry in lib.entries:
+            doi_f = entry.fields_dict.get("doi")
+            if doi_f:
+                lib_dois.add(doi_f.value)
+    except Exception:
+        pass
+
+    flagged = openalex.flag_in_library(results, lib_dois)
+
+    output = []
+    for work, in_lib in flagged:
+        output.append(
+            {
+                "title": work.title,
+                "authors": work.authors,
+                "year": work.year,
+                "doi": work.doi,
+                "citation_count": work.citation_count,
+                "is_oa": work.is_oa,
+                "oa_url": work.oa_url,
+                "openalex_id": work.openalex_id,
+                "in_library": in_lib,
+                "abstract": work.abstract[:300] if work.abstract else None,
+            }
+        )
+
+    return json.dumps({"count": len(output), "results": output}, indent=2)
+
+
+@mcp_server.tool()
+def fetch_oa(key: str) -> str:
+    """Fetch open-access PDF for a paper already in the library.
+
+    Queries Unpaywall using the paper's DOI. If an OA PDF is found,
+    downloads it to tome/pdf/{key}.pdf. Requires UNPAYWALL_EMAIL env var
+    or unpaywall_email in tome/config.yaml.
+
+    Args:
+        key: Bib key of the paper (must have a DOI).
+    """
+    validate.validate_bib_key(key)
+
+    # Get DOI from bib
+    lib = _load_bib()
+    entry = bib.get_entry(lib, key)
+    doi_f = entry.fields_dict.get("doi")
+    if not doi_f or not doi_f.value:
+        return json.dumps({"error": f"No DOI for '{key}'. Cannot query Unpaywall."})
+
+    doi = doi_f.value
+
+    # Get email from config or env
+    email = os.environ.get("UNPAYWALL_EMAIL")
+    if not email:
+        try:
+            cfg = _load_config()
+            email = getattr(cfg, "unpaywall_email", None)
+        except Exception:
+            pass
+    if not email:
+        return json.dumps({
+            "error": "No email configured for Unpaywall. "
+            "Set UNPAYWALL_EMAIL env var or unpaywall_email in tome/config.yaml."
+        })
+
+    # Query Unpaywall
+    result = unpaywall.lookup(doi, email=email)
+    if result is None:
+        return json.dumps({"error": f"Unpaywall API error for DOI: {doi}"})
+
+    if not result.is_oa or not result.best_oa_url:
+        return json.dumps({
+            "doi": doi,
+            "is_oa": result.is_oa,
+            "oa_status": result.oa_status,
+            "message": "No open-access PDF available.",
+        })
+
+    # Download PDF
+    pdf_dir = _project_root() / "tome" / "pdf"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    dest = pdf_dir / f"{key}.pdf"
+
+    if dest.exists():
+        return json.dumps({
+            "doi": doi,
+            "message": f"PDF already exists: tome/pdf/{key}.pdf",
+            "oa_url": result.best_oa_url,
+        })
+
+    ok = unpaywall.download_pdf(result.best_oa_url, str(dest))
+    if not ok:
+        return json.dumps({
+            "doi": doi,
+            "oa_url": result.best_oa_url,
+            "error": "Download failed. URL may require browser access.",
+        })
+
+    # Update x-pdf in bib
+    try:
+        bib.set_field(lib, key, "x-pdf", "true")
+        bib.save(lib, _project_root() / "tome" / "references.bib")
+    except Exception:
+        pass  # PDF saved, bib update is best-effort
+
+    return json.dumps({
+        "doi": doi,
+        "oa_status": result.oa_status,
+        "oa_url": result.best_oa_url,
+        "saved": f"tome/pdf/{key}.pdf",
+        "size_bytes": dest.stat().st_size,
+    })
 
 
 @mcp_server.tool()
