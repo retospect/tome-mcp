@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tome"
+version = "0.1.0"
+description = "MCP server for managing a research paper library"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+dependencies = [
+    "chromadb>=0.5.0",
+    "PyMuPDF>=1.24.0",
+    "bibtexparser>=2.0.0b1",
+    "httpx>=0.27.0",
+    "numpy>=1.26.0",
+    "mcp>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "respx>=0.21.0",
+    "ruff>=0.5.0",
+    "mypy>=1.10.0",
+    "black>=24.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires live external services (Ollama, CrossRef, S2)",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:onnxruntime",
+    "ignore:builtin type Swig:DeprecationWarning",
+    "ignore:builtin type swigvarlink:DeprecationWarning",
+    "ignore:legacy embedding function config:DeprecationWarning:chromadb",
+]
+
+[tool.black]
+line-length = 99
+target-version = ["py311"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 99
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
