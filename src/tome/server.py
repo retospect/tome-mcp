@@ -15,9 +15,11 @@ from typing import Any
 from mcp.server.fastmcp import FastMCP
 
 from tome import (
+    analysis,
     bib,
     checksum,
     chunk,
+    config as tome_config,
     crossref,
     extract,
     figures,
@@ -1312,6 +1314,322 @@ def stats() -> str:
     )
 
 
+# ---------------------------------------------------------------------------
+# Document analysis tools
+# ---------------------------------------------------------------------------
+
+
+def _load_config() -> tome_config.TomeConfig:
+    """Load project config, or return defaults if missing."""
+    return tome_config.load_config(_tome_dir())
+
+
+def _resolve_root(root: str) -> str:
+    """Resolve a root name to a .tex path using config roots."""
+    cfg = _load_config()
+    if root in cfg.roots:
+        return cfg.roots[root]
+    # If it looks like a file path, use it directly
+    if root.endswith(".tex"):
+        return root
+    # Try 'default'
+    return cfg.roots.get("default", "main.tex")
+
+
+@mcp_server.tool()
+def doc_lint(root: str = "default", file: str = "") -> str:
+    """Lint the document for structural issues. Uses built-in patterns
+    (labels, refs, cites) plus any custom patterns from tome/config.yaml.
+
+    Checks: undefined refs, orphan labels, shallow high-use cites (≥3×
+    with no deep quote), plus tracked pattern counts.
+
+    Args:
+        root: Named root from config.yaml (default: 'default'), or a .tex path.
+        file: Optional — lint only this file instead of the whole document.
+    """
+    cfg = _load_config()
+    root_tex = _resolve_root(root)
+    proj = _project_root()
+
+    if file:
+        # Single-file mode
+        abs_path = proj / file
+        if not abs_path.is_file():
+            return json.dumps({"error": f"File not found: {file}"})
+        text = abs_path.read_text(encoding="utf-8")
+        fa = analysis.analyze_file(file, text, cfg.track)
+        return json.dumps({
+            "file": file,
+            "labels": len(fa.labels),
+            "refs": len(fa.refs),
+            "cites": len(fa.cites),
+            "deep_cites": sum(1 for c in fa.cites if c.is_deep),
+            "tracked": {
+                name: sum(1 for t in fa.tracked if t.name == name)
+                for name in sorted(set(t.name for t in fa.tracked))
+            },
+            "word_count": fa.word_count,
+        }, indent=2)
+
+    # Whole-document mode
+    doc = analysis.analyze_document(root_tex, proj, cfg)
+
+    return json.dumps({
+        "root": root_tex,
+        "files": len(doc.files),
+        "total_labels": sum(len(fa.labels) for fa in doc.files.values()),
+        "total_refs": sum(len(fa.refs) for fa in doc.files.values()),
+        "total_cites": sum(len(fa.cites) for fa in doc.files.values()),
+        "total_deep_cites": sum(
+            sum(1 for c in fa.cites if c.is_deep) for fa in doc.files.values()
+        ),
+        "total_words": sum(fa.word_count for fa in doc.files.values()),
+        "undefined_refs": doc.undefined_refs,
+        "orphan_labels": doc.orphan_labels,
+        "shallow_high_use_cites": doc.shallow_high_use,
+    }, indent=2)
+
+
+@mcp_server.tool()
+def review_status(root: str = "default", file: str = "") -> str:
+    """Show tracked marker counts from tome/config.yaml patterns.
+
+    Groups markers by type, counts per file. Use this to see how many
+    open questions, issues, TODOs, etc. exist in the document.
+
+    Args:
+        root: Named root from config.yaml (default: 'default'), or a .tex path.
+        file: Optional — status for only this file.
+    """
+    cfg = _load_config()
+    proj = _project_root()
+
+    if file:
+        abs_path = proj / file
+        if not abs_path.is_file():
+            return json.dumps({"error": f"File not found: {file}"})
+        text = abs_path.read_text(encoding="utf-8")
+        fa = analysis.analyze_file(file, text, cfg.track)
+        files_map = {file: fa}
+    else:
+        root_tex = _resolve_root(root)
+        doc = analysis.analyze_document(root_tex, proj, cfg)
+        files_map = doc.files
+
+    # Group tracked markers by name, then by file
+    from collections import defaultdict
+    by_name: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
+    for fpath, fa in files_map.items():
+        for t in fa.tracked:
+            by_name[t.name][fpath].append({
+                "line": t.line,
+                "groups": t.groups,
+            })
+
+    summary: dict[str, Any] = {}
+    for name in sorted(by_name.keys()):
+        per_file = by_name[name]
+        total = sum(len(v) for v in per_file.values())
+        summary[name] = {
+            "total": total,
+            "by_file": {f: len(items) for f, items in sorted(per_file.items())},
+        }
+
+    if not cfg.track:
+        return json.dumps({
+            "status": "no_tracked_patterns",
+            "hint": "Add 'track:' entries to tome/config.yaml to index project-specific macros.",
+        }, indent=2)
+
+    return json.dumps({
+        "tracked_pattern_names": [tp.name for tp in cfg.track],
+        "markers": summary,
+    }, indent=2)
+
+
+@mcp_server.tool()
+def dep_graph(file: str, root: str = "default") -> str:
+    """Show dependency graph for a .tex file: labels defined, outgoing refs
+    (what this file references), incoming refs (what references this file),
+    and citations with deep/shallow flag.
+
+    Args:
+        file: Relative path to the .tex file (e.g. 'sections/connectivity.tex').
+        root: Named root from config.yaml for cross-file resolution.
+    """
+    cfg = _load_config()
+    root_tex = _resolve_root(root)
+    proj = _project_root()
+
+    doc = analysis.analyze_document(root_tex, proj, cfg)
+    all_labels = doc.all_labels
+
+    if file not in doc.files:
+        return json.dumps({"error": f"File '{file}' not in document tree of '{root_tex}'."})
+
+    fa = doc.files[file]
+
+    # Labels defined in this file
+    my_labels = [{"name": l.name, "type": l.label_type, "line": l.line} for l in fa.labels]
+    my_label_names = {l.name for l in fa.labels}
+
+    # Outgoing refs: this file → other files
+    outgoing: dict[str, list] = {}
+    for ref in fa.refs:
+        if ref.target in all_labels:
+            target_file = all_labels[ref.target]["file"]
+            if target_file != file:
+                outgoing.setdefault(target_file, []).append(ref.target)
+
+    # Incoming refs: other files → this file
+    incoming: dict[str, list] = {}
+    for fpath, other_fa in doc.files.items():
+        if fpath == file:
+            continue
+        for ref in other_fa.refs:
+            if ref.target in my_label_names:
+                incoming.setdefault(fpath, []).append(ref.target)
+
+    # Citations in this file
+    from collections import defaultdict
+    cite_summary: dict[str, dict[str, Any]] = {}
+    for c in fa.cites:
+        if c.key not in cite_summary:
+            cite_summary[c.key] = {"count": 0, "deep": 0, "lines": []}
+        cite_summary[c.key]["count"] += 1
+        if c.is_deep:
+            cite_summary[c.key]["deep"] += 1
+        cite_summary[c.key]["lines"].append(c.line)
+
+    return json.dumps({
+        "file": file,
+        "labels_defined": my_labels,
+        "outgoing_refs": {f: sorted(set(refs)) for f, refs in sorted(outgoing.items())},
+        "incoming_refs": {f: sorted(set(refs)) for f, refs in sorted(incoming.items())},
+        "citations": cite_summary,
+        "word_count": fa.word_count,
+    }, indent=2)
+
+
+@mcp_server.tool()
+def validate_deep_cites(file: str = "", key: str = "") -> str:
+    """Verify deep citation quotes against source paper text in ChromaDB.
+
+    Extracts all deep-cite macros (mciteboxp, citeq, etc.) and searches
+    ChromaDB for each quote against the cited paper's extracted text.
+    Reports match score — low scores may indicate misquotes or wrong pages.
+
+    This is a live check (no cache). Requires papers to be rebuilt first.
+
+    Args:
+        file: Optional — check only this file's deep cites.
+        key: Optional — check only cites for this bib key.
+    """
+    cfg = _load_config()
+    proj = _project_root()
+
+    # Gather deep cites from tracked patterns or built-in
+    # We need the 'deep_cite' tracked pattern to get quote text
+    deep_cite_pattern = None
+    for tp in cfg.track:
+        if tp.name == "deep_cite":
+            deep_cite_pattern = tp
+            break
+
+    if not deep_cite_pattern:
+        return json.dumps({
+            "error": "No 'deep_cite' pattern in config.yaml. Add a tracked pattern named "
+                     "'deep_cite' with groups [key, page, quote] to enable quote validation.",
+            "example": {
+                "name": "deep_cite",
+                "pattern": "\\\\mciteboxp\\{([^}]+)\\}\\{([^}]+)\\}\\{([^}]+)\\}",
+                "groups": ["key", "page", "quote"],
+            },
+        }, indent=2)
+
+    # Collect files to scan
+    if file:
+        abs_path = proj / file
+        if not abs_path.is_file():
+            return json.dumps({"error": f"File not found: {file}"})
+        text = abs_path.read_text(encoding="utf-8")
+        fa = analysis.analyze_file(file, text, cfg.track)
+        files_map = {file: fa}
+    else:
+        root_tex = _resolve_root("default")
+        doc = analysis.analyze_document(root_tex, proj, cfg)
+        files_map = doc.files
+
+    # Extract deep cite quotes
+    quotes_to_check: list[dict[str, Any]] = []
+    for fpath, fa in files_map.items():
+        for t in fa.tracked:
+            if t.name == "deep_cite":
+                cite_key = t.groups.get("key", "")
+                quote = t.groups.get("quote", "")
+                page = t.groups.get("page", "")
+                if key and cite_key != key:
+                    continue
+                if cite_key and quote:
+                    quotes_to_check.append({
+                        "file": fpath,
+                        "line": t.line,
+                        "key": cite_key,
+                        "page": page,
+                        "quote": quote[:200],
+                    })
+
+    if not quotes_to_check:
+        return json.dumps({"status": "no_deep_cites_found", "count": 0})
+
+    # Search ChromaDB for each quote
+    try:
+        client = store.get_client(_chroma_dir())
+        embed_fn = store.get_embed_fn()
+        col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
+    except Exception as e:
+        return json.dumps({"error": f"ChromaDB unavailable: {e}"})
+
+    results: list[dict[str, Any]] = []
+    for q in quotes_to_check:
+        try:
+            hits = col.query(
+                query_texts=[q["quote"]],
+                n_results=3,
+                where={"bib_key": q["key"]},
+            )
+            best_score = 0.0
+            best_text = ""
+            if hits and hits["distances"] and hits["distances"][0]:
+                # ChromaDB returns distances; lower = better
+                best_dist = hits["distances"][0][0]
+                best_score = max(0.0, 1.0 - best_dist)
+                if hits["documents"] and hits["documents"][0]:
+                    best_text = hits["documents"][0][0][:150]
+
+            results.append({
+                **q,
+                "match_score": round(best_score, 3),
+                "best_match_preview": best_text,
+                "verdict": "ok" if best_score > 0.5 else "low_match",
+            })
+        except Exception as e:
+            results.append({**q, "error": str(e)})
+
+    ok_count = sum(1 for r in results if r.get("verdict") == "ok")
+    low_count = sum(1 for r in results if r.get("verdict") == "low_match")
+    err_count = sum(1 for r in results if "error" in r)
+
+    return json.dumps({
+        "total_checked": len(results),
+        "ok": ok_count,
+        "low_match": low_count,
+        "errors": err_count,
+        "results": results,
+    }, indent=2)
+
+
 @mcp_server.tool()
 def set_root(path: str) -> str:
     """Switch Tome's project root directory at runtime.
@@ -1340,8 +1658,6 @@ def set_root(path: str) -> str:
     config_status = "missing"
     config_info: dict[str, Any] = {}
     if tome_dir.is_dir():
-        from tome import config as tome_config
-
         cfg_path = tome_config.config_path(tome_dir)
         if not cfg_path.exists():
             tome_config.create_default(tome_dir)
