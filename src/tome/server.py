@@ -7,6 +7,7 @@ The server uses stdio transport for MCP client communication.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Any
@@ -41,18 +42,24 @@ from tome.errors import (
 mcp_server = FastMCP("Tome")
 
 # ---------------------------------------------------------------------------
-# Paths — resolved relative to cwd
+# Paths — resolved relative to TOME_ROOT (env) or cwd
 # ---------------------------------------------------------------------------
+
+
+def _project_root() -> Path:
+    """Project root: TOME_ROOT env var, or cwd as fallback."""
+    root = os.environ.get("TOME_ROOT")
+    return Path(root) if root else Path.cwd()
 
 
 def _tome_dir() -> Path:
     """The user-facing tome/ directory (git-tracked)."""
-    return Path.cwd() / "tome"
+    return _project_root() / "tome"
 
 
 def _dot_tome() -> Path:
     """The hidden .tome/ cache directory (gitignored)."""
-    return Path.cwd() / ".tome"
+    return _project_root() / ".tome"
 
 
 def _bib_path() -> Path:
