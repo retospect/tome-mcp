@@ -147,6 +147,34 @@ class TextNotExtracted(TomeError):
         self.key = key
 
 
+class APIError(TomeError):
+    """An external API returned an error after retries were exhausted."""
+
+    def __init__(self, service: str, status_code: int, detail: str = ""):
+        if status_code == 429:
+            msg = (
+                f"{service} rate-limited (HTTP 429) after retries. "
+                f"Wait a minute and try again. {detail}"
+            )
+        elif status_code >= 500:
+            msg = (
+                f"{service} server error (HTTP {status_code}) after retries. "
+                f"The service may be temporarily down. Try again later. {detail}"
+            )
+        elif status_code == 0:
+            msg = (
+                f"{service} unreachable (connection timeout after retries). "
+                f"Check your network connection. {detail}"
+            )
+        else:
+            msg = (
+                f"{service} returned HTTP {status_code}. {detail}"
+            )
+        super().__init__(msg.strip())
+        self.service = service
+        self.status_code = status_code
+
+
 class UnsafeInput(TomeError):
     """Input contains path traversal or other unsafe characters."""
 

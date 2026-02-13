@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 
+from tome.errors import APIError
 from tome.http import get_with_retry
 
 S2_API = "https://api.semanticscholar.org/graph/v1"
@@ -87,7 +88,9 @@ def search(query: str, limit: int = 10) -> list[S2Paper]:
     try:
         resp = get_with_retry(url, params=params, headers=_get_headers(), timeout=REQUEST_TIMEOUT)
     except (httpx.ConnectError, httpx.TimeoutException):
-        return []
+        raise APIError("Semantic Scholar", 0, "Search request timed out.")
+    if resp.status_code == 429 or resp.status_code >= 500:
+        raise APIError("Semantic Scholar", resp.status_code)
     if resp.status_code != 200:
         return []
 
@@ -114,7 +117,9 @@ def get_paper(paper_id: str) -> S2Paper | None:
     try:
         resp = get_with_retry(url, params=params, headers=_get_headers(), timeout=REQUEST_TIMEOUT)
     except (httpx.ConnectError, httpx.TimeoutException):
-        return None
+        raise APIError("Semantic Scholar", 0, f"Lookup timed out for '{paper_id}'.")
+    if resp.status_code == 429 or resp.status_code >= 500:
+        raise APIError("Semantic Scholar", resp.status_code)
     if resp.status_code != 200:
         return None
 
@@ -174,7 +179,9 @@ def _get_connected(s2_id: str, direction: str, limit: int) -> list[S2Paper]:
     try:
         resp = get_with_retry(url, params=params, headers=_get_headers(), timeout=REQUEST_TIMEOUT)
     except (httpx.ConnectError, httpx.TimeoutException):
-        return []
+        raise APIError("Semantic Scholar", 0, f"Citation graph request timed out.")
+    if resp.status_code == 429 or resp.status_code >= 500:
+        raise APIError("Semantic Scholar", resp.status_code)
     if resp.status_code != 200:
         return []
 

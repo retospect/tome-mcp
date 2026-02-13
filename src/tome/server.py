@@ -34,6 +34,7 @@ from tome import semantic_scholar as s2
 from tome import store
 from tome import unpaywall
 from tome.errors import (
+    APIError,
     BibParseError,
     DuplicateKey,
     IngestFailed,
@@ -1026,7 +1027,10 @@ def discover(query: str, n: int = 10) -> str:
         query: Natural language search query.
         n: Maximum results (default 10).
     """
-    results = s2.search(query, limit=n)
+    try:
+        results = s2.search(query, limit=n)
+    except APIError as e:
+        return json.dumps({"error": str(e)})
     if not results:
         return json.dumps(
             {"count": 0, "results": [], "message": "No results from Semantic Scholar."}
@@ -1080,7 +1084,10 @@ def discover_openalex(query: str, n: int = 10) -> str:
         query: Natural language search query.
         n: Maximum results (default 10).
     """
-    results = openalex.search(query, limit=n)
+    try:
+        results = openalex.search(query, limit=n)
+    except APIError as e:
+        return json.dumps({"error": str(e)})
     if not results:
         return json.dumps(
             {"count": 0, "results": [], "message": "No results from OpenAlex."}
@@ -1156,9 +1163,12 @@ def fetch_oa(key: str) -> str:
         })
 
     # Query Unpaywall
-    result = unpaywall.lookup(doi, email=email)
+    try:
+        result = unpaywall.lookup(doi, email=email)
+    except APIError as e:
+        return json.dumps({"error": str(e)})
     if result is None:
-        return json.dumps({"error": f"Unpaywall API error for DOI: {doi}"})
+        return json.dumps({"error": f"Unpaywall returned no data for DOI: {doi}. DOI may not exist in their database."})
 
     if not result.is_oa or not result.best_oa_url:
         return json.dumps({
@@ -1229,7 +1239,10 @@ def cite_graph(key: str = "", s2_id: str = "") -> str:
     if not paper_id:
         return json.dumps({"error": "No S2 ID or DOI found. Provide s2_id or a key with a DOI."})
 
-    graph = s2.get_citation_graph(paper_id)
+    try:
+        graph = s2.get_citation_graph(paper_id)
+    except APIError as e:
+        return json.dumps({"error": str(e)})
     if graph is None:
         return json.dumps({"error": f"Paper not found on Semantic Scholar: {paper_id}"})
 

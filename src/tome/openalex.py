@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 
+from tome.errors import APIError
 from tome.http import get_with_retry
 
 OPENALEX_API = "https://api.openalex.org"
@@ -114,8 +115,9 @@ def search(query: str, limit: int = 10) -> list[OAWork]:
     try:
         resp = get_with_retry(url, params=params, timeout=REQUEST_TIMEOUT)
     except (httpx.ConnectError, httpx.TimeoutException):
-        return []
-
+        raise APIError("OpenAlex", 0, "Search request timed out.")
+    if resp.status_code == 429 or resp.status_code >= 500:
+        raise APIError("OpenAlex", resp.status_code)
     if resp.status_code != 200:
         return []
 
@@ -138,8 +140,9 @@ def get_work_by_doi(doi: str) -> OAWork | None:
     try:
         resp = get_with_retry(url, params=params, timeout=REQUEST_TIMEOUT)
     except (httpx.ConnectError, httpx.TimeoutException):
-        return None
-
+        raise APIError("OpenAlex", 0, f"DOI lookup timed out.")
+    if resp.status_code == 429 or resp.status_code >= 500:
+        raise APIError("OpenAlex", resp.status_code)
     if resp.status_code != 200:
         return None
 

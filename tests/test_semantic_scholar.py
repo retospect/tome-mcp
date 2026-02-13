@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tome.errors import APIError
 from tome.semantic_scholar import (
     S2Paper,
     _parse_paper,
@@ -72,13 +73,14 @@ class TestSearch:
         assert results == []
 
     @patch("tome.semantic_scholar.get_with_retry")
-    def test_api_error(self, mock_get):
+    def test_api_error_429_raises(self, mock_get):
         resp = MagicMock()
         resp.status_code = 429
         mock_get.return_value = resp
 
-        results = search("test")
-        assert results == []
+        with pytest.raises(APIError) as exc_info:
+            search("test")
+        assert "rate-limited" in str(exc_info.value).lower()
 
     @patch("tome.semantic_scholar.get_with_retry")
     def test_limit_capped(self, mock_get):

@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from tome.errors import APIError
 from tome.http import get_with_retry
 
 UNPAYWALL_API = "https://api.unpaywall.org/v2"
@@ -60,8 +61,9 @@ def lookup(doi: str, email: str | None = None) -> UnpaywallResult | None:
     try:
         resp = get_with_retry(url, params=params, timeout=REQUEST_TIMEOUT)
     except (httpx.ConnectError, httpx.TimeoutException):
-        return None
-
+        raise APIError("Unpaywall", 0, f"Lookup timed out for DOI '{doi}'.")
+    if resp.status_code == 429 or resp.status_code >= 500:
+        raise APIError("Unpaywall", resp.status_code, f"DOI: {doi}")
     if resp.status_code != 200:
         return None
 

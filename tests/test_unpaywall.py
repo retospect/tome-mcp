@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch, mock_open
 
 import pytest
 
+from tome.errors import APIError
 from tome.unpaywall import UnpaywallResult, download_pdf, lookup
 
 SAMPLE_RESPONSE = {
@@ -68,12 +69,13 @@ class TestLookup:
         assert result is None
 
     @patch("tome.unpaywall.get_with_retry")
-    def test_timeout(self, mock_get):
+    def test_timeout_raises(self, mock_get):
         import httpx as httpx_mod
 
         mock_get.side_effect = httpx_mod.TimeoutException("")
-        result = lookup("10.1038/test", email="test@example.com")
-        assert result is None
+        with pytest.raises(APIError) as exc_info:
+            lookup("10.1038/test", email="test@example.com")
+        assert "timed out" in str(exc_info.value).lower()
 
     def test_no_email_uses_default(self):
         with patch.dict("os.environ", {}, clear=True):

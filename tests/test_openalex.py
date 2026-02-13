@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from tome.errors import APIError
 from tome.openalex import (
     OAWork,
     _parse_work,
@@ -123,21 +124,23 @@ class TestSearch:
         assert results == []
 
     @patch("tome.openalex.get_with_retry")
-    def test_api_error(self, mock_get):
+    def test_api_error_500_raises(self, mock_get):
         resp = MagicMock()
         resp.status_code = 500
         mock_get.return_value = resp
 
-        results = search("test")
-        assert results == []
+        with pytest.raises(APIError) as exc_info:
+            search("test")
+        assert "server error" in str(exc_info.value).lower()
 
     @patch("tome.openalex.get_with_retry")
-    def test_timeout(self, mock_get):
+    def test_timeout_raises(self, mock_get):
         import httpx as httpx_mod
 
         mock_get.side_effect = httpx_mod.TimeoutException("")
-        results = search("test")
-        assert results == []
+        with pytest.raises(APIError) as exc_info:
+            search("test")
+        assert "timed out" in str(exc_info.value).lower()
 
     @patch("tome.openalex.get_with_retry")
     def test_limit_capped(self, mock_get):
@@ -183,11 +186,12 @@ class TestGetWorkByDoi:
         assert get_work_by_doi("10.1000/fake") is None
 
     @patch("tome.openalex.get_with_retry")
-    def test_timeout(self, mock_get):
+    def test_timeout_raises(self, mock_get):
         import httpx as httpx_mod
 
         mock_get.side_effect = httpx_mod.TimeoutException("")
-        assert get_work_by_doi("10.1038/test") is None
+        with pytest.raises(APIError):
+            get_work_by_doi("10.1038/test")
 
 
 class TestFlagInLibrary:
