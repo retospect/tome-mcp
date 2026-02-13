@@ -907,21 +907,25 @@ def summarize_file(
     short: str,
     sections: str,
 ) -> str:
-    """Store a section map for a file so you can quickly find content later.
+    """Store a content summary for a file so you can quickly find content later.
 
-    Call this after reading or editing a .tex file. The section map is a list
-    of line-range descriptions that lets you (or a future session) quickly
-    orient without re-reading the entire file.
+    You MUST read the file's actual content before calling this. Section
+    headings and labels are already available from doc_lint / dep_graph —
+    the value of this tool is storing *content-level* descriptions that
+    those structural tools cannot provide.
 
     Args:
         file: Relative path to the file (e.g. 'sections/signal-domains.tex').
         summary: Full summary (2-3 sentences describing what the file covers).
         short: One-line short summary (< 80 chars).
-        sections: JSON array of {"lines": "1-45", "description": "..."} objects
-            describing each logical section of the file.
+        sections: JSON array of {"lines": "1-45", "description": "..."} objects.
+            Each description should summarize the *content* in that line range
+            (key claims, quantities, methods), not just repeat the section
+            heading. Bad: "Signal domains". Good: "Analyzes five physical
+            signal domains; ranks electronic+optical as primary strategy".
     """
     validate.validate_relative_path(file, field="file")
-    file_path = Path(file)
+    file_path = _project_root() / file
     if not file_path.exists():
         return json.dumps({"error": f"File not found: {file}"})
 
@@ -941,7 +945,7 @@ def summarize_file(
 
 
 @mcp_server.tool()
-def get_summary(file: str = "") -> str:
+def get_summary(file: str = "", stale_only: bool = False) -> str:
     """Get the stored section map for a file, or list all summaries.
 
     Returns line-range descriptions so you can quickly locate content
@@ -953,6 +957,7 @@ def get_summary(file: str = "") -> str:
 
     Args:
         file: Relative path to the file. Empty = list all.
+        stale_only: Only return stale or missing summaries (ignored when file is set).
     """
     sum_data = summaries.load_summaries(_dot_tome())
 
@@ -961,7 +966,7 @@ def get_summary(file: str = "") -> str:
         entries = []
         for f, entry in sum_data.items():
             status = "fresh"
-            f_path = Path(f)
+            f_path = _project_root() / f
             if f_path.exists():
                 current_sha = checksum.sha256_file(f_path)
                 if entry.get("file_sha256") != current_sha:
@@ -976,6 +981,8 @@ def get_summary(file: str = "") -> str:
                     "updated": entry.get("updated"),
                 }
             )
+        if stale_only:
+            entries = [e for e in entries if e["status"] != "fresh"]
         return json.dumps({"count": len(entries), "summaries": entries}, indent=2)
 
     validate.validate_relative_path(file, field="file")
@@ -993,7 +1000,7 @@ def get_summary(file: str = "") -> str:
 
     # Check staleness
     status = "fresh"
-    f_path = Path(file)
+    f_path = _project_root() / file
     if f_path.exists():
         current_sha = checksum.sha256_file(f_path)
         if entry.get("file_sha256") != current_sha:
@@ -1334,6 +1341,40 @@ def _resolve_root(root: str) -> str:
         return root
     # Try 'default'
     return cfg.roots.get("default", "main.tex")
+
+
+@mcp_server.tool()
+def doc_tree(root: str = "default") -> str:
+    """Show the ordered file list for a document root.
+
+    Walks the \\input{}/\\include{} tree starting from the root .tex file
+    and returns all member files in document order. Use at session start
+    to orient, or to see which files belong to a named root.
+
+    Args:
+        root: Named root from config.yaml (default: 'default'), or a .tex path.
+    """
+    root_tex = _resolve_root(root)
+    proj = _project_root()
+    files = analysis.resolve_document_tree(root_tex, proj)
+
+    file_info = []
+    for f in files:
+        fp = proj / f
+        info: dict[str, Any] = {"file": f, "exists": fp.exists()}
+        if fp.exists():
+            info["size"] = fp.stat().st_size
+        file_info.append(info)
+
+    return json.dumps(
+        {
+            "root": root,
+            "root_file": root_tex,
+            "file_count": len(files),
+            "files": file_info,
+        },
+        indent=2,
+    )
 
 
 @mcp_server.tool()
