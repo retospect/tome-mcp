@@ -32,7 +32,7 @@ CLOSED_RESPONSE = {
 
 
 class TestLookup:
-    @patch("tome.unpaywall.httpx.get")
+    @patch("tome.unpaywall.get_with_retry")
     def test_successful_oa_lookup(self, mock_get):
         resp = MagicMock()
         resp.status_code = 200
@@ -46,7 +46,7 @@ class TestLookup:
         assert result.oa_status == "gold"
         assert result.title == "Scaling quantum interference"
 
-    @patch("tome.unpaywall.httpx.get")
+    @patch("tome.unpaywall.get_with_retry")
     def test_closed_access(self, mock_get):
         resp = MagicMock()
         resp.status_code = 200
@@ -58,7 +58,7 @@ class TestLookup:
         assert result.is_oa is False
         assert result.best_oa_url is None
 
-    @patch("tome.unpaywall.httpx.get")
+    @patch("tome.unpaywall.get_with_retry")
     def test_api_error(self, mock_get):
         resp = MagicMock()
         resp.status_code = 404
@@ -67,7 +67,7 @@ class TestLookup:
         result = lookup("10.1000/fake", email="test@example.com")
         assert result is None
 
-    @patch("tome.unpaywall.httpx.get")
+    @patch("tome.unpaywall.get_with_retry")
     def test_timeout(self, mock_get):
         import httpx as httpx_mod
 
@@ -75,13 +75,20 @@ class TestLookup:
         result = lookup("10.1038/test", email="test@example.com")
         assert result is None
 
-    def test_no_email_returns_none(self):
+    def test_no_email_uses_default(self):
         with patch.dict("os.environ", {}, clear=True):
-            # No email in env, none passed
-            result = lookup("10.1038/test", email=None)
-            assert result is None
+            with patch("tome.unpaywall.get_with_retry") as mock_get:
+                resp = MagicMock()
+                resp.status_code = 200
+                resp.json.return_value = SAMPLE_RESPONSE
+                mock_get.return_value = resp
 
-    @patch("tome.unpaywall.httpx.get")
+                result = lookup("10.1038/test")
+                assert result is not None
+                call_params = mock_get.call_args.kwargs["params"]
+                assert call_params["email"] == "stamm.reto@ul.ie"
+
+    @patch("tome.unpaywall.get_with_retry")
     def test_email_from_env(self, mock_get):
         resp = MagicMock()
         resp.status_code = 200
@@ -94,7 +101,7 @@ class TestLookup:
             call_params = mock_get.call_args.kwargs["params"]
             assert call_params["email"] == "env@example.com"
 
-    @patch("tome.unpaywall.httpx.get")
+    @patch("tome.unpaywall.get_with_retry")
     def test_fallback_to_url_when_no_pdf_url(self, mock_get):
         resp_data = {
             **SAMPLE_RESPONSE,

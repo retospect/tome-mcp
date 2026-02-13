@@ -13,6 +13,8 @@ from typing import Any
 
 import httpx
 
+from tome.http import get_with_retry
+
 S2_API = "https://api.semanticscholar.org/graph/v1"
 REQUEST_TIMEOUT = 15.0
 DEFAULT_FIELDS = "title,authors,year,externalIds,citationCount,abstract"
@@ -82,7 +84,10 @@ def search(query: str, limit: int = 10) -> list[S2Paper]:
         "fields": DEFAULT_FIELDS,
     }
 
-    resp = httpx.get(url, params=params, headers=_get_headers(), timeout=REQUEST_TIMEOUT)
+    try:
+        resp = get_with_retry(url, params=params, headers=_get_headers(), timeout=REQUEST_TIMEOUT)
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return []
     if resp.status_code != 200:
         return []
 
@@ -106,7 +111,10 @@ def get_paper(paper_id: str) -> S2Paper | None:
     url = f"{S2_API}/paper/{paper_id}"
     params = {"fields": DEFAULT_FIELDS}
 
-    resp = httpx.get(url, params=params, headers=_get_headers(), timeout=REQUEST_TIMEOUT)
+    try:
+        resp = get_with_retry(url, params=params, headers=_get_headers(), timeout=REQUEST_TIMEOUT)
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return None
     if resp.status_code != 200:
         return None
 
@@ -163,7 +171,10 @@ def _get_connected(s2_id: str, direction: str, limit: int) -> list[S2Paper]:
         "limit": min(limit, 1000),
     }
 
-    resp = httpx.get(url, params=params, headers=_get_headers(), timeout=REQUEST_TIMEOUT)
+    try:
+        resp = get_with_retry(url, params=params, headers=_get_headers(), timeout=REQUEST_TIMEOUT)
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return []
     if resp.status_code != 200:
         return []
 

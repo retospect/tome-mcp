@@ -27,7 +27,7 @@ SAMPLE_CROSSREF_RESPONSE = {
 
 @pytest.fixture
 def mock_success():
-    with patch("tome.crossref.httpx.get") as mock:
+    with patch("tome.crossref.get_with_retry") as mock:
         resp = MagicMock()
         resp.status_code = 200
         resp.json.return_value = SAMPLE_CROSSREF_RESPONSE
@@ -37,7 +37,7 @@ def mock_success():
 
 @pytest.fixture
 def mock_404():
-    with patch("tome.crossref.httpx.get") as mock:
+    with patch("tome.crossref.get_with_retry") as mock:
         resp = MagicMock()
         resp.status_code = 404
         mock.return_value = resp
@@ -46,7 +46,7 @@ def mock_404():
 
 @pytest.fixture
 def mock_429():
-    with patch("tome.crossref.httpx.get") as mock:
+    with patch("tome.crossref.get_with_retry") as mock:
         resp = MagicMock()
         resp.status_code = 429
         mock.return_value = resp
@@ -77,7 +77,7 @@ class TestCheckDoi:
         assert "rate" in str(exc_info.value).lower()
 
     def test_connection_error(self):
-        with patch("tome.crossref.httpx.get", side_effect=Exception("conn refused")):
+        with patch("tome.crossref.get_with_retry", side_effect=Exception("conn refused")):
             # Generic exception wrapping - the actual impl catches httpx errors
             with pytest.raises(Exception):
                 check_doi("10.1038/test")
@@ -85,7 +85,7 @@ class TestCheckDoi:
     def test_timeout(self):
         import httpx as httpx_mod
 
-        with patch("tome.crossref.httpx.get", side_effect=httpx_mod.TimeoutException("")):
+        with patch("tome.crossref.get_with_retry", side_effect=httpx_mod.TimeoutException("")):
             with pytest.raises(DOIResolutionFailed) as exc_info:
                 check_doi("10.1038/test")
             assert exc_info.value.status_code == 0

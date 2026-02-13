@@ -12,10 +12,11 @@ from urllib.parse import quote
 import httpx
 
 from tome.errors import DOIResolutionFailed
+from tome.http import get_with_retry
 
 CROSSREF_API = "https://api.crossref.org/works"
 REQUEST_TIMEOUT = 15.0
-POLITE_MAILTO = "tome-mcp@example.com"  # CrossRef polite pool
+POLITE_MAILTO = "stamm.reto@ul.ie"  # CrossRef polite pool
 
 
 @dataclass
@@ -46,7 +47,7 @@ def check_doi(doi: str) -> CrossRefResult:
     headers = {"User-Agent": f"Tome/0.1 (mailto:{POLITE_MAILTO})"}
 
     try:
-        resp = httpx.get(url, headers=headers, timeout=REQUEST_TIMEOUT, follow_redirects=True)
+        resp = get_with_retry(url, headers=headers, timeout=REQUEST_TIMEOUT, follow_redirects=True)
     except (httpx.ConnectError, httpx.TimeoutException) as e:
         raise DOIResolutionFailed(doi, 0) from e
 

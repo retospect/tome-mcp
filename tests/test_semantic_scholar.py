@@ -50,7 +50,7 @@ class TestParsePaper:
 
 
 class TestSearch:
-    @patch("tome.semantic_scholar.httpx.get")
+    @patch("tome.semantic_scholar.get_with_retry")
     def test_successful_search(self, mock_get):
         resp = MagicMock()
         resp.status_code = 200
@@ -61,7 +61,7 @@ class TestSearch:
         assert len(results) == 1
         assert results[0].title == "Scaling quantum interference"
 
-    @patch("tome.semantic_scholar.httpx.get")
+    @patch("tome.semantic_scholar.get_with_retry")
     def test_empty_results(self, mock_get):
         resp = MagicMock()
         resp.status_code = 200
@@ -71,7 +71,7 @@ class TestSearch:
         results = search("nonexistent paper xyz")
         assert results == []
 
-    @patch("tome.semantic_scholar.httpx.get")
+    @patch("tome.semantic_scholar.get_with_retry")
     def test_api_error(self, mock_get):
         resp = MagicMock()
         resp.status_code = 429
@@ -80,7 +80,7 @@ class TestSearch:
         results = search("test")
         assert results == []
 
-    @patch("tome.semantic_scholar.httpx.get")
+    @patch("tome.semantic_scholar.get_with_retry")
     def test_limit_capped(self, mock_get):
         resp = MagicMock()
         resp.status_code = 200
@@ -93,7 +93,7 @@ class TestSearch:
 
 
 class TestGetPaper:
-    @patch("tome.semantic_scholar.httpx.get")
+    @patch("tome.semantic_scholar.get_with_retry")
     def test_by_id(self, mock_get):
         resp = MagicMock()
         resp.status_code = 200
@@ -104,7 +104,7 @@ class TestGetPaper:
         assert p is not None
         assert p.s2_id == "abc123"
 
-    @patch("tome.semantic_scholar.httpx.get")
+    @patch("tome.semantic_scholar.get_with_retry")
     def test_not_found(self, mock_get):
         resp = MagicMock()
         resp.status_code = 404
@@ -114,7 +114,7 @@ class TestGetPaper:
 
 
 class TestGetCitationGraph:
-    @patch("tome.semantic_scholar.httpx.get")
+    @patch("tome.semantic_scholar.get_with_retry")
     def test_returns_graph(self, mock_get):
         def side_effect(url, **kwargs):
             resp = MagicMock()

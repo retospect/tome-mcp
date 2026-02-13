@@ -101,7 +101,7 @@ class TestReconstructAbstract:
 
 
 class TestSearch:
-    @patch("tome.openalex.httpx.get")
+    @patch("tome.openalex.get_with_retry")
     def test_successful_search(self, mock_get):
         resp = MagicMock()
         resp.status_code = 200
@@ -112,7 +112,7 @@ class TestSearch:
         assert len(results) == 1
         assert results[0].title == "Scaling quantum interference from molecules to cages"
 
-    @patch("tome.openalex.httpx.get")
+    @patch("tome.openalex.get_with_retry")
     def test_empty_results(self, mock_get):
         resp = MagicMock()
         resp.status_code = 200
@@ -122,7 +122,7 @@ class TestSearch:
         results = search("nonexistent paper xyz")
         assert results == []
 
-    @patch("tome.openalex.httpx.get")
+    @patch("tome.openalex.get_with_retry")
     def test_api_error(self, mock_get):
         resp = MagicMock()
         resp.status_code = 500
@@ -131,7 +131,7 @@ class TestSearch:
         results = search("test")
         assert results == []
 
-    @patch("tome.openalex.httpx.get")
+    @patch("tome.openalex.get_with_retry")
     def test_timeout(self, mock_get):
         import httpx as httpx_mod
 
@@ -139,7 +139,7 @@ class TestSearch:
         results = search("test")
         assert results == []
 
-    @patch("tome.openalex.httpx.get")
+    @patch("tome.openalex.get_with_retry")
     def test_limit_capped(self, mock_get):
         resp = MagicMock()
         resp.status_code = 200
@@ -150,7 +150,7 @@ class TestSearch:
         call_params = mock_get.call_args.kwargs["params"]
         assert int(call_params["per_page"]) <= 200
 
-    @patch("tome.openalex.httpx.get")
+    @patch("tome.openalex.get_with_retry")
     def test_polite_mailto(self, mock_get):
         resp = MagicMock()
         resp.status_code = 200
@@ -163,7 +163,7 @@ class TestSearch:
 
 
 class TestGetWorkByDoi:
-    @patch("tome.openalex.httpx.get")
+    @patch("tome.openalex.get_with_retry")
     def test_found(self, mock_get):
         resp = MagicMock()
         resp.status_code = 200
@@ -174,7 +174,7 @@ class TestGetWorkByDoi:
         assert w is not None
         assert w.doi == "10.1038/s41586-022-04435-4"
 
-    @patch("tome.openalex.httpx.get")
+    @patch("tome.openalex.get_with_retry")
     def test_not_found(self, mock_get):
         resp = MagicMock()
         resp.status_code = 404
@@ -182,7 +182,7 @@ class TestGetWorkByDoi:
 
         assert get_work_by_doi("10.1000/fake") is None
 
-    @patch("tome.openalex.httpx.get")
+    @patch("tome.openalex.get_with_retry")
     def test_timeout(self, mock_get):
         import httpx as httpx_mod
 

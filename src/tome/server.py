@@ -1808,6 +1808,55 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
 
 
 @mcp_server.tool()
+def find_text(query: str, context_lines: int = 3) -> str:
+    """Normalized search across .tex source files for PDF copy-paste text.
+
+    Strips LaTeX commands from source, then normalizes both query and
+    source (case-fold, collapse whitespace, NFKC unicode, smart quotes).
+    Returns file path and line numbers for each match.
+
+    Use this when you have text copied from the compiled PDF and need to
+    find the corresponding location in the .tex source for editing.
+
+    Args:
+        query: Text copied from PDF (will be normalized before matching).
+        context_lines: Lines of .tex source context around match (default 3).
+    """
+    from tome import find_text as ft
+
+    proj = _project_root()
+    cfg = _load_config()
+
+    # Collect .tex files from config globs
+    tex_files: list[str] = []
+    for glob_pat in cfg.tex_globs:
+        for p in sorted(proj.glob(glob_pat)):
+            rel = str(p.relative_to(proj))
+            if rel not in tex_files:
+                tex_files.append(rel)
+
+    if not tex_files:
+        return json.dumps({"error": "No .tex files found. Check tex_globs in config.yaml."})
+
+    matches = ft.find_all(query, proj, tex_files, context_lines=context_lines)
+
+    results = []
+    for m in matches:
+        results.append({
+            "file": m.file,
+            "line_start": m.line_start,
+            "line_end": m.line_end,
+            "context": m.context,
+        })
+
+    return json.dumps({
+        "query": query[:200],
+        "match_count": len(results),
+        "results": results,
+    }, indent=2)
+
+
+@mcp_server.tool()
 def grep_raw(query: str, key: str = "", context_chars: int = 200) -> str:
     """Normalized grep across raw PDF text extractions.
 

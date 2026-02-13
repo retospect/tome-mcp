@@ -14,13 +14,18 @@ from dataclasses import dataclass
 
 import httpx
 
+from tome.http import get_with_retry
+
 UNPAYWALL_API = "https://api.unpaywall.org/v2"
 REQUEST_TIMEOUT = 15.0
 
 
+DEFAULT_EMAIL = "stamm.reto@ul.ie"
+
+
 def _get_email() -> str | None:
-    """Get email for Unpaywall API from environment."""
-    return os.environ.get("UNPAYWALL_EMAIL")
+    """Get email for Unpaywall API. Env var overrides default."""
+    return os.environ.get("UNPAYWALL_EMAIL", DEFAULT_EMAIL)
 
 
 @dataclass
@@ -53,7 +58,7 @@ def lookup(doi: str, email: str | None = None) -> UnpaywallResult | None:
     params = {"email": email}
 
     try:
-        resp = httpx.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        resp = get_with_retry(url, params=params, timeout=REQUEST_TIMEOUT)
     except (httpx.ConnectError, httpx.TimeoutException):
         return None
 

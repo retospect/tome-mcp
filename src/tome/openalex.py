@@ -15,9 +15,11 @@ from typing import Any
 
 import httpx
 
+from tome.http import get_with_retry
+
 OPENALEX_API = "https://api.openalex.org"
 REQUEST_TIMEOUT = 15.0
-POLITE_MAILTO = "tome-mcp@example.com"
+POLITE_MAILTO = "stamm.reto@ul.ie"
 
 
 def _get_params() -> dict[str, str]:
@@ -110,7 +112,7 @@ def search(query: str, limit: int = 10) -> list[OAWork]:
     params["per_page"] = str(min(limit, 200))
 
     try:
-        resp = httpx.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        resp = get_with_retry(url, params=params, timeout=REQUEST_TIMEOUT)
     except (httpx.ConnectError, httpx.TimeoutException):
         return []
 
@@ -134,7 +136,7 @@ def get_work_by_doi(doi: str) -> OAWork | None:
     params = _get_params()
 
     try:
-        resp = httpx.get(url, params=params, timeout=REQUEST_TIMEOUT)
+        resp = get_with_retry(url, params=params, timeout=REQUEST_TIMEOUT)
     except (httpx.ConnectError, httpx.TimeoutException):
         return None
 
