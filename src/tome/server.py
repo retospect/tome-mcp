@@ -1808,6 +1808,45 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
 
 
 @mcp_server.tool()
+def grep_raw(query: str, key: str = "", context_chars: int = 200) -> str:
+    """Normalized grep across raw PDF text extractions.
+
+    Finds verbatim (or near-verbatim) text in extracted PDF pages.
+    Normalizes both query and target: collapses whitespace, case-folds,
+    NFKC unicode (ligatures), flattens smart quotes, rejoins hyphenated
+    line breaks. Ideal for verifying copypasted quotes against source PDFs.
+
+    Args:
+        query: Text to search for (will be normalized before matching).
+        key: Restrict to one paper (bib key). Empty = search all papers.
+        context_chars: Characters of surrounding context to return (default 200).
+    """
+    from tome import grep_raw as gr
+
+    raw_dir = _dot_tome() / "raw"
+    if not raw_dir.is_dir():
+        return json.dumps({"error": "No raw text directory. Run rebuild first."})
+
+    keys = [key] if key else None
+    matches = gr.grep_all(query, raw_dir, keys=keys, context_chars=context_chars)
+
+    results = []
+    for m in matches:
+        results.append({
+            "key": m.key,
+            "page": m.page,
+            "context": m.context,
+        })
+
+    return json.dumps({
+        "query": query,
+        "normalized_query": gr.normalize(query),
+        "match_count": len(results),
+        "results": results,
+    }, indent=2)
+
+
+@mcp_server.tool()
 def set_root(path: str) -> str:
     """Switch Tome's project root directory at runtime.
 
