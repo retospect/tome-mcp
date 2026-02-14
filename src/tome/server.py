@@ -33,8 +33,10 @@ from tome import (
     summaries,
     validate,
 )
+from tome import guide as guide_mod
 from tome import issues as issues_mod
 from tome import notes as notes_mod
+from tome import toc as toc_mod
 from tome import openalex
 from tome import semantic_scholar as s2
 from tome import store
@@ -635,7 +637,8 @@ def get_notes(key: str) -> str:
     """Get research notes for a paper. Notes are LLM-curated observations
     stored in tome/notes/{key}.yaml — summary, claims, relevance, limitations.
 
-    Returns empty object if no notes exist yet. Use set_notes to add them.
+    Returns empty object if no notes exist yet. Use set_notes to add them,
+    or edit_notes to remove items or delete the note entirely.
 
     Args:
         key: Bib key (e.g. 'miller1999').
@@ -663,7 +666,7 @@ def set_notes(
     Relevance is a JSON array of {section, note} objects.
 
     Scalar fields (summary, quality) overwrite. List fields append and
-    deduplicate. Notes are append-only — papers don't change.
+    deduplicate. Use edit_notes to remove individual items or delete notes.
 
     Args:
         key: Bib key (e.g. 'miller1999').
@@ -727,6 +730,92 @@ def set_notes(
         ],
         "note": merged,
     }, indent=2)
+
+
+@mcp_server.tool()
+def edit_notes(
+    key: str,
+    action: str,
+    field: str = "",
+    value: str = "",
+) -> str:
+    """Remove an item from a note field, or delete the entire note.
+
+    Use set_notes to add/update. Use this tool to remove or delete.
+
+    Actions:
+      remove — Remove one item from a list field, or clear a scalar field.
+               Requires 'field'. For list fields (claims, limitations, tags),
+               'value' is the exact item text to remove. For relevance,
+               'value' is a JSON {section, note} object. For scalar fields
+               (summary, quality), the field is cleared (value ignored).
+      delete — Delete the entire note file for this paper.
+               'field' and 'value' are ignored.
+
+    Args:
+        key: Bib key (e.g. 'miller1999').
+        action: 'remove' or 'delete'.
+        field: Field to remove from (required for action='remove').
+            One of: claims, limitations, tags, relevance, summary, quality.
+        value: Item to remove (for list fields). Exact string match.
+    """
+    validate.validate_key(key)
+
+    if action == "delete":
+        deleted = notes_mod.delete_note(_tome_dir(), key)
+        # Remove from ChromaDB
+        if deleted:
+            try:
+                client = store.get_client(_chroma_dir())
+                embed_fn = store.get_embed_fn()
+                col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
+                col.delete(ids=[f"{key}::note"])
+            except Exception:
+                pass
+        return json.dumps({
+            "key": key,
+            "action": "delete",
+            "status": "deleted" if deleted else "not_found",
+        })
+
+    if action == "remove":
+        if not field:
+            return json.dumps({"error": "field is required for action='remove'"})
+        existing = notes_mod.load_note(_tome_dir(), key)
+        if not existing:
+            return json.dumps({"key": key, "action": "remove", "status": "no_notes"})
+        try:
+            updated, removed = notes_mod.remove_from_note(existing, field, value)
+        except ValueError as e:
+            return json.dumps({"error": str(e)})
+        if not removed:
+            return json.dumps({
+                "key": key, "action": "remove", "field": field,
+                "status": "not_found", "note": existing,
+            }, indent=2)
+        notes_mod.save_note(_tome_dir(), key, updated)
+        # Re-index into ChromaDB
+        flat_text = notes_mod.flatten_for_search(key, updated)
+        try:
+            client = store.get_client(_chroma_dir())
+            embed_fn = store.get_embed_fn()
+            col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
+            if updated:
+                col.upsert(
+                    ids=[f"{key}::note"],
+                    documents=[flat_text],
+                    metadatas=[{"bib_key": key, "source_type": "note"}],
+                )
+            else:
+                col.delete(ids=[f"{key}::note"])
+        except Exception:
+            pass
+        return json.dumps({
+            "key": key, "action": "remove", "field": field,
+            "status": "removed", "note": updated,
+        }, indent=2)
+
+    return json.dumps({"error": f"Unknown action '{action}'. Must be 'remove' or 'delete'."})
 
 
 @mcp_server.tool()
@@ -1783,6 +1872,20 @@ def stats() -> str:
     )
 
 
+@mcp_server.tool()
+def guide(topic: str = "") -> str:
+    """On-demand usage guides. Call without args for topic index.
+
+    Args:
+        topic: Topic slug or search term. Empty = list all topics.
+    """
+    proj = _project_root()
+    if not topic:
+        topics = guide_mod.list_topics(proj)
+        return guide_mod.render_index(topics)
+    return guide_mod.get_topic(proj, topic)
+
+
 # ---------------------------------------------------------------------------
 # Document analysis tools
 # ---------------------------------------------------------------------------
@@ -1817,6 +1920,53 @@ def _resolve_root(root: str) -> str:
         raise RootFileNotFound(root_name, tex_path, str(_project_root()))
 
     return tex_path
+
+
+@mcp_server.tool()
+def toc(
+    root: str = "default",
+    depth: str = "subsubsection",
+    query: str = "",
+    file: str = "",
+    pages: str = "",
+    figures: bool = True,
+    part: str = "",
+) -> str:
+    """Parse the compiled TOC into a hierarchical, indented document map.
+
+    Reads .toc, .lof, and .lot files produced by LaTeX compilation.
+    Returns a compact plain-text tree with heading numbers, titles,
+    source file:line attribution, page numbers, and nested figures/tables.
+
+    Source attribution requires the \\tomeinfo enrichment patch in the
+    document preamble (currfile package). Without it the tool still works
+    but omits file:line info.
+
+    Use for orientation, structural review, or navigating to content.
+
+    Args:
+        root: Named root from config.yaml (default: 'default'), or a .tex path.
+        depth: Max heading level to show — part, section, subsection,
+            subsubsection (default), paragraph, or all.
+        query: Case-insensitive substring filter on heading text.
+            Shows matching entries plus their full ancestor chain.
+        file: Only show entries from this source file (substring match).
+        pages: Page range filter, e.g. '31-70'.
+        figures: Include figure and table entries (default True).
+        part: Restrict to a part by number or name substring.
+    """
+    root_tex = _resolve_root(root)
+    proj = _project_root()
+    return toc_mod.get_toc(
+        proj,
+        root_tex,
+        depth=depth,
+        query=query,
+        file=file,
+        pages=pages,
+        figures=figures,
+        part=part,
+    )
 
 
 @mcp_server.tool()
@@ -2645,6 +2795,18 @@ def report_issue(tool: str, description: str, severity: str = "minor") -> str:
     }, indent=2)
 
 
+@mcp_server.tool()
+def report_issue_guide() -> str:
+    """Best-practices guide for reporting tool issues.
+
+    Equivalent to guide('reporting-issues'). Kept for backward compatibility.
+    """
+    try:
+        return guide_mod.get_topic(_project_root(), "reporting-issues")
+    except TomeError:
+        return issues_mod.report_issue_guide()
+
+
 _EMPTY_BIB = """\
 % Tome bibliography — managed by Tome MCP server.
 % Add entries via ingest(), set_paper(), or edit directly.
@@ -2783,6 +2945,36 @@ def set_root(path: str) -> str:
             "These .tex files are not in any \\input{} tree. "
             "They may be unused or need to be \\input'd."
         )
+
+    # TOC status — report heading/figure/table counts and tomeinfo presence
+    if config_status == "loaded":
+        try:
+            for _rname, root_tex in cfg.roots.items():
+                stem = Path(root_tex).stem
+                build_dir = p / "build"
+                base = build_dir if (build_dir / f"{stem}.toc").exists() else p
+                toc_path = base / f"{stem}.toc"
+                if toc_path.exists():
+                    toc_entries = toc_mod.parse_toc(toc_path)
+                    lof = toc_mod.parse_floats(base / f"{stem}.lof", "figure")
+                    lot = toc_mod.parse_floats(base / f"{stem}.lot", "table")
+                    has_tomeinfo = any(e.file for e in toc_entries)
+                    toc_info: dict[str, Any] = {
+                        "headings": len(toc_entries),
+                        "figures": len(lof),
+                        "tables": len(lot),
+                        "source_attribution": has_tomeinfo,
+                    }
+                    if not has_tomeinfo:
+                        toc_info["hint"] = (
+                            "TOC entries lack source file:line. Add the "
+                            "\\tomeinfo currfile patch to your preamble "
+                            "for source attribution. Use toc() for details."
+                        )
+                    response["toc"] = toc_info
+                    break  # report first root only
+        except Exception:
+            pass
 
     # Surface open issues
     open_issues = issues_mod.count_open(tome_dir)
