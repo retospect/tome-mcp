@@ -74,7 +74,7 @@ logger.setLevel(logging.DEBUG)
 _stderr_handler = logging.StreamHandler(sys.stderr)
 _stderr_handler.setLevel(logging.WARNING)
 _stderr_handler.setFormatter(logging.Formatter(
-    "%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S"
+    "%(asctime)s [%(process)d] %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S"
 ))
 logger.addHandler(_stderr_handler)
 
@@ -93,7 +93,7 @@ def _attach_file_log(dot_tome: Path) -> None:
     )
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(logging.Formatter(
-        "%(asctime)s %(levelname)s %(name)s: %(message)s"
+        "%(asctime)s [%(process)d] %(levelname)s %(name)s: %(message)s"
     ))
     logger.addHandler(fh)
     _file_handler = fh
