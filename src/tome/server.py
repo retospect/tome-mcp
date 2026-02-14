@@ -33,6 +33,7 @@ from tome import (
     summaries,
     validate,
 )
+from tome import issues as issues_mod
 from tome import notes as notes_mod
 from tome import openalex
 from tome import semantic_scholar as s2
@@ -1765,6 +1766,9 @@ def stats() -> str:
     pending_figs = len(figures.list_figures(data, status="requested"))
     open_reqs = len(manifest.list_open_requests(data))
 
+    open_issues = issues_mod.count_open(_tome_dir())
+    notes_count = len(notes_mod.list_notes(_tome_dir()))
+
     return json.dumps(
         {
             "total_papers": len(lib.entries),
@@ -1772,6 +1776,8 @@ def stats() -> str:
             "doi_status": doi_stats,
             "pending_figures": pending_figs,
             "open_requests": open_reqs,
+            "papers_with_notes": notes_count,
+            "open_issues": open_issues,
         },
         indent=2,
     )
@@ -2609,6 +2615,36 @@ def clear_explorations() -> str:
     })
 
 
+@mcp_server.tool()
+def report_issue(tool: str, description: str, severity: str = "minor") -> str:
+    """Report a tool issue for the project maintainer to review.
+
+    Call this whenever a Tome tool behaves unexpectedly, returns confusing
+    output, or is missing a feature you need. Issues are stored in
+    tome/issues.md (git-tracked) and surfaced in stats() and set_root().
+
+    Severity levels: minor (cosmetic/UX), major (wrong results), blocker
+    (tool unusable).
+
+    Args:
+        tool: Name of the MCP tool (e.g. 'search', 'ingest', 'doc_lint').
+        description: What happened and what you expected.
+        severity: minor, major, or blocker (default: minor).
+    """
+    if severity not in ("minor", "major", "blocker"):
+        severity = "minor"
+
+    num = issues_mod.append_issue(_tome_dir(), tool, description, severity)
+    open_count = issues_mod.count_open(_tome_dir())
+
+    return json.dumps({
+        "status": "reported",
+        "issue_id": f"ISSUE-{num:03d}",
+        "file": "tome/issues.md",
+        "open_issues": open_count,
+    }, indent=2)
+
+
 _EMPTY_BIB = """\
 % Tome bibliography — managed by Tome MCP server.
 % Add entries via ingest(), set_paper(), or edit directly.
@@ -2746,6 +2782,15 @@ def set_root(path: str) -> str:
         response["orphan_hint"] = (
             "These .tex files are not in any \\input{} tree. "
             "They may be unused or need to be \\input'd."
+        )
+
+    # Surface open issues
+    open_issues = issues_mod.count_open(tome_dir)
+    if open_issues > 0:
+        response["open_issues"] = open_issues
+        response["issues_hint"] = (
+            f"{open_issues} open issue(s) in tome/issues.md. "
+            "Review and resolve by deleting entries or prefixing with [RESOLVED]."
         )
 
     return json.dumps(response, indent=2)
