@@ -33,6 +33,7 @@ from tome import (
     summaries,
     validate,
 )
+from tome import notes as notes_mod
 from tome import openalex
 from tome import semantic_scholar as s2
 from tome import store
@@ -620,7 +621,111 @@ def get_paper(key: str) -> str:
         result["pages_extracted"] = paper_meta.get("pages_extracted")
         result["embedded"] = paper_meta.get("embedded")
 
+    # Include notes if they exist
+    note_data = notes_mod.load_note(_tome_dir(), key)
+    if note_data:
+        result["notes"] = note_data
+
     return json.dumps(result, indent=2)
+
+
+@mcp_server.tool()
+def get_notes(key: str) -> str:
+    """Get research notes for a paper. Notes are LLM-curated observations
+    stored in tome/notes/{key}.yaml — summary, claims, relevance, limitations.
+
+    Returns empty object if no notes exist yet. Use set_notes to add them.
+
+    Args:
+        key: Bib key (e.g. 'miller1999').
+    """
+    validate.validate_key(key)
+    data = notes_mod.load_note(_tome_dir(), key)
+    return json.dumps({"key": key, "has_notes": bool(data), **data}, indent=2)
+
+
+@mcp_server.tool()
+def set_notes(
+    key: str,
+    summary: str = "",
+    claims: str = "",
+    relevance: str = "",
+    limitations: str = "",
+    quality: str = "",
+    tags: str = "",
+) -> str:
+    """Add or update research notes for a paper. Notes are git-tracked in
+    tome/notes/{key}.yaml and indexed into ChromaDB for semantic search.
+
+    All fields are optional — provide only the ones you want to add/update.
+    List fields (claims, limitations, tags) are comma-separated strings.
+    Relevance is a JSON array of {section, note} objects.
+
+    Scalar fields (summary, quality) overwrite. List fields append and
+    deduplicate. Notes are append-only — papers don't change.
+
+    Args:
+        key: Bib key (e.g. 'miller1999').
+        summary: One-line summary of the paper's contribution.
+        claims: Comma-separated key claims (appended, deduplicated).
+        relevance: JSON array of {section, note} objects (appended).
+        limitations: Comma-separated limitations (appended, deduplicated).
+        quality: Quality assessment (e.g. 'high — Nature, well-cited').
+        tags: Comma-separated tags (appended, deduplicated).
+    """
+    validate.validate_key(key)
+
+    # Parse list fields from comma-separated strings
+    claims_list = [c.strip() for c in claims.split(",") if c.strip()] if claims else None
+    limitations_list = [l.strip() for l in limitations.split(",") if l.strip()] if limitations else None
+    tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
+
+    # Parse relevance from JSON
+    relevance_list = None
+    if relevance:
+        try:
+            relevance_list = json.loads(relevance)
+            if not isinstance(relevance_list, list):
+                relevance_list = [relevance_list]
+        except json.JSONDecodeError:
+            return json.dumps({"error": "relevance must be a JSON array of {section, note} objects"})
+
+    # Load, merge, save
+    existing = notes_mod.load_note(_tome_dir(), key)
+    merged = notes_mod.merge_note(
+        existing,
+        summary=summary,
+        claims=claims_list,
+        relevance=relevance_list,
+        limitations=limitations_list,
+        quality=quality,
+        tags=tags_list,
+    )
+    notes_mod.save_note(_tome_dir(), key, merged)
+
+    # Index into ChromaDB for semantic search
+    flat_text = notes_mod.flatten_for_search(key, merged)
+    try:
+        client = store.get_client(_chroma_dir())
+        embed_fn = store.get_embed_fn()
+        col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
+        col.upsert(
+            ids=[f"{key}::note"],
+            documents=[flat_text],
+            metadatas=[{"bib_key": key, "source_type": "note"}],
+        )
+    except Exception:
+        pass  # ChromaDB failure is non-fatal
+
+    return json.dumps({
+        "key": key,
+        "status": "updated",
+        "fields_set": [
+            f for f in ["summary", "claims", "relevance", "limitations", "quality", "tags"]
+            if locals().get(f)
+        ],
+        "note": merged,
+    }, indent=2)
 
 
 @mcp_server.tool()
@@ -2392,12 +2497,13 @@ def explore_citations(
         "cited_by": cited_by,
         "hint": (
             "Present these as a numbered table to the user: "
-            "# | Year | Title (8 words) | Cites | Abstract gist | Your verdict. "
-            "Recommend 'relevant' / 'irrelevant' / 'deferred' for each. "
-            "Wait for user confirmation, then batch mark_explored() calls. "
-            "Next: explore_citations(s2_id=<relevant_id>, "
+            "# | Year | Title (8 words) | Cites | Abstract gist | Verdict. "
+            "Triage each as 'relevant' / 'irrelevant' / 'deferred'. "
+            "Batch mark_explored() calls, then immediately expand relevant branches via "
+            "explore_citations(s2_id=<relevant_id>, "
             f"parent_s2_id='{result.get('s2_id', '')}', "
-            f"depth={result.get('depth', 0) + 1}) on each relevant paper."
+            f"depth={result.get('depth', 0) + 1}). "
+            "Be narrow (few relevant) for pointed searches, broader for survey-style."
         ),
     }, indent=2)
 
