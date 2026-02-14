@@ -7,8 +7,12 @@ The server uses stdio transport for MCP client communication.
 from __future__ import annotations
 
 import json
+import logging
+import logging.handlers
 import os
 import shutil
+import sys
+import traceback
 from pathlib import Path
 from typing import Any, Literal
 
@@ -60,6 +64,43 @@ from tome.errors import (
 mcp_server = FastMCP("Tome")
 
 # ---------------------------------------------------------------------------
+# Logging — stderr always, file handler added once project root is known
+# ---------------------------------------------------------------------------
+
+logger = logging.getLogger("tome")
+logger.setLevel(logging.DEBUG)
+
+# Stderr handler (WARNING+) — visible in MCP client logs
+_stderr_handler = logging.StreamHandler(sys.stderr)
+_stderr_handler.setLevel(logging.WARNING)
+_stderr_handler.setFormatter(logging.Formatter(
+    "%(asctime)s %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S"
+))
+logger.addHandler(_stderr_handler)
+
+_file_handler: logging.Handler | None = None
+
+
+def _attach_file_log(dot_tome: Path) -> None:
+    """Attach a rotating file handler to .tome/server.log (idempotent)."""
+    global _file_handler
+    if _file_handler is not None:
+        return  # already attached
+    dot_tome.mkdir(parents=True, exist_ok=True)
+    log_path = dot_tome / "server.log"
+    fh = logging.handlers.RotatingFileHandler(
+        log_path, maxBytes=1_000_000, backupCount=2, encoding="utf-8",
+    )
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    ))
+    logger.addHandler(fh)
+    _file_handler = fh
+    logger.info("Tome server started — log attached to %s", log_path)
+
+
+# ---------------------------------------------------------------------------
 # Paths — resolved relative to TOME_ROOT (env), set_root(), or cwd
 # ---------------------------------------------------------------------------
 
@@ -93,7 +134,9 @@ def _tome_dir() -> Path:
 
 def _dot_tome() -> Path:
     """The hidden .tome/ cache directory (gitignored)."""
-    return _project_root() / ".tome"
+    d = _project_root() / ".tome"
+    _attach_file_log(d)
+    return d
 
 
 def _bib_path() -> Path:
@@ -2248,13 +2291,15 @@ def find_text(query: str, context_lines: int = 3) -> str:
 
 
 @mcp_server.tool()
-def grep_raw(query: str, key: str = "", context_chars: int = 200) -> str:
+def grep_raw(query: str, key: str = "", context_chars: int = 200, paragraphs: int = 0) -> str:
     """Normalized grep across raw PDF text extractions.
 
     Args:
         query: Text to search for (will be normalized before matching).
         key: Restrict to one paper (bib key). Empty = search all papers.
         context_chars: Characters of surrounding context to return.
+        paragraphs: Return N cleaned paragraphs centered on match
+            (hyphens rejoined, whitespace collapsed). 0 = use context_chars with raw text.
     """
     from tome import grep_raw as gr
 
@@ -2266,6 +2311,34 @@ def grep_raw(query: str, key: str = "", context_chars: int = 200) -> str:
             "Use ingest to add papers, or run rebuild to regenerate from tome/pdf/."
         })
 
+    # Paragraph mode: single-paper, cleaned output
+    if paragraphs > 0:
+        if not key:
+            return json.dumps({
+                "error": "paragraphs mode requires a key (single-paper search).",
+            })
+        matches = gr.grep_paper_paragraphs(
+            query, raw_dir, key, paragraphs=paragraphs,
+        )
+        results = []
+        for m in matches:
+            entry: dict[str, Any] = {
+                "match_page": m.page,
+                "score": m.score,
+            }
+            if isinstance(m.text, dict):
+                entry["paragraphs"] = m.text
+            else:
+                entry["text"] = m.text
+            results.append(entry)
+
+        return json.dumps({
+            "query": query,
+            "match_count": len(results),
+            "results": results,
+        }, indent=2)
+
+    # Character-context mode (original behavior)
     keys = [key] if key else None
     matches = gr.grep_all(query, raw_dir, keys=keys, context_chars=context_chars)
 
@@ -2726,6 +2799,8 @@ def set_root(path: str) -> str:
         return json.dumps({"error": f"Directory not found: {path}"})
 
     _runtime_root = p
+    _attach_file_log(p / ".tome")
+    logger.info("Project root set to %s", p)
     tome_dir = p / "tome"
 
     # Scaffold standard directories + files if missing (idempotent)
@@ -2989,7 +3064,21 @@ def file_diff(file: str, task: str = "", base: str = "") -> str:
 
 def main():
     """Run the Tome MCP server."""
-    mcp_server.run(transport="stdio")
+    # Try to attach file log early from env var (before any tool call)
+    root = os.environ.get("TOME_ROOT")
+    if root:
+        try:
+            _attach_file_log(Path(root) / ".tome")
+        except Exception:
+            pass  # will attach later via _dot_tome()
+
+    try:
+        mcp_server.run(transport="stdio")
+    except KeyboardInterrupt:
+        logger.info("Tome server stopped (keyboard interrupt)")
+    except Exception:
+        logger.critical("Tome server crashed:\n%s", traceback.format_exc())
+        raise
 
 
 if __name__ == "__main__":

@@ -43,6 +43,32 @@ Track review findings by adding a `review_finding` pattern for
   extractions. Also rejoins hyphenated line breaks. Ideal for verifying
   copy-pasted quotes against source PDFs.
 
+### Paragraph mode (`paragraphs=N`)
+
+Pass `paragraphs=1` to get a cleaned, quote-ready paragraph instead
+of a raw character window. The text has hyphens rejoined, whitespace
+collapsed, and zero-width spaces removed — ready for `\mciteboxp`.
+
+Use `paragraphs=3` to get context: the matched paragraph plus one
+before and one after. `paragraphs=5` gives ±2, etc. (always centered
+on the match, rounded to odd).
+
+When multiple paragraphs span a page boundary, the response uses a
+page-keyed dict: `{"5": "...", "6": "..."}` so you know which page
+to cite. Single-paragraph results return a plain string.
+
+Matching uses two tiers:
+1. **Exact normalized substring** — same as default `grep_raw`
+2. **Token proximity** — finds paragraphs where query words appear
+   close together, even if the exact phrase is broken by OCR artifacts
+   or line-break hyphens that normalization missed
+
+Requires `key` (single-paper only). Example:
+```
+grep_raw(query="cooperatively functioning rotaxanes",
+         key="feng2022", paragraphs=1)
+```
+
 ## Deep citation validation
 
 **`validate_deep_cites(file="", key="")`** — Extracts all deep-cite
