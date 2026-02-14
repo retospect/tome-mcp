@@ -71,7 +71,8 @@ project-root/
 │   ├── references.bib          # AUTHORITATIVE bibliography
 │   ├── inbox/                  # Drop PDFs here for processing
 │   ├── pdf/                    # Committed PDFs (authorYYYY.pdf)
-│   └── figures/                # Source figure screenshots
+│   ├── figures/                # Source figure screenshots
+│   └── notes/                  # LLM-curated paper notes (authorYYYY.yaml)
 ```
 
 ### Cache (gitignored, fully regenerable via `tome:rebuild`)
@@ -379,6 +380,7 @@ Every error message includes: what happened, why, and what to do next.
 │       ├── semantic_scholar.py # S2 API client
 │       ├── figures.py          # Figure request/registration + caption extraction
 │       ├── manifest.py         # tome.json read/write (atomic, backup)
+│       ├── notes.py            # Paper notes (YAML + ChromaDB indexing)
 │       └── errors.py           # Exception hierarchy
 └── tests/
     ├── conftest.py             # Shared fixtures
@@ -392,5 +394,6 @@ Every error message includes: what happened, why, and what to do next.
     ├── test_semantic_scholar.py
     ├── test_figures.py
     ├── test_manifest.py
+    ├── test_notes.py
     └── test_server.py
 ```
