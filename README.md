@@ -363,6 +363,8 @@ Every error message includes: what happened, why, and what to do next.
 ├── pyproject.toml
 ├── README.md
 ├── .gitignore
+├── examples/
+│   └── config.yaml              # Full config example (all features)
 ├── src/
 │   └── tome/
 │       ├── __init__.py

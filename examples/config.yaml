@@ -1,0 +1,125 @@
+# Tome project configuration — FULL EXAMPLE
+#
+# This is a complete working example showing all available config options.
+# Copy this to your project's tome/config.yaml and adapt to your needs.
+# The default config (created by set_root) is minimal — this shows everything.
+#
+# Tome checksums this file and re-indexes when it changes.
+
+# Email for Unpaywall open-access PDF lookup and CrossRef/OpenAlex polite pools.
+# Can also be set via UNPAYWALL_EMAIL environment variable.
+unpaywall_email: you@example.com
+
+# Document entry points — named roots for \input{}/\include{} tree walking.
+# Use any name; tools accept root="name" to target a specific document.
+# Multiple roots let you manage several documents in one project.
+roots:
+  default: main.tex
+  # talk: presentations/seminar/main.tex
+  # poster: poster/poster.tex
+
+# Glob patterns for files to index into ChromaDB (for semantic search).
+# .tome/, .git/, __pycache__/, .venv/ etc. are always excluded.
+tex_globs:
+  - "sections/*.tex"
+  - "appendix/*.tex"
+  - "main.tex"
+  - "tex/*.tex"
+  - "tex/*.sty"
+  - "figures/*.tikz"
+  - "figures/*.mmd"
+  - "**/*.py"
+  - "**/*.md"
+  - "**/*.txt"
+
+# Project-specific LaTeX macros to track.
+# Built-in patterns (\label, \ref, \cite, \section) are always indexed.
+# Each entry needs:
+#   name:    identifier for this pattern type
+#   pattern: Python regex (double-escape backslashes in YAML)
+#   groups:  names for capture groups (in order)
+track:
+  # Open technical questions (e.g. custom \techquestion{id}{text} macro)
+  - name: question
+    pattern: '\\techquestion\{([^}]+)\}\{([^}]+)\}'
+    groups: [id, text]
+
+  # Citation needed placeholder
+  - name: citation_needed
+    pattern: '\\citationneeded'
+    groups: []
+
+  # Deep citation with page and verbatim quote.
+  # IMPORTANT: name this 'deep_cite' with groups [key, page, quote]
+  # to enable the validate_deep_cites tool.
+  - name: deep_cite
+    pattern: '\\deepcite\{([^}]+)\}\{([^}]+)\}\{([^}]+)\}'
+    groups: [key, page, quote]
+
+  # Deep citation without page number
+  - name: deep_cite_nopage
+    pattern: '\\deepcitenp\{([^}]+)\}\{([^}]+)\}'
+    groups: [key, quote]
+
+  # Review findings — track with review_status tool,
+  # list individuals with find_text("REV-"). Resolve by deleting from .tex.
+  - name: review_finding
+    pattern: '\\reviewfinding\{([^}]+)\}\{([^}]+)\}\{([^}]+)\}'
+    groups: [id, severity, text]
+
+  # Glossary terms used (standard glossaries package)
+  - name: glossary
+    pattern: '\\gls(?:pl)?\{([^}]+)\}'
+    groups: [term]
+
+# Recurring tasks ranked by the needful command.
+# cadence_hours: 0 = only when file changes; >0 = re-do after N hours.
+# Commit before mark_done so git diff works for next review.
+needful:
+  # Content verification review (weekly)
+  - name: review_pass_a
+    description: "Pass A — content verification (rigor, technical accuracy, gaps)"
+    globs: ["sections/*.tex"]
+    cadence_hours: 168
+
+  # Polish review (weekly)
+  - name: review_pass_b
+    description: "Pass B — polish (citations, structure, style)"
+    globs: ["sections/*.tex"]
+    cadence_hours: 168
+
+  # Cross-section cohesion (biweekly)
+  - name: review_cohesion
+    description: "Cohesion — narrative consistency across sections"
+    globs: ["sections/*.tex"]
+    cadence_hours: 336
+
+  # Re-index for semantic search (on file change only)
+  - name: sync_corpus
+    description: "Re-index into ChromaDB search corpus"
+    globs: ["sections/*.tex", "appendix/*.tex"]
+    cadence_hours: 0
+
+  # Update file summaries for LLM orientation (on file change only)
+  - name: summarize
+    description: "Update file summary (section map for LLM orientation)"
+    globs: ["sections/*.tex", "appendix/*.tex"]
+    cadence_hours: 0
+
+  # Document lint (on file change only)
+  - name: doc_lint
+    description: "Lint for undefined refs, orphan labels, shallow high-use cites"
+    globs: ["sections/*.tex", "appendix/*.tex"]
+    cadence_hours: 0
+
+  # Back-of-book index entries (on file change only)
+  - name: index_review
+    description: "Add \\index{} entries for key concepts"
+    globs: ["sections/*.tex"]
+    cadence_hours: 0
+
+  # Forward citation discovery (monthly)
+  - name: refresh_citations
+    description: "Refresh citation trees and discover new papers citing our references"
+    globs: ["tome/references.bib"]
+    cadence_hours: 720
