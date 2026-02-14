@@ -1,6 +1,6 @@
 """Tests for tome.store.
 
-Uses in-memory ChromaDB client (no Ollama needed).
+Uses in-memory ChromaDB client (built-in embeddings, no external server needed).
 """
 
 from pathlib import Path

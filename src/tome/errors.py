@@ -83,19 +83,6 @@ class IngestFailed(TomeError):
         self.reason = reason
 
 
-class OllamaUnavailable(TomeError):
-    """Cannot reach the Ollama embedding server."""
-
-    def __init__(self, url: str):
-        super().__init__(
-            f"Cannot reach Ollama at {url}. "
-            f"Ensure Ollama is running ('ollama serve') and the URL is correct. "
-            f"Ingest will still extract text but skip embedding. "
-            f"Run rebuild after starting Ollama to generate embeddings."
-        )
-        self.url = url
-
-
 class BibParseError(TomeError):
     """The bib file could not be parsed."""
 
@@ -187,3 +174,114 @@ class UnsafeInput(TomeError):
         self.field = field
         self.value = value
         self.reason = reason
+
+
+class ConfigError(TomeError):
+    """Project configuration is missing or invalid."""
+
+    def __init__(self, detail: str, hint: str = ""):
+        msg = f"Configuration error: {detail}."
+        if hint:
+            msg += f" {hint}"
+        super().__init__(msg)
+        self.detail = detail
+        self.hint = hint
+
+
+class ConfigMissing(ConfigError):
+    """The tome/config.yaml file does not exist yet."""
+
+    def __init__(self, tome_dir: str):
+        super().__init__(
+            f"No config.yaml found in {tome_dir}/",
+            hint=(
+                "Run set_root(path='...') to auto-create a starter config, "
+                "or create tome/config.yaml manually. "
+                "The config file defines document roots, tex_globs for search indexing, "
+                "tracked LaTeX macros, and recurring tasks."
+            ),
+        )
+
+
+class RootNotFound(ConfigError):
+    """A named document root is not defined in config.yaml."""
+
+    def __init__(self, root: str, available: list[str]):
+        avail_str = ", ".join(f"'{r}'" for r in available) if available else "(none defined)"
+        super().__init__(
+            f"Document root '{root}' not found in config.yaml. Available roots: {avail_str}",
+            hint=(
+                "Add this root to the 'roots:' section of tome/config.yaml, e.g.:\n"
+                f"  roots:\n    {root}: path/to/{root}.tex\n"
+                "Or use an existing root name."
+            ),
+        )
+
+
+class RootFileNotFound(ConfigError):
+    """The .tex file for a document root does not exist on disk."""
+
+    def __init__(self, root_name: str, tex_path: str, project_root: str):
+        super().__init__(
+            f"Root '{root_name}' points to '{tex_path}' but that file does not exist "
+            f"under project root {project_root}",
+            hint=(
+                "Check that the path in tome/config.yaml is correct and relative "
+                "to the project root. Create the file or update the config."
+            ),
+        )
+
+
+class NoBibFile(ConfigError):
+    """No references.bib exists yet."""
+
+    def __init__(self, bib_path: str):
+        super().__init__(
+            f"Bibliography file not found at {bib_path}",
+            hint=(
+                "The library is empty. Use set_paper(key='...', title='...') to create "
+                "the first entry, or place a PDF in tome/inbox/ and run ingest."
+            ),
+        )
+
+
+class NoTexFiles(ConfigError):
+    """tex_globs matched no files."""
+
+    def __init__(self, globs: list[str]):
+        globs_str = ", ".join(globs)
+        super().__init__(
+            f"No files matched tex_globs: [{globs_str}]",
+            hint=(
+                "Check that tex_globs in tome/config.yaml match your project structure. "
+                "Common patterns: 'sections/*.tex', 'chapters/*.tex', '**/*.tex'. "
+                "Directories .tome/, .git/, .venv/ are always excluded."
+            ),
+        )
+
+
+class ChromaDBError(TomeError):
+    """ChromaDB initialization or query failed."""
+
+    def __init__(self, detail: str):
+        super().__init__(
+            f"ChromaDB error: {detail}. "
+            f"The .tome/chroma/ directory may be corrupted. "
+            f"Try: rebuild (re-extracts text and re-indexes all papers). "
+            f"If that fails, delete .tome/chroma/ and rebuild again."
+        )
+        self.detail = detail
+
+
+class UnpaywallNotConfigured(ConfigError):
+    """No email configured for Unpaywall API access."""
+
+    def __init__(self):
+        super().__init__(
+            "No email configured for Unpaywall open-access PDF lookup",
+            hint=(
+                "Set the UNPAYWALL_EMAIL environment variable, or add "
+                "'unpaywall_email: you@example.com' to tome/config.yaml. "
+                "Unpaywall requires an email for API access (they don't spam)."
+            ),
+        )

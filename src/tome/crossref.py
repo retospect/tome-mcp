@@ -6,6 +6,7 @@ against what we have stored.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -16,7 +17,6 @@ from tome.http import get_with_retry
 
 CROSSREF_API = "https://api.crossref.org/works"
 REQUEST_TIMEOUT = 15.0
-POLITE_MAILTO = "stamm.reto@ul.ie"  # CrossRef polite pool
 
 
 @dataclass
@@ -44,7 +44,9 @@ def check_doi(doi: str) -> CrossRefResult:
         DOIResolutionFailed: If CrossRef returns 404, 429, or 5xx.
     """
     url = f"{CROSSREF_API}/{quote(doi, safe='')}"
-    headers = {"User-Agent": f"Tome/0.1 (mailto:{POLITE_MAILTO})"}
+    mailto = os.environ.get("UNPAYWALL_EMAIL", "")
+    ua = f"Tome/0.1 (mailto:{mailto})" if mailto else "Tome/0.1"
+    headers = {"User-Agent": ua}
 
     try:
         resp = get_with_retry(url, headers=headers, timeout=REQUEST_TIMEOUT, follow_redirects=True)

@@ -18,6 +18,7 @@ import yaml
 
 from tome.checksum import sha256_bytes
 from tome.errors import TomeError
+from tome.needful import NeedfulTask
 
 
 @dataclass
@@ -50,6 +51,7 @@ class TomeConfig:
         default_factory=lambda: ["sections/*.tex", "appendix/*.tex", "main.tex"]
     )
     track: list[TrackedPattern] = field(default_factory=list)
+    needful_tasks: list[NeedfulTask] = field(default_factory=list)
     sha256: str = ""  # checksum of the raw config file
 
 
@@ -67,34 +69,74 @@ _DEFAULT_CONFIG = """\
 roots:
   default: main.tex
 
-# Glob patterns for .tex files to index into ChromaDB (for semantic search).
+# Glob patterns for files to index into ChromaDB (for semantic search).
+# Supports .tex, .py, .md, .txt, .tikz, .mmd and other text files.
 # The \\input tree from roots is used for document analysis; globs are for search.
+# Directories like .tome/, .git/, __pycache__/, .venv/ are always excluded.
 tex_globs:
   - "sections/*.tex"
   - "appendix/*.tex"
   - "main.tex"
 
-# Register project-specific LaTeX macros to track.
-# Built-in patterns (\\label, \\ref, \\cite, \\section) are always indexed.
+# Optional: email for Unpaywall open-access PDF lookup (fetch_oa tool).
+# Can also be set via UNPAYWALL_EMAIL environment variable.
+# unpaywall_email: you@example.com
+
+# LaTeX macros to track. Built-in patterns (\\label, \\ref, \\cite, \\section)
+# are always indexed. Add your own project-specific macros below.
 # Each entry needs:
 #   name:    identifier for this pattern type
-#   pattern: Python regex (double-escape backslashes)
+#   pattern: Python regex (double-escape backslashes in YAML)
 #   groups:  names for capture groups (in order)
 #
-# Examples:
-#   track:
-#     - name: question
-#       pattern: '\\\\mtechq\\{([^}]+)\\}\\{([^}]+)\\}'
-#       groups: [id, text]
+# Example patterns (uncomment and adapt to your macros):
 #
-#     - name: deep_cite
-#       pattern: '\\\\mciteboxp\\{([^}]+)\\}\\{([^}]+)\\}\\{([^}]+)\\}'
-#       groups: [key, page, quote]
+# track:
+#   # Citation needed placeholder
+#   - name: citation_needed
+#     pattern: '\\\\citationneeded'
+#     groups: []
 #
-#     - name: citation_needed
-#       pattern: '\\\\citationneeded'
-#       groups: []
+#   # Deep citation with page and verbatim quote (for validate_deep_cites)
+#   # IMPORTANT: name this 'deep_cite' with groups [key, page, quote]
+#   # to enable the validate_deep_cites tool.
+#   - name: deep_cite
+#     pattern: '\\\\mycitequote\\{([^}]+)\\}\\{([^}]+)\\}\\{([^}]+)\\}'
+#     groups: [key, page, quote]
+#
+#   # Review findings — track with review_status tool
+#   - name: review_finding
+#     pattern: '\\\\reviewfinding\\{([^}]+)\\}\\{([^}]+)\\}\\{([^}]+)\\}'
+#     groups: [id, severity, text]
+#
+#   # Glossary terms used
+#   - name: glossary
+#     pattern: '\\\\gls(?:pl)?\\{([^}]+)\\}'
+#     groups: [term]
 track: []
+
+# Recurring tasks ranked by the needful command.
+# cadence_hours: 0 = only when file changes; >0 = re-do after N hours.
+# Commit before mark_done so git diff works for next review.
+#
+# Example tasks (uncomment and adapt):
+#
+# needful:
+#   - name: sync_corpus
+#     description: "Re-index into ChromaDB search corpus"
+#     globs: ["sections/*.tex"]
+#     cadence_hours: 0
+#
+#   - name: doc_lint
+#     description: "Lint for undefined refs, orphan labels, shallow high-use cites"
+#     globs: ["sections/*.tex"]
+#     cadence_hours: 0
+#
+#   - name: review
+#     description: "Content review pass"
+#     globs: ["sections/*.tex"]
+#     cadence_hours: 168
+needful: []
 """
 
 
@@ -160,9 +202,25 @@ def load_config(tome_dir: Path) -> TomeConfig:
     if not roots:
         roots = {"default": "main.tex"}
 
+    # Parse needful tasks
+    needful_tasks: list[NeedfulTask] = []
+    for entry in data.get("needful", []) or []:
+        if not isinstance(entry, dict):
+            raise TomeError(f"Each 'needful' entry must be a mapping, got {type(entry).__name__}")
+        name = entry.get("name", "")
+        if not name:
+            raise TomeError(f"Needful entry missing 'name': {entry}")
+        needful_tasks.append(NeedfulTask(
+            name=str(name),
+            description=str(entry.get("description", "")),
+            globs=[str(g) for g in entry.get("globs", ["sections/*.tex"])],
+            cadence_hours=float(entry.get("cadence_hours", 168)),
+        ))
+
     return TomeConfig(
         roots=roots,
         tex_globs=[str(g) for g in data.get("tex_globs", ["sections/*.tex", "appendix/*.tex", "main.tex"])],
         track=tracked,
+        needful_tasks=needful_tasks,
         sha256=sha,
     )

@@ -21,12 +21,9 @@ UNPAYWALL_API = "https://api.unpaywall.org/v2"
 REQUEST_TIMEOUT = 15.0
 
 
-DEFAULT_EMAIL = "stamm.reto@ul.ie"
-
-
 def _get_email() -> str | None:
-    """Get email for Unpaywall API. Env var overrides default."""
-    return os.environ.get("UNPAYWALL_EMAIL", DEFAULT_EMAIL)
+    """Get email for Unpaywall API from env var or None."""
+    return os.environ.get("UNPAYWALL_EMAIL")
 
 
 @dataclass

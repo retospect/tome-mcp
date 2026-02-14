@@ -35,6 +35,7 @@ SECTION_RE = re.compile(
     r"\\(part|chapter|section|subsection|subsubsection|paragraph)\*?\{([^}]*)\}"
 )
 INPUT_RE = re.compile(r"\\(?:input|include)\{([^}]+)\}")
+INDEX_RE = re.compile(r"\\index\{([^}]+)\}")
 
 # Label type inference from prefix
 _LABEL_TYPES = {
@@ -145,6 +146,7 @@ class FileAnalysis:
     sections: list[SectionHeading] = field(default_factory=list)
     tracked: list[TrackedMatch] = field(default_factory=list)
     inputs: list[str] = field(default_factory=list)  # \input{} / \include{} targets
+    index_entries: list[str] = field(default_factory=list)  # \index{} terms
     word_count: int = 0
 
 
@@ -238,6 +240,10 @@ def analyze_file(
             if not target.endswith(".tex"):
                 target += ".tex"
             result.inputs.append(target)
+
+        # \index{} entries
+        for m in INDEX_RE.finditer(line):
+            result.index_entries.append(m.group(1))
 
         # Tracked patterns (non-comment lines)
         if tracked_patterns:

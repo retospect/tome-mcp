@@ -77,18 +77,10 @@ class TestLookup:
             lookup("10.1038/test", email="test@example.com")
         assert "timed out" in str(exc_info.value).lower()
 
-    def test_no_email_uses_default(self):
+    def test_no_email_returns_none(self):
         with patch.dict("os.environ", {}, clear=True):
-            with patch("tome.unpaywall.get_with_retry") as mock_get:
-                resp = MagicMock()
-                resp.status_code = 200
-                resp.json.return_value = SAMPLE_RESPONSE
-                mock_get.return_value = resp
-
-                result = lookup("10.1038/test")
-                assert result is not None
-                call_params = mock_get.call_args.kwargs["params"]
-                assert call_params["email"] == "stamm.reto@ul.ie"
+            result = lookup("10.1038/test")
+            assert result is None
 
     @patch("tome.unpaywall.get_with_retry")
     def test_email_from_env(self, mock_get):

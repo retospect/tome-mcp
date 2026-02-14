@@ -8,29 +8,42 @@ Tome provides the tools.
 
 ## Installation
 
+Recommended: use a virtual environment to keep dependencies self-contained.
+
 ```bash
+cd ~/repos/tome
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e .
+```
+
+For development (tests, linting):
+
+```bash
+pip install -e ".[dev]"
 ```
 
 ### Dependencies
 
-- `chromadb` — vector database for semantic search
+- `chromadb` — vector database for semantic search (includes built-in `all-MiniLM-L6-v2` embeddings, no external server needed)
 - `PyMuPDF` (fitz) — PDF text extraction
 - `bibtexparser` ≥ 2.0 — BibTeX parsing and serialization
-- `httpx` — async HTTP for Ollama, CrossRef, Semantic Scholar APIs
-- `numpy` — embedding array handling
+- `httpx` — HTTP client for CrossRef, Semantic Scholar, Unpaywall APIs
 - `mcp` — Model Context Protocol SDK
+- `PyYAML` — config file parsing
 
 ### MCP configuration
+
+Point your MCP client at the venv's Python interpreter:
 
 ```jsonc
 {
   "mcpServers": {
     "tome": {
-      "command": "/path/to/python3",
+      "command": "/path/to/tome/.venv/bin/python",
       "args": ["-m", "tome.server"],
-      "cwd": "/path/to/your/project",
       "env": {
+        "TOME_ROOT": "/path/to/your/project",
         "SEMANTIC_SCHOLAR_API_KEY": "optional"
       }
     }
@@ -38,13 +51,15 @@ pip install -e .
 }
 ```
 
-Tome looks for `tome/` relative to `cwd`. Environment variables (all optional):
+Alternatively, use `set_root(path='...')` at the start of each session.
+
+### Environment variables (all optional)
 
 | Variable | Default | Purpose |
-|----------|---------|---------|
-| `TOME_OLLAMA_URL` | `http://localhost:11434` | Ollama server URL |
-| `TOME_EMBED_MODEL` | `nomic-embed-text` | Embedding model name |
+|----------|---------|----------|
+| `TOME_ROOT` | (none) | Project root directory (alternative to `set_root()` or `cwd`) |
 | `SEMANTIC_SCHOLAR_API_KEY` | (none) | Higher S2 rate limits |
+| `UNPAYWALL_EMAIL` | (none) | Email for Unpaywall open-access PDF lookup |
 
 ## Directory layout
 
@@ -67,8 +82,7 @@ project-root/
 │   ├── tome.json               # Derived metadata cache
 │   ├── staging/                # Ingest prep area (transient)
 │   ├── raw/                    # Extracted text: raw/xu2022/xu2022.p1.txt
-│   ├── cache/                  # Embedding .npz files with SHA256
-│   ├── chroma/                 # ChromaDB persistent storage
+│   ├── chroma/                 # ChromaDB persistent storage (embeddings + index)
 │   ├── corpus_checksums.json   # Checksum manifest for .tex/.py files
 │   └── tome.json.bak           # Safety backup before each write
 ```
@@ -192,8 +206,7 @@ Invariant: if `x-doi-status = valid`, the DOI is trustworthy.
 5. If no DOI but title found → query Semantic Scholar → metadata
 6. Extract text page-by-page
 7. Chunk (500 chars, 100 overlap, sentence boundaries)
-8. Embed via Ollama
-9. Return proposal to LLM (suggested key, extracted vs API metadata)
+8. Return proposal to LLM (suggested key, extracted vs API metadata)
 
 The LLM reviews the proposal and confirms or corrects.
 
@@ -311,14 +324,25 @@ went wrong and what to do about it.
 
 ```
 TomeError (base)
-├── PaperNotFound       — key not in library
-├── PageOutOfRange      — page N requested, paper has M pages
-├── DuplicateKey        — key already exists
-├── DOIResolutionFailed — CrossRef error (404, 429, 5xx)
-├── IngestFailed        — could not identify paper from PDF
-├── OllamaUnavailable   — can't reach embedding server
-├── BibParseError       — bib file could not be parsed
-└── BibWriteError       — roundtrip test failed, write aborted
+├── PaperNotFound          — key not in library
+├── PageOutOfRange         — page N requested, paper has M pages
+├── DuplicateKey           — key already exists
+├── DOIResolutionFailed    — CrossRef error (404, 429, 5xx)
+├── IngestFailed           — could not identify paper from PDF
+├── BibParseError          — bib file could not be parsed
+├── BibWriteError          — roundtrip test failed, write aborted
+├── ChromaDBError          — search index init/query failed
+├── ConfigError (base)     — project configuration issue
+│   ├── ConfigMissing      — no tome/config.yaml found
+│   ├── RootNotFound       — named root not in config
+│   ├── RootFileNotFound   — root .tex file doesn't exist on disk
+│   ├── NoBibFile          — no references.bib yet
+│   ├── NoTexFiles         — tex_globs matched no files
+│   └── UnpaywallNotConfigured — no email for Unpaywall API
+├── APIError               — external API error (CrossRef, S2, Unpaywall)
+├── TextNotExtracted       — paper exists but no raw text yet
+├── FigureNotFound         — no such figure for paper
+└── UnsafeInput            — path traversal or unsafe characters
 ```
 
 Every error message includes: what happened, why, and what to do next.
@@ -328,9 +352,9 @@ Every error message includes: what happened, why, and what to do next.
 - Every module gets a corresponding `test_*.py`
 - Tests use small fixtures (2-entry bib, 1-page PDF mock)
 - Error paths tested explicitly (more important than happy paths for MCP)
-- External services (Ollama, CrossRef, S2) are mocked
+- External services (CrossRef, S2) are mocked
 - Integration tests requiring live services marked `@pytest.mark.integration`
-- `pytest` with no marks runs all unit tests (no network, no Ollama)
+- `pytest` with no marks runs all unit tests (no network required)
 
 ## Package structure
 
@@ -346,8 +370,7 @@ Every error message includes: what happened, why, and what to do next.
 │       ├── bib.py              # BibTeX parser + writer (bibtexparser)
 │       ├── extract.py          # PDF text extraction (PyMuPDF)
 │       ├── chunk.py            # Sentence-boundary overlapping chunker
-│       ├── embed.py            # Ollama embedding client
-│       ├── store.py            # ChromaDB management
+│       ├── store.py            # ChromaDB management (built-in embeddings)
 │       ├── checksum.py         # SHA256 file checksumming
 │       ├── identify.py         # PDF identification + key generation
 │       ├── crossref.py         # CrossRef API client
@@ -361,7 +384,6 @@ Every error message includes: what happened, why, and what to do next.
     ├── test_extract.py
     ├── test_chunk.py
     ├── test_checksum.py
-    ├── test_embed.py
     ├── test_store.py
     ├── test_identify.py
     ├── test_crossref.py

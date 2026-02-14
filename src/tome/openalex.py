@@ -20,12 +20,14 @@ from tome.http import get_with_retry
 
 OPENALEX_API = "https://api.openalex.org"
 REQUEST_TIMEOUT = 15.0
-POLITE_MAILTO = "stamm.reto@ul.ie"
 
 
 def _get_params() -> dict[str, str]:
     """Get base query params (polite mailto + optional API key)."""
-    params: dict[str, str] = {"mailto": POLITE_MAILTO}
+    params: dict[str, str] = {}
+    mailto = os.environ.get("UNPAYWALL_EMAIL", "")
+    if mailto:
+        params["mailto"] = mailto
     key = os.environ.get("OPENALEX_API_KEY")
     if key:
         params["api_key"] = key

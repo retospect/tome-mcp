@@ -154,15 +154,28 @@ class TestSearch:
         assert int(call_params["per_page"]) <= 200
 
     @patch("tome.openalex.get_with_retry")
-    def test_polite_mailto(self, mock_get):
+    def test_polite_mailto_with_email(self, mock_get):
         resp = MagicMock()
         resp.status_code = 200
         resp.json.return_value = {"results": []}
         mock_get.return_value = resp
 
-        search("test")
-        call_params = mock_get.call_args.kwargs["params"]
-        assert "mailto" in call_params
+        with patch.dict("os.environ", {"UNPAYWALL_EMAIL": "test@example.com"}):
+            search("test")
+            call_params = mock_get.call_args.kwargs["params"]
+            assert call_params["mailto"] == "test@example.com"
+
+    @patch("tome.openalex.get_with_retry")
+    def test_no_mailto_without_email(self, mock_get):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.return_value = {"results": []}
+        mock_get.return_value = resp
+
+        with patch.dict("os.environ", {}, clear=True):
+            search("test")
+            call_params = mock_get.call_args.kwargs["params"]
+            assert "mailto" not in call_params
 
 
 class TestGetWorkByDoi:

@@ -133,9 +133,17 @@ class TestExtractors:
         result = check_doi("10.1/x")
         assert result.year is None
 
-    def test_polite_user_agent(self, mock_success):
-        check_doi("10.1/x")
-        call_kwargs = mock_success.call_args
-        headers = call_kwargs.kwargs.get("headers", {})
-        assert "Tome" in headers.get("User-Agent", "")
-        assert "mailto:" in headers.get("User-Agent", "")
+    def test_polite_user_agent_with_email(self, mock_success):
+        with patch.dict("os.environ", {"UNPAYWALL_EMAIL": "test@example.com"}):
+            check_doi("10.1/x")
+            call_kwargs = mock_success.call_args
+            headers = call_kwargs.kwargs.get("headers", {})
+            assert "Tome" in headers.get("User-Agent", "")
+            assert "mailto:test@example.com" in headers.get("User-Agent", "")
+
+    def test_user_agent_without_email(self, mock_success):
+        with patch.dict("os.environ", {}, clear=True):
+            check_doi("10.1/x")
+            call_kwargs = mock_success.call_args
+            headers = call_kwargs.kwargs.get("headers", {})
+            assert headers.get("User-Agent", "") == "Tome/0.1"

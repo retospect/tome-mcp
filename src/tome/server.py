@@ -23,9 +23,13 @@ from tome import (
     crossref,
     extract,
     figures,
+    git_diff as git_diff_mod,
     identify,
     latex,
     manifest,
+    cite_tree as cite_tree_mod,
+    index as index_mod,
+    needful as needful_mod,
     summaries,
     validate,
 )
@@ -36,11 +40,16 @@ from tome import unpaywall
 from tome.errors import (
     APIError,
     BibParseError,
+    ChromaDBError,
     DuplicateKey,
     IngestFailed,
-    OllamaUnavailable,
+    NoBibFile,
+    NoTexFiles,
     PaperNotFound,
+    RootFileNotFound,
+    RootNotFound,
     TomeError,
+    UnpaywallNotConfigured,
     UnsafeInput,
 )
 
@@ -66,7 +75,10 @@ def _project_root() -> Path:
     raise TomeError(
         "No project root configured. "
         "Call set_root(path='/path/to/project') first, "
-        "or set the TOME_ROOT environment variable."
+        "or set the TOME_ROOT environment variable. "
+        "The project root is the directory containing tome/config.yaml "
+        "and the .tome/ cache directory (these are created on first run "
+        "and may not exist yet for new projects)."
     )
 
 
@@ -101,7 +113,10 @@ def _staging_dir() -> Path:
 
 
 def _load_bib():
-    return bib.parse_bib(_bib_path())
+    p = _bib_path()
+    if not p.exists():
+        raise NoBibFile(str(p))
+    return bib.parse_bib(p)
 
 
 def _load_manifest():
@@ -115,6 +130,88 @@ def _save_manifest(data):
 # ---------------------------------------------------------------------------
 # Tool helpers
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# File discovery helpers
+# ---------------------------------------------------------------------------
+
+EXCLUDE_DIRS = frozenset({
+    ".tome", ".git", "__pycache__", ".venv", "venv", "node_modules",
+    "build", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
+    "tome/pdf", "tome/inbox",  # PDFs handled separately by paper tools
+})
+
+_FILE_TYPE_MAP: dict[str, str] = {
+    ".tex": "tex",
+    ".py": "python",
+    ".md": "markdown",
+    ".txt": "text",
+    ".mmd": "mermaid",
+    ".tikz": "tikz",
+    ".sty": "tex",
+    ".cls": "tex",
+    ".bib": "bibtex",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".toml": "toml",
+    ".json": "json",
+    ".sh": "shell",
+    ".r": "r",
+    ".jl": "julia",
+    ".rst": "rst",
+}
+
+
+def _file_type(path: str) -> str:
+    """Map file extension to a type tag for ChromaDB metadata."""
+    ext = Path(path).suffix.lower()
+    return _FILE_TYPE_MAP.get(ext, "")
+
+
+def _is_excluded(rel_path: str) -> bool:
+    """Check if a relative path falls under an excluded directory."""
+    parts = Path(rel_path).parts
+    # Check each directory component and cumulative prefixes
+    for i, part in enumerate(parts[:-1]):  # skip filename
+        if part in EXCLUDE_DIRS:
+            return True
+        prefix = str(Path(*parts[: i + 1]))
+        if prefix in EXCLUDE_DIRS:
+            return True
+    return False
+
+
+def _discover_files(
+    project_root: Path,
+    extensions: set[str] | None = None,
+) -> dict[str, str]:
+    """Discover all indexable files in the project, excluding caches.
+
+    Args:
+        project_root: Absolute path to the project root.
+        extensions: Set of extensions to include (e.g. {'.tex', '.py'}).
+            None = all known types from _FILE_TYPE_MAP.
+
+    Returns:
+        Dict mapping relative path → file type tag.
+    """
+    if extensions is None:
+        extensions = set(_FILE_TYPE_MAP.keys())
+
+    result: dict[str, str] = {}
+    for p in sorted(project_root.rglob("*")):
+        if not p.is_file():
+            continue
+        if p.suffix.lower() not in extensions:
+            continue
+        rel = str(p.relative_to(project_root))
+        if _is_excluded(rel):
+            continue
+        ft = _file_type(rel)
+        if ft:
+            result[rel] = ft
+    return result
 
 
 def _paper_summary(entry) -> dict[str, Any]:
@@ -297,23 +394,6 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
             all_chunks.append(c)
             page_map.append(page_num)
 
-    # Stage: embed (best-effort)
-    embedded = False
-    try:
-        from tome.embed import check_ollama
-
-        if check_ollama():
-            from tome.embed import embed_texts as do_embed, save_embeddings
-
-            sha = checksum.sha256_file(pdf_path)
-            emb = do_embed(all_chunks)
-            cache_path = staging / "cache" / f"{key}.npz"
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            save_embeddings(cache_path, all_chunks, emb, sha)
-            embedded = True
-    except OllamaUnavailable:
-        pass
-
     # Commit: write bib
     id_result = identify.identify_pdf(pdf_path)
     fields: dict[str, str] = {
@@ -347,13 +427,8 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
             shutil.rmtree(raw_dest)
         shutil.copytree(staging / "raw" / key, raw_dest)
 
-    cache_src = staging / "cache" / f"{key}.npz"
-    if cache_src.exists():
-        cache_dest = _cache_dir() / f"{key}.npz"
-        cache_dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(cache_src, cache_dest)
-
-    # Commit: ChromaDB upsert
+    # Commit: ChromaDB upsert (embedding handled internally by ChromaDB)
+    embedded = False
     try:
         client = store.get_client(_chroma_dir())
         embed_fn = store.get_embed_fn()
@@ -366,6 +441,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
             page_texts.append(extract.read_page(_raw_dir(), key, i))
         store.upsert_paper_pages(pages_col, key, page_texts, sha)
         store.upsert_paper_chunks(chunks_col, key, all_chunks, page_map, sha)
+        embedded = True
     except Exception:
         pass  # ChromaDB failures are non-fatal
 
@@ -702,7 +778,7 @@ def search(query: str, key: str = "", tags: str = "", n: int = 10) -> str:
         embed_fn = store.get_embed_fn()
         results = store.search_papers(client, query, n=n, key=key or None, embed_fn=embed_fn)
     except Exception as e:
-        return json.dumps({"error": f"Search failed: {e}"})
+        raise ChromaDBError(str(e))
 
     if tags:
         tag_set = {t.strip() for t in tags.split(",") if t.strip()}
@@ -764,7 +840,7 @@ def search_corpus(
             embed_fn=embed_fn,
         )
     except Exception as e:
-        return json.dumps({"error": f"Corpus search failed: {e}"})
+        raise ChromaDBError(str(e))
 
     return json.dumps({"count": len(results), "results": results}, indent=2)
 
@@ -786,7 +862,7 @@ def list_labels(prefix: str = "") -> str:
         embed_fn = store.get_embed_fn()
         labels = store.get_all_labels(client, embed_fn)
     except Exception as e:
-        return json.dumps({"error": f"Failed to read labels: {e}"})
+        raise ChromaDBError(str(e))
 
     if prefix:
         labels = [l for l in labels if l["label"].startswith(prefix)]
@@ -838,22 +914,26 @@ def sync_corpus(paths: str = "sections/*.tex") -> str:
     Args:
         paths: Glob patterns to index (default: 'sections/*.tex').
     """
-    import glob as globmod
-
+    root = _project_root()
     patterns = [p.strip() for p in paths.split(",") if p.strip()]
-    current_files: dict[str, str] = {}
+
+    # Resolve globs relative to project root
+    current_files: dict[str, str] = {}  # rel_path → sha256
     for pattern in patterns:
-        for f in globmod.glob(pattern, recursive=True):
-            p = Path(f)
-            if p.is_file():
-                current_files[str(p)] = checksum.sha256_file(p)
+        for p in sorted(root.glob(pattern)):
+            if not p.is_file():
+                continue
+            rel = str(p.relative_to(root))
+            if _is_excluded(rel):
+                continue
+            current_files[rel] = checksum.sha256_file(p)
 
     try:
         client = store.get_client(_chroma_dir())
         embed_fn = store.get_embed_fn()
         indexed = store.get_indexed_files(client, store.CORPUS_CHUNKS, embed_fn)
     except Exception as e:
-        return json.dumps({"error": f"ChromaDB error: {e}"})
+        raise ChromaDBError(str(e))
 
     added, changed, removed, unchanged = [], [], [], []
 
@@ -875,17 +955,41 @@ def sync_corpus(paths: str = "sections/*.tex") -> str:
 
     for f in changed + added:
         store.delete_corpus_file(client, f, embed_fn)
-        text = Path(f).read_text(encoding="utf-8")
+        abs_path = root / f
+        text = abs_path.read_text(encoding="utf-8")
         chunks = chunk.chunk_text(text)
+        ft = _file_type(f)
         # Extract LaTeX markers for .tex files
         markers = None
-        if f.endswith(".tex"):
+        if f.endswith(".tex") or f.endswith(".sty") or f.endswith(".cls"):
             markers = [latex.extract_markers(c).to_metadata() for c in chunks]
-        store.upsert_corpus_chunks(col, f, chunks, current_files[f], chunk_markers=markers)
+        store.upsert_corpus_chunks(
+            col, f, chunks, current_files[f],
+            chunk_markers=markers, file_type=ft,
+        )
+
+    # Detect orphaned .tex files (exist on disk but not in any \input tree)
+    orphans: list[str] = []
+    tex_files_indexed = [f for f in current_files if f.endswith(".tex")]
+    if tex_files_indexed:
+        try:
+            cfg = tome_config.load_config(_tome_dir())
+            tree_files: set[str] = set()
+            for root_name, root_tex in cfg.roots.items():
+                tree_files.update(analysis.resolve_document_tree(root_tex, root))
+            orphans = sorted(f for f in tex_files_indexed if f not in tree_files)
+        except Exception:
+            pass  # Don't fail sync over orphan detection
 
     # Check for stale/missing summaries
     sum_data = summaries.load_summaries(_dot_tome())
     stale = summaries.check_staleness(sum_data, current_files)
+
+    # Count by file type
+    type_counts: dict[str, int] = {}
+    for f in current_files:
+        ft = _file_type(f)
+        type_counts[ft] = type_counts.get(ft, 0) + 1
 
     result: dict[str, Any] = {
         "added": len(added),
@@ -893,7 +997,14 @@ def sync_corpus(paths: str = "sections/*.tex") -> str:
         "removed": len(removed),
         "unchanged": len(unchanged),
         "total_indexed": len(current_files),
+        "by_type": type_counts,
     }
+    if orphans:
+        result["orphaned_tex"] = orphans
+        result["orphan_hint"] = (
+            "These .tex files exist but are not in any \\input{} tree. "
+            "They may be unused or need to be \\input'd."
+        )
     if stale:
         result["stale_summaries"] = stale
         result["hint"] = (
@@ -901,6 +1012,100 @@ def sync_corpus(paths: str = "sections/*.tex") -> str:
             "get_summary(file=<path>) to check, then summarize_file() to update."
         )
     return json.dumps(result)
+
+
+# ---------------------------------------------------------------------------
+# Document Index
+# ---------------------------------------------------------------------------
+
+
+@mcp_server.tool()
+def rebuild_doc_index(root: str = "default") -> str:
+    """Rebuild the document index from the .idx file produced by makeindex.
+
+    Run this after compiling the LaTeX document. Parses the .idx file into
+    a structured JSON index in .tome/doc_index.json for fast term lookup.
+
+    Args:
+        root: Named root from config.yaml (default: 'default').
+    """
+    cfg = tome_config.load_config(_tome_dir())
+    root_tex = cfg.roots.get(root, cfg.roots.get("default", "main.tex"))
+    # .idx file has same stem as the root .tex file
+    idx_stem = Path(root_tex).stem
+    idx_path = _project_root() / f"{idx_stem}.idx"
+
+    if not idx_path.exists():
+        return json.dumps({
+            "error": f"No .idx file found at {idx_stem}.idx. "
+                     "Compile with pdflatex first, then run makeindex.",
+        })
+
+    index = index_mod.rebuild_index(idx_path, _dot_tome())
+    return json.dumps({
+        "status": "rebuilt",
+        "total_terms": index["total_terms"],
+        "total_entries": index["total_entries"],
+    })
+
+
+@mcp_server.tool()
+def search_doc_index(query: str, fuzzy: bool = True) -> str:
+    """Search the document index for terms matching a query.
+
+    Searches the back-of-book index built from LaTeX \\index{} entries.
+    Returns matching terms with page numbers and subterms.
+
+    Args:
+        query: Search string (case-insensitive).
+        fuzzy: If True, match anywhere in term. If False, prefix match only.
+    """
+    index = index_mod.load_index(_dot_tome())
+    if not index.get("terms"):
+        return json.dumps({
+            "error": "No index available. Run rebuild_doc_index() after compiling.",
+        })
+
+    results = index_mod.search_index(index, query, fuzzy=fuzzy)
+    return json.dumps({
+        "query": query,
+        "count": len(results),
+        "results": results,
+    }, indent=2)
+
+
+@mcp_server.tool()
+def list_doc_index() -> str:
+    """List all terms in the document index.
+
+    Returns every top-level term from the back-of-book index with page
+    counts and subterm counts. Use search_doc_index for filtered results.
+    """
+    index = index_mod.load_index(_dot_tome())
+    if not index.get("terms"):
+        return json.dumps({
+            "error": "No index available. Run rebuild_doc_index() after compiling.",
+        })
+
+    terms_summary = []
+    for term, data in index["terms"].items():
+        entry: dict[str, Any] = {
+            "term": term,
+            "pages": len(data.get("pages", [])),
+        }
+        subs = data.get("subterms", {})
+        if subs:
+            entry["subterms"] = len(subs)
+        see = data.get("see")
+        if see:
+            entry["see"] = see
+        terms_summary.append(entry)
+
+    return json.dumps({
+        "total_terms": index["total_terms"],
+        "total_entries": index["total_entries"],
+        "terms": terms_summary,
+    }, indent=2)
 
 
 @mcp_server.tool()
@@ -1137,7 +1342,7 @@ def fetch_oa(key: str) -> str:
     Args:
         key: Bib key of the paper (must have a DOI).
     """
-    validate.validate_bib_key(key)
+    validate.validate_key(key)
 
     # Get DOI from bib
     lib = _load_bib()
@@ -1157,10 +1362,7 @@ def fetch_oa(key: str) -> str:
         except Exception:
             pass
     if not email:
-        return json.dumps({
-            "error": "No email configured for Unpaywall. "
-            "Set UNPAYWALL_EMAIL env var or unpaywall_email in tome/config.yaml."
-        })
+        raise UnpaywallNotConfigured()
 
     # Query Unpaywall
     try:
@@ -1405,7 +1607,7 @@ def rebuild(key: str = "") -> str:
         client = store.get_client(_chroma_dir())
         embed_fn = store.get_embed_fn()
     except Exception as e:
-        return json.dumps({"error": f"ChromaDB/embed init failed: {e}"})
+        raise ChromaDBError(str(e))
 
     for entry in entries:
         k = entry.key
@@ -1481,15 +1683,29 @@ def _load_config() -> tome_config.TomeConfig:
 
 
 def _resolve_root(root: str) -> str:
-    """Resolve a root name to a .tex path using config roots."""
+    """Resolve a root name to a .tex path using config roots.
+
+    Raises RootNotFound if the name isn't in config and doesn't look like a path.
+    Raises RootFileNotFound if the resolved .tex file doesn't exist on disk.
+    """
     cfg = _load_config()
-    if root in cfg.roots:
-        return cfg.roots[root]
     # If it looks like a file path, use it directly
     if root.endswith(".tex"):
-        return root
-    # Try 'default'
-    return cfg.roots.get("default", "main.tex")
+        tex_path = root
+    elif root in cfg.roots:
+        tex_path = cfg.roots[root]
+    elif "default" in cfg.roots:
+        tex_path = cfg.roots["default"]
+    else:
+        raise RootNotFound(root, list(cfg.roots.keys()))
+
+    # Verify the file exists
+    full = _project_root() / tex_path
+    if not full.exists():
+        root_name = root if root in cfg.roots else "default"
+        raise RootFileNotFound(root_name, tex_path, str(_project_root()))
+
+    return tex_path
 
 
 @mcp_server.tool()
@@ -1587,6 +1803,12 @@ def review_status(root: str = "default", file: str = "") -> str:
 
     Groups markers by type, counts per file. Use this to see how many
     open questions, issues, TODOs, etc. exist in the document.
+
+    Tip: Track review findings by adding a 'review_finding' pattern for
+    \\mrev{id}{severity}{text} in config.yaml's track: section. Then this
+    tool counts open findings by severity and file. To list individual
+    matches with file:line context, use find_text("TEC-BGD-001") to find
+    a specific finding, or find_text("RIG-") to filter by reviewer code.
 
     Args:
         root: Named root from config.yaml (default: 'default'), or a .tex path.
@@ -1779,7 +2001,7 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
         embed_fn = store.get_embed_fn()
         col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
     except Exception as e:
-        return json.dumps({"error": f"ChromaDB unavailable: {e}"})
+        raise ChromaDBError(str(e))
 
     results: list[dict[str, Any]] = []
     for q in quotes_to_check:
@@ -1849,7 +2071,7 @@ def find_text(query: str, context_lines: int = 3) -> str:
                 tex_files.append(rel)
 
     if not tex_files:
-        return json.dumps({"error": "No .tex files found. Check tex_globs in config.yaml."})
+        raise NoTexFiles(cfg.tex_globs)
 
     matches = ft.find_all(query, proj, tex_files, context_lines=context_lines)
 
@@ -1887,7 +2109,11 @@ def grep_raw(query: str, key: str = "", context_chars: int = 200) -> str:
 
     raw_dir = _dot_tome() / "raw"
     if not raw_dir.is_dir():
-        return json.dumps({"error": "No raw text directory. Run rebuild first."})
+        return json.dumps({
+            "error": "No raw text directory (.tome/raw/) found. "
+            "No papers have been ingested yet, or the cache was deleted. "
+            "Use ingest to add papers, or run rebuild to regenerate from tome/pdf/."
+        })
 
     keys = [key] if key else None
     matches = gr.grep_all(query, raw_dir, keys=keys, context_chars=context_chars)
@@ -1906,6 +2132,207 @@ def grep_raw(query: str, key: str = "", context_chars: int = 200) -> str:
         "match_count": len(results),
         "results": results,
     }, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Citation Tree — forward discovery of new papers
+# ---------------------------------------------------------------------------
+
+
+@mcp_server.tool()
+def build_cite_tree(key: str = "") -> str:
+    """Build or refresh the citation tree for library papers.
+
+    Fetches citation graphs from Semantic Scholar and caches them in
+    .tome/cite_tree.json. With a key: builds for one paper. Without:
+    refreshes papers not checked in 30+ days (batch mode, max 10).
+
+    Args:
+        key: Bib key to build tree for. Empty = batch refresh stale papers.
+    """
+    tree = cite_tree_mod.load_tree(_dot_tome())
+    lib = _load_bib()
+
+    if key:
+        # Single paper mode
+        entry = lib.entries_dict.get(key)
+        if not entry:
+            return json.dumps({"error": f"Key '{key}' not in library."})
+
+        doi_field = entry.fields_dict.get("doi")
+        doi = doi_field.value if doi_field else None
+        data = _load_manifest()
+        paper_meta = manifest.get_paper(data, key) or {}
+        s2_id = paper_meta.get("s2_id", "")
+
+        if not doi and not s2_id:
+            return json.dumps({
+                "error": f"Paper '{key}' has no DOI or S2 ID. Cannot fetch citation graph.",
+            })
+
+        try:
+            tree_entry = cite_tree_mod.build_entry(key, doi=doi, s2_id=s2_id)
+        except Exception as e:
+            return json.dumps({"error": f"S2 API error: {e}"})
+
+        if tree_entry is None:
+            return json.dumps({"error": f"Paper '{key}' not found on Semantic Scholar."})
+
+        cite_tree_mod.update_tree(tree, key, tree_entry)
+        cite_tree_mod.save_tree(_dot_tome(), tree)
+
+        return json.dumps({
+            "status": "built",
+            "key": key,
+            "cited_by": len(tree_entry.get("cited_by", [])),
+            "references": len(tree_entry.get("references", [])),
+        })
+
+    # Batch mode: refresh stale papers
+    library_keys = set()
+    library_dois: dict[str, str] = {}
+    data = _load_manifest()
+    for e in lib.entries:
+        library_keys.add(e.key)
+        doi_f = e.fields_dict.get("doi")
+        doi = doi_f.value if doi_f else None
+        if doi:
+            library_dois[e.key] = doi
+
+    stale = cite_tree_mod.find_stale(tree, library_keys, max_age_days=30)
+    if not stale:
+        return json.dumps({
+            "status": "all_fresh",
+            "message": "All citation trees are up to date (< 30 days old).",
+            "total_cached": len(tree["papers"]),
+        })
+
+    refreshed = []
+    errors = []
+    for k in stale[:10]:  # batch cap
+        doi = library_dois.get(k)
+        paper_meta = manifest.get_paper(data, k) or {}
+        s2_id = paper_meta.get("s2_id", "")
+        if not doi and not s2_id:
+            continue
+        try:
+            tree_entry = cite_tree_mod.build_entry(k, doi=doi, s2_id=s2_id)
+            if tree_entry:
+                cite_tree_mod.update_tree(tree, k, tree_entry)
+                refreshed.append(k)
+        except Exception as e:
+            errors.append({"key": k, "error": str(e)[:100]})
+
+    cite_tree_mod.save_tree(_dot_tome(), tree)
+
+    return json.dumps({
+        "status": "refreshed",
+        "refreshed": len(refreshed),
+        "stale_remaining": len(stale) - len(refreshed),
+        "errors": len(errors),
+        "total_cached": len(tree["papers"]),
+        "details": {"refreshed_keys": refreshed, "errors": errors} if errors else {"refreshed_keys": refreshed},
+    }, indent=2)
+
+
+@mcp_server.tool()
+def discover_citing(min_shared: int = 2, min_year: int = 0, n: int = 20) -> str:
+    """Find non-library papers that cite multiple library papers.
+
+    Uses the cached citation tree to surface high-relevance candidates —
+    papers citing ≥N of our references. Ranked by shared_count × recency.
+
+    Args:
+        min_shared: Minimum number of shared citations to surface (default 2).
+        min_year: Only include papers from this year onwards (0 = no filter).
+        n: Maximum results (default 20).
+    """
+    tree = cite_tree_mod.load_tree(_dot_tome())
+    if not tree["papers"]:
+        return json.dumps({
+            "error": "Citation tree is empty. Run build_cite_tree() first.",
+        })
+
+    lib = _load_bib()
+    library_keys = {e.key for e in lib.entries}
+
+    results = cite_tree_mod.discover_new(
+        tree, library_keys,
+        min_shared=min_shared,
+        min_year=min_year or None,
+        max_results=n,
+    )
+
+    if not results:
+        return json.dumps({
+            "status": "no_candidates",
+            "message": f"No non-library papers found citing ≥{min_shared} library references.",
+            "hint": "Try lowering min_shared or running build_cite_tree() to expand coverage.",
+        })
+
+    return json.dumps({
+        "status": "ok",
+        "count": len(results),
+        "candidates": results,
+    }, indent=2)
+
+
+@mcp_server.tool()
+def dismiss_citing(s2_id: str) -> str:
+    """Dismiss a discovery candidate so it doesn't resurface.
+
+    Args:
+        s2_id: Semantic Scholar paper ID to dismiss.
+    """
+    tree = cite_tree_mod.load_tree(_dot_tome())
+    cite_tree_mod.dismiss_paper(tree, s2_id)
+    cite_tree_mod.save_tree(_dot_tome(), tree)
+    return json.dumps({"status": "dismissed", "s2_id": s2_id})
+
+
+_EMPTY_BIB = """\
+% Tome bibliography — managed by Tome MCP server.
+% Add entries via ingest(), set_paper(), or edit directly.
+
+"""
+
+_SCAFFOLD_DIRS = [
+    "tome/pdf",
+    "tome/inbox",
+    "tome/figures/papers",
+    ".tome",
+]
+
+
+def _scaffold_tome(project_root: Path) -> list[str]:
+    """Create standard Tome directory structure if missing.
+
+    Returns list of relative paths that were created (dirs and files).
+    Idempotent — skips anything that already exists.
+    """
+    created: list[str] = []
+    tome_dir = project_root / "tome"
+
+    # Directories
+    for rel in _SCAFFOLD_DIRS:
+        d = project_root / rel
+        if not d.exists():
+            d.mkdir(parents=True, exist_ok=True)
+            created.append(rel + "/")
+
+    # Empty references.bib
+    bib_file = tome_dir / "references.bib"
+    if not bib_file.exists():
+        bib_file.write_text(_EMPTY_BIB, encoding="utf-8")
+        created.append("tome/references.bib")
+
+    # config.yaml (delegate to existing helper)
+    cfg_path = tome_config.config_path(tome_dir)
+    if not cfg_path.exists():
+        tome_config.create_default(tome_dir)
+        created.append("tome/config.yaml")
+
+    return created
 
 
 @mcp_server.tool()
@@ -1930,21 +2357,24 @@ def set_root(path: str) -> str:
 
     _runtime_root = p
     tome_dir = p / "tome"
+
+    # Scaffold standard directories + files if missing (idempotent)
+    scaffolded = _scaffold_tome(p)
+
     has_bib = (tome_dir / "references.bib").exists()
 
-    # Auto-create starter config.yaml if tome/ exists but config doesn't
+    # Load or report config status
     config_status = "missing"
     config_info: dict[str, Any] = {}
     if tome_dir.is_dir():
         cfg_path = tome_config.config_path(tome_dir)
-        if not cfg_path.exists():
-            tome_config.create_default(tome_dir)
+        if "tome/config.yaml" in scaffolded:
             config_status = "created_default"
             config_info["hint"] = (
                 "Edit tome/config.yaml to register project-specific LaTeX macros "
                 "for indexing. Add document roots and tracked patterns."
             )
-        else:
+        elif cfg_path.exists():
             try:
                 cfg = tome_config.load_config(tome_dir)
                 config_status = "loaded"
@@ -1955,17 +2385,219 @@ def set_root(path: str) -> str:
                 config_status = "error"
                 config_info["error"] = str(e)
 
-    return json.dumps(
-        {
-            "status": "root_changed",
-            "root": str(p),
-            "tome_dir_exists": tome_dir.is_dir(),
-            "references_bib": has_bib,
-            "config": config_status,
-            **config_info,
+    # Discover all indexable project files
+    discovered = _discover_files(p)
+    type_counts: dict[str, int] = {}
+    for rel, ft in discovered.items():
+        type_counts[ft] = type_counts.get(ft, 0) + 1
+
+    # Detect orphaned .tex files (not in any \input tree)
+    orphaned_tex: list[str] = []
+    if config_status == "loaded" and type_counts.get("tex", 0) > 0:
+        try:
+            tree_files: set[str] = set()
+            for _rname, root_tex in cfg.roots.items():
+                tree_files.update(analysis.resolve_document_tree(root_tex, p))
+            tex_on_disk = sorted(r for r, ft in discovered.items() if ft == "tex")
+            orphaned_tex = [f for f in tex_on_disk if f not in tree_files]
+        except Exception:
+            pass
+
+    response: dict[str, Any] = {
+        "status": "root_changed",
+        "root": str(p),
+        "tome_dir_exists": tome_dir.is_dir(),
+        "references_bib": has_bib,
+        "config": config_status,
+        **config_info,
+        "project_files": {
+            "total": len(discovered),
+            "by_type": type_counts,
         },
-        indent=2,
+    }
+    if scaffolded:
+        response["scaffolded"] = scaffolded
+        response["scaffold_hint"] = (
+            "Created standard Tome directory structure. "
+            "Add .tome/ to .gitignore (it is a rebuildable cache)."
+        )
+    if orphaned_tex:
+        response["orphaned_tex"] = orphaned_tex
+        response["orphan_hint"] = (
+            "These .tex files are not in any \\input{} tree. "
+            "They may be unused or need to be \\input'd."
+        )
+
+    return json.dumps(response, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Needful — recurring task tracking
+# ---------------------------------------------------------------------------
+
+
+@mcp_server.tool()
+def needful(n: int = 10) -> str:
+    """List the N most needful things to do, ranked by urgency.
+
+    Reads task definitions from tome/config.yaml (needful: section) and
+    completion state from .tome/needful.json. Ranks by: never-done >
+    file-changed > time-overdue. Score 0 items (up-to-date) are excluded.
+
+    Items include a git_sha field (when available) from the last mark_done
+    call. Use this for targeted re-reviews: ``git diff <git_sha> -- <file>``
+    shows what changed since the last review, so you can focus on changed
+    paragraphs instead of re-reading the entire file. Skip the diff for
+    never-done items or when the section was substantially rewritten.
+
+    Args:
+        n: Maximum items to return (default 10).
+    """
+    cfg = tome_config.load_config(_tome_dir())
+    if not cfg.needful_tasks:
+        return json.dumps({
+            "status": "no_tasks",
+            "message": (
+                "No needful tasks configured. Add a 'needful:' section to "
+                "tome/config.yaml with task definitions."
+            ),
+        })
+
+    state = needful_mod.load_state(_dot_tome())
+    items = needful_mod.rank_needful(
+        tasks=cfg.needful_tasks,
+        project_root=_project_root(),
+        state=state,
+        n=n,
     )
+
+    if not items:
+        return json.dumps({
+            "status": "all_done",
+            "message": "Everything is up to date. Nothing needful.",
+        })
+
+    results = []
+    for item in items:
+        entry: dict[str, Any] = {
+            "task": item.task,
+            "file": item.file,
+            "score": round(item.score, 2),
+            "reason": item.reason,
+            "description": item.description,
+            "last_done": item.last_done,
+        }
+        if item.git_sha:
+            entry["git_sha"] = item.git_sha
+        results.append(entry)
+
+    return json.dumps({
+        "status": "ok",
+        "count": len(results),
+        "items": results,
+    }, indent=2)
+
+
+@mcp_server.tool()
+def mark_done(task: str, file: str, note: str = "") -> str:
+    """Record that a task was completed on a file.
+
+    Snapshots the file's current SHA256 hash, timestamp, and git HEAD SHA
+    so that the needful scorer knows when this was last done and whether
+    the file has changed since.
+
+    Important: commit your changes BEFORE calling mark_done so that the
+    stored git SHA is a clean baseline for future ``git diff`` targeting.
+    Pattern: edit → git commit → mark_done.
+
+    Args:
+        task: Task name (must match a name in config.yaml needful section).
+        file: Relative path to the file (e.g. 'sections/logic-mechanisms.tex').
+        note: Optional note about what was done or found.
+    """
+    cfg = tome_config.load_config(_tome_dir())
+    task_names = {t.name for t in cfg.needful_tasks}
+    if task not in task_names:
+        return json.dumps({
+            "error": f"Unknown task '{task}'. Known tasks: {sorted(task_names)}",
+        })
+
+    abs_path = _project_root() / file
+    if not abs_path.exists():
+        return json.dumps({"error": f"File not found: {file}"})
+
+    file_sha = checksum.sha256_file(abs_path)
+    git_sha = needful_mod._git_head_sha(_project_root())
+    state = needful_mod.load_state(_dot_tome())
+    record = needful_mod.mark_done(state, task, file, file_sha, note, git_sha=git_sha)
+    needful_mod.save_state(_dot_tome(), state)
+
+    result: dict[str, Any] = {
+        "status": "marked_done",
+        "task": task,
+        "file": file,
+        "completed_at": record["completed_at"],
+        "file_sha256": file_sha[:12] + "...",
+        "note": note or "(none)",
+    }
+    if git_sha:
+        result["git_sha"] = git_sha
+        result["hint"] = (
+            "Stored git ref. Next review can target changes with: "
+            f"git diff {git_sha} -- {file}"
+        )
+    else:
+        result["hint"] = (
+            "No git repo detected. Commit changes regularly so that "
+            "future reviews can use git diff to target changed regions."
+        )
+    return json.dumps(result, indent=2)
+
+
+@mcp_server.tool()
+def file_diff(file: str, task: str = "", base: str = "") -> str:
+    """Show what changed in a file since the last review.
+
+    Computes a git diff annotated with LaTeX section headings and changed
+    line ranges.  Designed for review targeting: focus on changed regions
+    instead of re-reading the entire file.
+
+    With task: auto-pulls base SHA from needful completion state.
+    With base: uses the explicit SHA (overrides task lookup).
+    Without either: reports "no baseline" and the file's line count.
+
+    Output includes a structured header (file, base, head, stat) followed
+    by a numbered list of changed regions with nearest section headings,
+    then the full unified diff.
+
+    Args:
+        file: Relative path to the file (e.g. 'sections/logic-mechanisms.tex').
+        task: Task name to auto-lookup base SHA from needful state.
+        base: Explicit base commit SHA (overrides task lookup).
+    """
+    project = _project_root()
+    abs_path = project / file
+    if not abs_path.exists():
+        return json.dumps({"error": f"File not found: {file}"})
+
+    # Resolve base SHA: explicit > needful lookup > empty
+    base_sha = base
+    last_done = ""
+    if not base_sha and task:
+        state = needful_mod.load_state(_dot_tome())
+        completion = needful_mod.get_completion(state, task, file)
+        if completion:
+            base_sha = completion.get("git_sha", "")
+            last_done = completion.get("completed_at", "")
+
+    result = git_diff_mod.file_diff(
+        project_root=project,
+        file_path=file,
+        base_sha=base_sha,
+        task=task,
+        last_done=last_done,
+    )
+    return result.format()
 
 
 # ---------------------------------------------------------------------------

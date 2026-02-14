@@ -21,7 +21,7 @@ _REF_RE = re.compile(r"\\(?:eq|auto|c|page)?ref\{([^}]+)\}")
 # Also handles multiple keys: \cite{xu2022,chen2023}
 _CITE_RE = re.compile(r"\\cite[a-z]*\{([^}]+)\}")
 
-# Pattern for custom cite macros used in compyCrystal: \mciteboxp{key}{page}{quote}
+# Pattern for deep-cite macros: \mciteboxp{key}{page}{quote}, \mcitebox{key}{quote}
 _MCITE_RE = re.compile(r"\\mciteboxp?\{([^}]+)\}")
 
 # Section-like commands that create structure

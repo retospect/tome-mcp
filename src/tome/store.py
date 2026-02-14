@@ -17,27 +17,14 @@ from typing import Any, Sequence
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 import chromadb
-from chromadb.api.types import EmbeddingFunction, Embeddings, Documents
+from chromadb.api.types import EmbeddingFunction
 
 from tome.chunk import chunk_text
-from tome.embed import embed_texts, get_embed_model, get_ollama_url
 
 # Collection names
 PAPER_PAGES = "paper_pages"
 PAPER_CHUNKS = "paper_chunks"
 CORPUS_CHUNKS = "corpus_chunks"
-
-
-class OllamaEmbeddingFunction(EmbeddingFunction):
-    """ChromaDB-compatible embedding function using Ollama."""
-
-    def __init__(self, url: str | None = None, model: str | None = None):
-        self._url = url or get_ollama_url()
-        self._model = model or get_embed_model()
-
-    def __call__(self, input: Documents) -> Embeddings:
-        arr = embed_texts(list(input), url=self._url, model=self._model)
-        return arr.tolist()
 
 
 def get_client(chroma_dir: Path) -> chromadb.ClientAPI:
@@ -179,8 +166,9 @@ def upsert_corpus_chunks(
     chunks: list[str],
     file_sha256: str,
     chunk_markers: list[dict[str, Any]] | None = None,
+    file_type: str = "",
 ) -> int:
-    """Upsert chunks from a .tex/.py file.
+    """Upsert chunks from a project file (.tex/.py/.md/.txt/etc).
 
     Args:
         collection: The corpus_chunks collection.
@@ -189,6 +177,7 @@ def upsert_corpus_chunks(
         file_sha256: SHA256 of the source file.
         chunk_markers: Optional list of marker metadata dicts (from latex.extract_markers),
             one per chunk. Each dict may contain has_label, labels, has_cite, cites, etc.
+        file_type: File type tag (e.g. 'tex', 'python', 'markdown', 'text').
 
     Returns:
         Number of chunks upserted.
@@ -205,6 +194,8 @@ def upsert_corpus_chunks(
             "file_sha256": file_sha256,
             "source_type": "corpus",
         }
+        if file_type:
+            meta["file_type"] = file_type
         if chunk_markers and i < len(chunk_markers):
             meta.update(chunk_markers[i])
         metadatas.append(meta)

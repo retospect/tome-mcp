@@ -27,11 +27,9 @@ _KEEP_ARG = re.compile(
 
 # Commands whose braced arguments should be DROPPED entirely
 _DROP_CMD = re.compile(
-    r"\\(?:cite[tp]?|mcite(?:box[p]?|)|wcitebox[p]?|citeq[p]?"
+    r"\\(?:cite[tp]?|mcite(?:box[p]?|)|citeq[p]?"
     r"|ref|eqref|pageref|nameref|label|hyperref|hyperlink|hypertarget"
-    r"|gls[p]?|Gls[p]?|glstip|Glstip|acrshort|acrlong|acrfull"
-    r"|mxrefbox|mtechq|mtechqpa|mtechissue|mpartialbox|mglsbox"
-    r"|cfn|fni|mcite"
+    r"|gls[p]?|Gls[p]?|acrshort|acrlong|acrfull"
     r"|input|include|bibliography|bibliographystyle"
     r"|newcommand|renewcommand|providecommand|newenvironment"
     r"|usepackage|documentclass"
@@ -42,10 +40,9 @@ _DROP_CMD = re.compile(
 
 # Strip entire command + all its brace groups: \cmd{...}{...}
 _DROP_WITH_ARGS = re.compile(
-    r"\\(?:cite[tp]?|mciteboxp?|wciteboxp?|citeqp?"
+    r"\\(?:cite[tp]?|mciteboxp?|citeqp?"
     r"|ref|eqref|pageref|nameref|label"
-    r"|gls[p]?|Gls[p]?|glstip|Glstip|acrshort|acrlong|acrfull"
-    r"|mxrefbox|mtechq|mtechqpa|mtechissue|mpartialbox|mglsbox|cfn|fni"
+    r"|gls[p]?|Gls[p]?|acrshort|acrlong|acrfull"
     r"|hyperref|hyperlink|hypertarget"
     r")"
     r"(?:\[[^\]]*\])*"   # optional [...] args

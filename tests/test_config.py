@@ -63,7 +63,7 @@ class TestLoadConfig:
     def test_missing_file_returns_defaults(self, tmp_path):
         cfg = load_config(tmp_path / "nonexistent")
         assert cfg.roots == {"default": "main.tex"}
-        assert cfg.track == []
+        assert cfg.track == []  # missing file = empty, not template defaults
         assert cfg.sha256 == ""
 
     def test_loads_default_config(self, tmp_path):
@@ -71,7 +71,9 @@ class TestLoadConfig:
         create_default(tome_dir)
         cfg = load_config(tome_dir)
         assert cfg.roots == {"default": "main.tex"}
+        # Default template ships clean — patterns and tasks are commented examples
         assert cfg.track == []
+        assert cfg.needful_tasks == []
         assert cfg.sha256 != ""
 
     def test_loads_roots_dict(self, tmp_path):

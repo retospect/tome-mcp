@@ -6,9 +6,9 @@ content without re-reading entire files.
 
 Format:
 {
-    "sections/signal-domains.tex": {
-        "summary": "Signal transport mechanisms in MOF boxel arrays",
-        "short": "MOF signal transport: QI, conductance, NDR",
+    "sections/introduction.tex": {
+        "summary": "Chapter overview, research gap, and thesis statement",
+        "short": "Intro: gap analysis and thesis statement",
         "sections": [
             {"lines": "1-45", "description": "Intro and signal requirements"},
             {"lines": "46-120", "description": "Quantum interference data"},
