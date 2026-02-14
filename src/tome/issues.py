@@ -15,6 +15,69 @@ from pathlib import Path
 _ISSUE_RE = re.compile(r"^## (?!\[RESOLVED\])", re.MULTILINE)
 _RESOLVED_RE = re.compile(r"^## \[RESOLVED\]", re.MULTILINE)
 
+_HELP_TEXT = """\
+# How to Report a Tome Issue
+
+## Before reporting
+1. Retry the tool call once — transient errors (timeouts, stale cache) often self-resolve.
+2. Check if you passed valid arguments (correct key, existing file path, etc.).
+3. If the tool returned an error message, include it verbatim.
+
+## Writing the description
+Structure: **what you did → what happened → what you expected**.
+
+Good: "Called search(query='MOF conductivity', key='sheberla2014'). \
+Returned 0 results. Expected ≥1 hit — paper discusses conductivity on p.3."
+
+Bad: "search doesn't work for sheberla2014"
+
+### Include
+- Exact tool name and arguments you passed.
+- The error message or unexpected output (quote it).
+- What you expected instead and why.
+- The bib key, file path, or query involved.
+
+### Omit
+- Speculation about the cause (let the maintainer diagnose).
+- Lengthy context about your overall task.
+- Apologies or hedging.
+
+## Choosing severity
+- **minor**: Cosmetic, confusing output, missing convenience feature. \
+Tool is usable with a workaround.
+- **major**: Wrong results (bad matches, missing data, incorrect metadata). \
+Tool runs but output cannot be trusted.
+- **blocker**: Tool crashes, hangs, or is completely unusable. \
+No workaround exists.
+
+When in doubt, use **major** — wrong results are worse than crashes \
+(crashes are obvious; wrong results silently corrupt work).
+
+## Examples
+
+### Good minor
+tool='search', severity='minor'
+"search(query='DNA origami') returns results sorted alphabetically \
+instead of by relevance score. Results are correct but ordering is unhelpful."
+
+### Good major
+tool='ingest', severity='major'
+"ingest(path='inbox/smith2024.pdf', confirm=True) succeeded but wrote \
+year='2023' in the bib entry. PDF title page clearly says 2024. \
+DOI 10.1234/example confirms 2024."
+
+### Good blocker
+tool='rebuild', severity='blocker'
+"rebuild(key='jones2021') raises KeyError: 'pages'. Traceback ends at \
+store.py line 142. Paper has 8 extracted pages in .tome/raw/jones2021/. \
+Happens on every retry."
+"""
+
+
+def report_issue_guide() -> str:
+    """Return best-practices guidance for reporting tool issues."""
+    return _HELP_TEXT
+
 
 def issues_path(tome_dir: Path) -> Path:
     """Return the path to the issues file."""

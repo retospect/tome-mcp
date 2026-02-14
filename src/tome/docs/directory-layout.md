@@ -1,0 +1,50 @@
+---
+description: "tome/ vs .tome/, what's git-tracked"
+---
+# Directory Layout
+
+Tome uses two directories at the project root:
+
+## `tome/` — git-tracked source of truth
+
+| Path | Contents |
+|------|----------|
+| `tome/references.bib` | Bibliography (managed by Tome) |
+| `tome/pdf/` | Paper PDFs (`authorYYYY.pdf`) |
+| `tome/inbox/` | Drop zone for new PDFs (ingest picks up from here) |
+| `tome/figures/` | Source figures from papers |
+| `tome/notes/` | Research notes YAML (`{key}.yaml`) |
+| `tome/config.yaml` | Project configuration |
+| `tome/issues.md` | LLM-reported tool issues |
+
+## `.tome/` — gitignored cache (always rebuildable)
+
+| Path | Contents |
+|------|----------|
+| `.tome/tome.json` | Paper manifest (metadata, extraction status) |
+| `.tome/raw/` | Extracted text per paper (`{key}/{key}.pN.txt`) |
+| `.tome/chroma/` | ChromaDB vector database |
+| `.tome/cache/` | HTTP response cache (S2, CrossRef, OpenAlex) |
+| `.tome/staging/` | Temporary ingest staging area |
+| `.tome/doc_analysis.json` | LaTeX structural analysis cache |
+| `.tome/summaries.json` | File content summaries |
+| `.tome/needful.json` | Task completion state |
+| `.tome/doc_index.json` | Back-of-book index (from `.idx`) |
+| `.tome/cite_tree.json` | Citation graph cache |
+
+## Conventions
+
+### Bib keys
+- Papers: `authorYYYY[a-c]?` (first author + year, letter suffix for conflicts)
+- Datasheets: `manufacturer_partid` (e.g., `thorlabs_m365l4`)
+- Year in key must match year field. Only exception: patents.
+
+### Status fields in `.bib`
+BibTeX ignores unknown fields — Tome uses them for tracking:
+- `x-pdf = {true|false}` — PDF exists in `tome/pdf/`
+- `x-doi-status = {valid|unchecked|rejected|missing}`
+- `x-tags = {tag1, tag2}` — Comma-separated tags
+
+### Rebuilding `.tome/`
+If cache becomes corrupt: `rebuild()` re-extracts text, re-embeds,
+and rebuilds ChromaDB from `tome/pdf/` and `tome/references.bib`.

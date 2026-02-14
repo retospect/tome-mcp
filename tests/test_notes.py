@@ -5,12 +5,14 @@ import json
 import pytest
 
 from tome.notes import (
+    delete_note,
     flatten_for_search,
     list_notes,
     load_note,
     merge_note,
     note_path,
     notes_dir,
+    remove_from_note,
     save_note,
 )
 
@@ -177,3 +179,92 @@ class TestListNotes:
         (d / "readme.txt").write_text("ignore me\n")  # not yaml
         keys = list_notes(tmp_path)
         assert keys == ["chen2023", "xu2022"]
+
+
+class TestRemoveFromNote:
+    def test_remove_claim(self):
+        existing = {"claims": ["A", "B", "C"]}
+        result, removed = remove_from_note(existing, "claims", "B")
+        assert removed is True
+        assert result["claims"] == ["A", "C"]
+
+    def test_remove_claim_not_found(self):
+        existing = {"claims": ["A", "B"]}
+        result, removed = remove_from_note(existing, "claims", "Z")
+        assert removed is False
+        assert result["claims"] == ["A", "B"]
+
+    def test_remove_from_empty_list(self):
+        result, removed = remove_from_note({}, "claims", "A")
+        assert removed is False
+
+    def test_remove_limitation(self):
+        existing = {"limitations": ["thin film only", "bulk ensemble"]}
+        result, removed = remove_from_note(existing, "limitations", "thin film only")
+        assert removed is True
+        assert result["limitations"] == ["bulk ensemble"]
+
+    def test_remove_tag(self):
+        existing = {"tags": ["MOF", "conductivity"]}
+        result, removed = remove_from_note(existing, "tags", "MOF")
+        assert removed is True
+        assert result["tags"] == ["conductivity"]
+
+    def test_clear_summary(self):
+        existing = {"summary": "old summary", "claims": ["A"]}
+        result, removed = remove_from_note(existing, "summary")
+        assert removed is True
+        assert "summary" not in result
+        assert result["claims"] == ["A"]
+
+    def test_clear_empty_summary(self):
+        result, removed = remove_from_note({}, "summary")
+        assert removed is False
+
+    def test_clear_quality(self):
+        existing = {"quality": "high"}
+        result, removed = remove_from_note(existing, "quality")
+        assert removed is True
+        assert "quality" not in result
+
+    def test_remove_relevance(self):
+        existing = {"relevance": [
+            {"section": "connectivity", "note": "QI evidence"},
+            {"section": "signal-domains", "note": "supports QI"},
+        ]}
+        value = json.dumps({"section": "connectivity", "note": "QI evidence"})
+        result, removed = remove_from_note(existing, "relevance", value)
+        assert removed is True
+        assert len(result["relevance"]) == 1
+        assert result["relevance"][0]["section"] == "signal-domains"
+
+    def test_remove_relevance_not_found(self):
+        existing = {"relevance": [{"section": "connectivity", "note": "QI evidence"}]}
+        value = json.dumps({"section": "other", "note": "nope"})
+        result, removed = remove_from_note(existing, "relevance", value)
+        assert removed is False
+
+    def test_unknown_field_raises(self):
+        with pytest.raises(ValueError, match="Unknown field"):
+            remove_from_note({}, "bogus", "x")
+
+    def test_bad_relevance_json_raises(self):
+        existing = {"relevance": [{"section": "a", "note": "b"}]}
+        with pytest.raises(ValueError, match="JSON"):
+            remove_from_note(existing, "relevance", "not json{{{")
+
+    def test_remove_last_claim_leaves_empty_list(self):
+        existing = {"claims": ["only one"]}
+        result, removed = remove_from_note(existing, "claims", "only one")
+        assert removed is True
+        assert result["claims"] == []
+
+
+class TestDeleteNote:
+    def test_delete_existing(self, tmp_path):
+        save_note(tmp_path, "xu2022", {"summary": "test"})
+        assert delete_note(tmp_path, "xu2022") is True
+        assert load_note(tmp_path, "xu2022") == {}
+
+    def test_delete_nonexistent(self, tmp_path):
+        assert delete_note(tmp_path, "nonexistent") is False

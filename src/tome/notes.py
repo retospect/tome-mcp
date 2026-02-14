@@ -107,6 +107,69 @@ def merge_note(
     return result
 
 
+def remove_from_note(
+    existing: dict[str, Any],
+    field: str,
+    value: str = "",
+) -> tuple[dict[str, Any], bool]:
+    """Remove an item from a note field, or clear a scalar field.
+
+    For list fields (claims, limitations, tags): removes the matching item.
+    For relevance: value is a JSON-encoded {section, note} dict — removes
+    the entry matching both section AND note.
+    For scalar fields (summary, quality): clears the field (value ignored).
+
+    Returns (updated_dict, was_removed). was_removed is False if the item
+    was not found or the field was already empty.
+    """
+    SCALAR_FIELDS = {"summary", "quality"}
+    LIST_FIELDS = {"claims", "limitations", "tags"}
+    ALL_FIELDS = SCALAR_FIELDS | LIST_FIELDS | {"relevance"}
+
+    if field not in ALL_FIELDS:
+        raise ValueError(f"Unknown field '{field}'. Must be one of: {sorted(ALL_FIELDS)}")
+
+    result = dict(existing)
+
+    if field in SCALAR_FIELDS:
+        if field in result and result[field]:
+            del result[field]
+            return result, True
+        return result, False
+
+    if field == "relevance":
+        old_rel = result.get("relevance", [])
+        if not isinstance(old_rel, list) or not old_rel:
+            return result, False
+        # Parse value as JSON {section, note}
+        import json
+
+        try:
+            target = json.loads(value) if value else {}
+        except json.JSONDecodeError:
+            raise ValueError("relevance value must be a JSON object with 'section' and/or 'note' keys")
+        target_section = target.get("section", "")
+        target_note = target.get("note", "")
+        new_rel = [
+            r for r in old_rel
+            if not (r.get("section", "") == target_section and r.get("note", "") == target_note)
+        ]
+        if len(new_rel) == len(old_rel):
+            return result, False
+        result["relevance"] = new_rel
+        return result, True
+
+    # List fields: claims, limitations, tags
+    old = result.get(field, [])
+    if not isinstance(old, list) or not old:
+        return result, False
+    new = [item for item in old if item != value]
+    if len(new) == len(old):
+        return result, False
+    result[field] = new
+    return result, True
+
+
 def flatten_for_search(key: str, data: dict[str, Any]) -> str:
     """Flatten a note into a single text string for ChromaDB indexing.
 
@@ -141,6 +204,18 @@ def flatten_for_search(key: str, data: dict[str, Any]) -> str:
         parts.append(f"Tags: {', '.join(data['tags'])}")
 
     return "\n".join(parts)
+
+
+def delete_note(tome_dir: Path, key: str) -> bool:
+    """Delete a paper's entire notes file.
+
+    Returns True if the file existed and was deleted, False if it didn't exist.
+    """
+    p = note_path(tome_dir, key)
+    if p.exists():
+        p.unlink()
+        return True
+    return False
 
 
 def list_notes(tome_dir: Path) -> list[str]:

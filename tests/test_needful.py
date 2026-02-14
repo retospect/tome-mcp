@@ -218,11 +218,16 @@ class TestRanking:
 
     def test_rank_sorts_by_score_descending(self, project):
         tasks = [NeedfulTask(name="review", globs=["sections/*.tex"], cadence_hours=168)]
-        # alpha done recently, beta never done
+        # alpha done recently (1h ago relative to NOW), beta never done
         from tome.checksum import sha256_file
         state = {"completions": {}}
         sha = sha256_file(project / "sections" / "alpha.tex")
-        mark_done(state, "review", "sections/alpha.tex", sha)
+        state["completions"]["review::sections/alpha.tex"] = {
+            "task": "review",
+            "file": "sections/alpha.tex",
+            "completed_at": (self.NOW - timedelta(hours=1)).isoformat(),
+            "file_sha256": sha,
+        }
         items = rank_needful(tasks, project, state, n=10, now=self.NOW)
         assert len(items) == 2
         # beta (never done, score=1000) should be first

@@ -10,7 +10,7 @@ import json
 import os
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 
@@ -240,8 +240,7 @@ def ingest(
     tags: str = "",
 ) -> str:
     """Process PDFs from tome/inbox/. Without confirm: proposes key and metadata
-    from PDF analysis and CrossRef/S2 lookup. With confirm=true: commits the paper
-    (moves PDF, writes bib entry, extracts text, embeds, indexes).
+    from PDF analysis and CrossRef/S2 lookup. With confirm=true: commits the paper.
 
     Args:
         path: Path to a specific PDF in inbox/. Empty = scan all inbox files.
@@ -498,8 +497,7 @@ def set_paper(
     raw_field: str = "",
     raw_value: str = "",
 ) -> str:
-    """Set or update bibliography metadata for a paper. Creates a new entry
-    if the key doesn't exist. Updates existing fields if it does.
+    """Set or update bibliography metadata for a paper.
 
     Args:
         key: Bib key (e.g. 'miller1999'). Same as used in \\cite{}.
@@ -562,8 +560,7 @@ def set_paper(
 
 @mcp_server.tool()
 def remove_paper(key: str) -> str:
-    """Remove a paper from the library. Deletes bib entry, PDF, extracted text,
-    embeddings, and ChromaDB entries.
+    """Remove a paper from the library. Deletes all associated data.
 
     Args:
         key: Bib key of the paper to remove.
@@ -602,8 +599,7 @@ def remove_paper(key: str) -> str:
 
 @mcp_server.tool()
 def get_paper(key: str) -> str:
-    """Get full metadata for a paper in the library. The library is the collection
-    of papers tracked in tome/references.bib.
+    """Get full metadata for a paper in the library.
 
     Args:
         key: Bib key (e.g. 'miller1999'). Same as used in \\cite{}.
@@ -634,11 +630,7 @@ def get_paper(key: str) -> str:
 
 @mcp_server.tool()
 def get_notes(key: str) -> str:
-    """Get research notes for a paper. Notes are LLM-curated observations
-    stored in tome/notes/{key}.yaml — summary, claims, relevance, limitations.
-
-    Returns empty object if no notes exist yet. Use set_notes to add them,
-    or edit_notes to remove items or delete the note entirely.
+    """Get research notes for a paper. Notes are in tome/notes/{key}.yaml.
 
     Args:
         key: Bib key (e.g. 'miller1999').
@@ -658,15 +650,11 @@ def set_notes(
     quality: str = "",
     tags: str = "",
 ) -> str:
-    """Add or update research notes for a paper. Notes are git-tracked in
-    tome/notes/{key}.yaml and indexed into ChromaDB for semantic search.
+    """Add or update research notes for a paper. Indexed into ChromaDB.
 
-    All fields are optional — provide only the ones you want to add/update.
-    List fields (claims, limitations, tags) are comma-separated strings.
-    Relevance is a JSON array of {section, note} objects.
-
-    Scalar fields (summary, quality) overwrite. List fields append and
-    deduplicate. Use edit_notes to remove individual items or delete notes.
+    Scalar fields (summary, quality) overwrite. List fields (claims,
+    limitations, tags) append and deduplicate. Relevance is a JSON array
+    of {section, note} objects.
 
     Args:
         key: Bib key (e.g. 'miller1999').
@@ -735,28 +723,18 @@ def set_notes(
 @mcp_server.tool()
 def edit_notes(
     key: str,
-    action: str,
-    field: str = "",
+    action: Literal["remove", "delete"],
+    field: Literal["claims", "limitations", "tags", "relevance", "summary", "quality", ""] = "",
     value: str = "",
 ) -> str:
     """Remove an item from a note field, or delete the entire note.
 
     Use set_notes to add/update. Use this tool to remove or delete.
 
-    Actions:
-      remove — Remove one item from a list field, or clear a scalar field.
-               Requires 'field'. For list fields (claims, limitations, tags),
-               'value' is the exact item text to remove. For relevance,
-               'value' is a JSON {section, note} object. For scalar fields
-               (summary, quality), the field is cleared (value ignored).
-      delete — Delete the entire note file for this paper.
-               'field' and 'value' are ignored.
-
     Args:
         key: Bib key (e.g. 'miller1999').
         action: 'remove' or 'delete'.
         field: Field to remove from (required for action='remove').
-            One of: claims, limitations, tags, relevance, summary, quality.
         value: Item to remove (for list fields). Exact string match.
     """
     validate.validate_key(key)
@@ -966,8 +944,9 @@ def search(query: str, key: str = "", tags: str = "", n: int = 10) -> str:
         query: Natural language search query.
         key: Restrict to one paper (bib key).
         tags: Comma-separated tags to filter by (post-filter on results).
-        n: Maximum results (default 10).
+        n: Maximum results.
     """
+    validate.validate_key_if_given(key)
     try:
         client = store.get_client(_chroma_dir())
         embed_fn = store.get_embed_fn()
@@ -1008,17 +987,10 @@ def search_corpus(
     """Semantic search across .tex/.py project files. Auto-syncs stale files
     before searching. Returns ranked text passages matching the query.
 
-    Use labels_only=true to find citation target points — chunks that define
-    \\label{} anchors (sections, figures, tables, equations) which can be
-    referenced with \\ref{}. Results include the label names.
-
-    Use cites_only=true to find chunks that contain \\cite{} references.
-    Results include which papers are cited.
-
     Args:
         query: Natural language search query.
         paths: Glob patterns to restrict search (e.g. 'sections/*.tex').
-        n: Maximum results (default 10).
+        n: Maximum results.
         labels_only: Only return chunks that define \\label{} targets.
         cites_only: Only return chunks that contain \\cite{} references.
     """
@@ -1044,10 +1016,6 @@ def search_corpus(
 def list_labels(prefix: str = "") -> str:
     """List all \\label{} targets in the indexed .tex files.
 
-    Returns every referenceable anchor in the document — sections, figures,
-    tables, equations — with the source file and nearest section heading.
-    Use this to find what can be \\ref{}'d.
-
     Args:
         prefix: Filter labels by prefix (e.g. 'fig:', 'sec:', 'tab:', 'eq:').
             Empty = all labels.
@@ -1068,10 +1036,6 @@ def list_labels(prefix: str = "") -> str:
 @mcp_server.tool()
 def find_cites(key: str, paths: str = "sections/*.tex") -> str:
     """Find every line where a bib key is \\cite{}'d in the .tex source.
-
-    Live grep (not from index) — always returns fresh results with exact
-    file and line numbers. Searches all \\cite variants including \\citep,
-    \\citet, \\citeauthor, and \\mciteboxp.
 
     Args:
         key: Bib key to find (e.g. 'miller1999'). Same as used in \\cite{}.
@@ -1218,9 +1182,6 @@ def sync_corpus(paths: str = "sections/*.tex") -> str:
 def rebuild_doc_index(root: str = "default") -> str:
     """Rebuild the document index from the .idx file produced by makeindex.
 
-    Run this after compiling the LaTeX document. Parses the .idx file into
-    a structured JSON index in .tome/doc_index.json for fast term lookup.
-
     Args:
         root: Named root from config.yaml (default: 'default').
     """
@@ -1248,9 +1209,6 @@ def rebuild_doc_index(root: str = "default") -> str:
 def search_doc_index(query: str, fuzzy: bool = True) -> str:
     """Search the document index for terms matching a query.
 
-    Searches the back-of-book index built from LaTeX \\index{} entries.
-    Returns matching terms with page numbers and subterms.
-
     Args:
         query: Search string (case-insensitive).
         fuzzy: If True, match anywhere in term. If False, prefix match only.
@@ -1272,9 +1230,6 @@ def search_doc_index(query: str, fuzzy: bool = True) -> str:
 @mcp_server.tool()
 def list_doc_index() -> str:
     """List all terms in the document index.
-
-    Returns every top-level term from the back-of-book index with page
-    counts and subterm counts. Use search_doc_index for filtered results.
     """
     index = index_mod.load_index(_dot_tome())
     if not index.get("terms"):
@@ -1312,20 +1267,13 @@ def summarize_file(
 ) -> str:
     """Store a content summary for a file so you can quickly find content later.
 
-    You MUST read the file's actual content before calling this. Section
-    headings and labels are already available from doc_lint / dep_graph —
-    the value of this tool is storing *content-level* descriptions that
-    those structural tools cannot provide.
+    You MUST read the file before calling this.
 
     Args:
         file: Relative path to the file (e.g. 'sections/signal-domains.tex').
         summary: Full summary (2-3 sentences describing what the file covers).
         short: One-line short summary (< 80 chars).
         sections: JSON array of {"lines": "1-45", "description": "..."} objects.
-            Each description should summarize the *content* in that line range
-            (key claims, quantities, methods), not just repeat the section
-            heading. Bad: "Signal domains". Good: "Analyzes five physical
-            signal domains; ranks electronic+optical as primary strategy".
     """
     validate.validate_relative_path(file, field="file")
     file_path = _project_root() / file
@@ -1350,13 +1298,6 @@ def summarize_file(
 @mcp_server.tool()
 def get_summary(file: str = "", stale_only: bool = False) -> str:
     """Get the stored section map for a file, or list all summaries.
-
-    Returns line-range descriptions so you can quickly locate content
-    without reading the full file. Also reports if the summary is stale
-    (file changed since last summarize_file call).
-
-    With no file argument: returns a table of all summarized files with
-    their short descriptions and staleness status.
 
     Args:
         file: Relative path to the file. Empty = list all.
@@ -1425,7 +1366,7 @@ def discover(query: str, n: int = 10) -> str:
 
     Args:
         query: Natural language search query.
-        n: Maximum results (default 10).
+        n: Maximum results.
     """
     try:
         results = s2.search(query, limit=n)
@@ -1476,13 +1417,11 @@ def discover(query: str, n: int = 10) -> str:
 
 @mcp_server.tool()
 def discover_openalex(query: str, n: int = 10) -> str:
-    """Search OpenAlex for papers. Complement to Semantic Scholar discover.
-    Use when S2 returns few results or for older/non-CS papers.
-    Flags papers already in the library.
+    """Search OpenAlex for papers. Flags papers already in the library.
 
     Args:
         query: Natural language search query.
-        n: Maximum results (default 10).
+        n: Maximum results.
     """
     try:
         results = openalex.search(query, limit=n)
@@ -1529,10 +1468,6 @@ def discover_openalex(query: str, n: int = 10) -> str:
 @mcp_server.tool()
 def fetch_oa(key: str) -> str:
     """Fetch open-access PDF for a paper already in the library.
-
-    Queries Unpaywall using the paper's DOI. If an OA PDF is found,
-    downloads it to tome/pdf/{key}.pdf. Requires UNPAYWALL_EMAIL env var
-    or unpaywall_email in tome/config.yaml.
 
     Args:
         key: Bib key of the paper (must have a DOI).
@@ -1685,8 +1620,7 @@ def request_figure(
     caption: str = "",
 ) -> str:
     """Queue a figure request. Extracts caption and in-text citation context
-    from the paper's raw text if available. The figure file should be captured
-    manually (screenshot/crop) and registered with add_figure.
+    from the paper's raw text if available.
 
     Args:
         key: Bib key of the paper.
@@ -1748,8 +1682,7 @@ def request_paper(
     reason: str = "",
     tentative_title: str = "",
 ) -> str:
-    """Track a paper you want but don't have the PDF for. The request stays
-    open until the paper is ingested.
+    """Track a paper you want but don't have the PDF for.
 
     Args:
         key: Bib key (may be tentative, e.g. 'ouyang2025').
@@ -1876,6 +1809,9 @@ def stats() -> str:
 def guide(topic: str = "") -> str:
     """On-demand usage guides. Call without args for topic index.
 
+    Covers tool strategies, workflows, examples, and when-to-use advice
+    that complements the brief tool descriptions.
+
     Args:
         topic: Topic slug or search term. Empty = list all topics.
     """
@@ -1934,16 +1870,6 @@ def toc(
 ) -> str:
     """Parse the compiled TOC into a hierarchical, indented document map.
 
-    Reads .toc, .lof, and .lot files produced by LaTeX compilation.
-    Returns a compact plain-text tree with heading numbers, titles,
-    source file:line attribution, page numbers, and nested figures/tables.
-
-    Source attribution requires the \\tomeinfo enrichment patch in the
-    document preamble (currfile package). Without it the tool still works
-    but omits file:line info.
-
-    Use for orientation, structural review, or navigating to content.
-
     Args:
         root: Named root from config.yaml (default: 'default'), or a .tex path.
         depth: Max heading level to show — part, section, subsection,
@@ -1952,7 +1878,7 @@ def toc(
             Shows matching entries plus their full ancestor chain.
         file: Only show entries from this source file (substring match).
         pages: Page range filter, e.g. '31-70'.
-        figures: Include figure and table entries (default True).
+        figures: Include figure and table entries.
         part: Restrict to a part by number or name substring.
     """
     root_tex = _resolve_root(root)
@@ -1972,10 +1898,6 @@ def toc(
 @mcp_server.tool()
 def doc_tree(root: str = "default") -> str:
     """Show the ordered file list for a document root.
-
-    Walks the \\input{}/\\include{} tree starting from the root .tex file
-    and returns all member files in document order. Use at session start
-    to orient, or to see which files belong to a named root.
 
     Args:
         root: Named root from config.yaml (default: 'default'), or a .tex path.
@@ -2007,9 +1929,6 @@ def doc_tree(root: str = "default") -> str:
 def doc_lint(root: str = "default", file: str = "") -> str:
     """Lint the document for structural issues. Uses built-in patterns
     (labels, refs, cites) plus any custom patterns from tome/config.yaml.
-
-    Checks: undefined refs, orphan labels, shallow high-use cites (≥3×
-    with no deep quote), plus tracked pattern counts.
 
     Args:
         root: Named root from config.yaml (default: 'default'), or a .tex path.
@@ -2061,15 +1980,6 @@ def doc_lint(root: str = "default", file: str = "") -> str:
 @mcp_server.tool()
 def review_status(root: str = "default", file: str = "") -> str:
     """Show tracked marker counts from tome/config.yaml patterns.
-
-    Groups markers by type, counts per file. Use this to see how many
-    open questions, issues, TODOs, etc. exist in the document.
-
-    Tip: Track review findings by adding a 'review_finding' pattern for
-    \\mrev{id}{severity}{text} in config.yaml's track: section. Then this
-    tool counts open findings by severity and file. To list individual
-    matches with file:line context, use find_text("TEC-BGD-001") to find
-    a specific finding, or find_text("RIG-") to filter by reviewer code.
 
     Args:
         root: Named root from config.yaml (default: 'default'), or a .tex path.
@@ -2123,9 +2033,7 @@ def review_status(root: str = "default", file: str = "") -> str:
 
 @mcp_server.tool()
 def dep_graph(file: str, root: str = "default") -> str:
-    """Show dependency graph for a .tex file: labels defined, outgoing refs
-    (what this file references), incoming refs (what references this file),
-    and citations with deep/shallow flag.
+    """Show dependency graph for a .tex file.
 
     Args:
         file: Relative path to the .tex file (e.g. 'sections/connectivity.tex').
@@ -2188,12 +2096,6 @@ def dep_graph(file: str, root: str = "default") -> str:
 @mcp_server.tool()
 def validate_deep_cites(file: str = "", key: str = "") -> str:
     """Verify deep citation quotes against source paper text in ChromaDB.
-
-    Extracts all deep-cite macros (mciteboxp, citeq, etc.) and searches
-    ChromaDB for each quote against the cited paper's extracted text.
-    Reports match score — low scores may indicate misquotes or wrong pages.
-
-    This is a live check (no cache). Requires papers to be rebuilt first.
 
     Args:
         file: Optional — check only this file's deep cites.
@@ -2307,16 +2209,9 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
 def find_text(query: str, context_lines: int = 3) -> str:
     """Normalized search across .tex source files for PDF copy-paste text.
 
-    Strips LaTeX commands from source, then normalizes both query and
-    source (case-fold, collapse whitespace, NFKC unicode, smart quotes).
-    Returns file path and line numbers for each match.
-
-    Use this when you have text copied from the compiled PDF and need to
-    find the corresponding location in the .tex source for editing.
-
     Args:
         query: Text copied from PDF (will be normalized before matching).
-        context_lines: Lines of .tex source context around match (default 3).
+        context_lines: Lines of .tex source context around match.
     """
     from tome import find_text as ft
 
@@ -2356,15 +2251,10 @@ def find_text(query: str, context_lines: int = 3) -> str:
 def grep_raw(query: str, key: str = "", context_chars: int = 200) -> str:
     """Normalized grep across raw PDF text extractions.
 
-    Finds verbatim (or near-verbatim) text in extracted PDF pages.
-    Normalizes both query and target: collapses whitespace, case-folds,
-    NFKC unicode (ligatures), flattens smart quotes, rejoins hyphenated
-    line breaks. Ideal for verifying copypasted quotes against source PDFs.
-
     Args:
         query: Text to search for (will be normalized before matching).
         key: Restrict to one paper (bib key). Empty = search all papers.
-        context_chars: Characters of surrounding context to return (default 200).
+        context_chars: Characters of surrounding context to return.
     """
     from tome import grep_raw as gr
 
@@ -2403,10 +2293,6 @@ def grep_raw(query: str, key: str = "", context_chars: int = 200) -> str:
 @mcp_server.tool()
 def build_cite_tree(key: str = "") -> str:
     """Build or refresh the citation tree for library papers.
-
-    Fetches citation graphs from Semantic Scholar and caches them in
-    .tome/cite_tree.json. With a key: builds for one paper. Without:
-    refreshes papers not checked in 30+ days (batch mode, max 10).
 
     Args:
         key: Bib key to build tree for. Empty = batch refresh stale papers.
@@ -2500,13 +2386,10 @@ def build_cite_tree(key: str = "") -> str:
 def discover_citing(min_shared: int = 2, min_year: int = 0, n: int = 20) -> str:
     """Find non-library papers that cite multiple library papers.
 
-    Uses the cached citation tree to surface high-relevance candidates —
-    papers citing ≥N of our references. Ranked by shared_count × recency.
-
     Args:
-        min_shared: Minimum number of shared citations to surface (default 2).
+        min_shared: Minimum number of shared citations to surface.
         min_year: Only include papers from this year onwards (0 = no filter).
-        n: Maximum results (default 20).
+        n: Maximum results.
     """
     tree = cite_tree_mod.load_tree(_dot_tome())
     if not tree["papers"]:
@@ -2563,19 +2446,10 @@ def explore_citations(
 ) -> str:
     """Fetch citing papers with abstracts for LLM-guided exploration.
 
-    Returns citations with abstracts so you can judge relevance and decide
-    which branches to expand further. Results are cached in the exploration
-    store (7-day TTL). Use mark_explored() to tag branches as relevant,
-    irrelevant, or deferred. Then call explore_citations() again on
-    relevant citers to go deeper — iterative beam search.
-
-    Start from a library paper (key) or any S2 paper (s2_id).
-    Each call = 2 S2 API requests (paper lookup + citations).
-
     Args:
         s2_id: Direct Semantic Scholar paper ID. Takes priority over key.
         key: Library bib key (looks up DOI/S2 ID from library).
-        limit: Max citing papers to return (default 30, max 100).
+        limit: Max citing papers to return (max 100).
         parent_s2_id: S2 ID of the paper that led here (for tree tracking).
         depth: Exploration depth from seed (0 = seed itself).
     """
@@ -2665,18 +2539,12 @@ def explore_citations(
 
 
 @mcp_server.tool()
-def mark_explored(s2_id: str, relevance: str, note: str = "") -> str:
+def mark_explored(s2_id: str, relevance: Literal["relevant", "irrelevant", "deferred", "unknown"], note: str = "") -> str:
     """Mark an explored paper's relevance for beam-search pruning.
-
-    After reviewing citations from explore_citations(), mark each as:
-    - 'relevant': Worth expanding further (call explore_citations on it next)
-    - 'irrelevant': Dead end, prune this branch
-    - 'deferred': Possibly relevant, revisit later
-    - 'unknown': Reset to unmarked
 
     Args:
         s2_id: Semantic Scholar paper ID.
-        relevance: One of 'relevant', 'irrelevant', 'deferred', 'unknown'.
+        relevance: Relevance judgment for this paper.
         note: Your rationale for the decision (persisted for session continuity).
     """
     if relevance not in cite_tree_mod.RELEVANCE_STATES:
@@ -2706,9 +2574,6 @@ def list_explorations(
     relevance: str = "", seed: str = "", expandable: bool = False,
 ) -> str:
     """Show exploration state for session continuity and beam-search planning.
-
-    Use this to see what you've explored, what's marked relevant (expand next),
-    what's deferred (revisit later), and what branches are fully explored.
 
     Args:
         relevance: Filter by relevance state (relevant/irrelevant/deferred/unknown).
@@ -2752,9 +2617,6 @@ def list_explorations(
 @mcp_server.tool()
 def clear_explorations() -> str:
     """Remove all exploration data to start fresh.
-
-    Does NOT affect the main citation tree (library paper caches) or
-    dismissed candidates. Only clears the exploration session state.
     """
     tree = cite_tree_mod.load_tree(_dot_tome())
     count = cite_tree_mod.clear_explorations(tree)
@@ -2766,12 +2628,8 @@ def clear_explorations() -> str:
 
 
 @mcp_server.tool()
-def report_issue(tool: str, description: str, severity: str = "minor") -> str:
+def report_issue(tool: str, description: str, severity: Literal["minor", "major", "blocker"] = "minor") -> str:
     """Report a tool issue for the project maintainer to review.
-
-    Call this whenever a Tome tool behaves unexpectedly, returns confusing
-    output, or is missing a feature you need. Issues are stored in
-    tome/issues.md (git-tracked) and surfaced in stats() and set_root().
 
     Severity levels: minor (cosmetic/UX), major (wrong results), blocker
     (tool unusable).
@@ -2779,7 +2637,7 @@ def report_issue(tool: str, description: str, severity: str = "minor") -> str:
     Args:
         tool: Name of the MCP tool (e.g. 'search', 'ingest', 'doc_lint').
         description: What happened and what you expected.
-        severity: minor, major, or blocker (default: minor).
+        severity: Issue severity level.
     """
     if severity not in ("minor", "major", "blocker"):
         severity = "minor"
@@ -2856,12 +2714,6 @@ def _scaffold_tome(project_root: Path) -> list[str]:
 @mcp_server.tool()
 def set_root(path: str) -> str:
     """Switch Tome's project root directory at runtime.
-
-    Use this when working with multiple projects. Call at the start of a
-    conversation to point Tome at the correct project. Tome looks for
-    tome/references.bib, .tome/, and sections/*.tex under this root.
-
-    Priority: set_root() > TOME_ROOT env > cwd.
 
     Args:
         path: Absolute path to the project root (e.g. '/Users/bots/repos/myProject').
@@ -2997,18 +2849,8 @@ def set_root(path: str) -> str:
 def needful(n: int = 10) -> str:
     """List the N most needful things to do, ranked by urgency.
 
-    Reads task definitions from tome/config.yaml (needful: section) and
-    completion state from .tome/needful.json. Ranks by: never-done >
-    file-changed > time-overdue. Score 0 items (up-to-date) are excluded.
-
-    Items include a git_sha field (when available) from the last mark_done
-    call. Use this for targeted re-reviews: ``git diff <git_sha> -- <file>``
-    shows what changed since the last review, so you can focus on changed
-    paragraphs instead of re-reading the entire file. Skip the diff for
-    never-done items or when the section was substantially rewritten.
-
     Args:
-        n: Maximum items to return (default 10).
+        n: Maximum items to return.
     """
     cfg = tome_config.load_config(_tome_dir())
     if not cfg.needful_tasks:
@@ -3059,13 +2901,8 @@ def needful(n: int = 10) -> str:
 def mark_done(task: str, file: str, note: str = "") -> str:
     """Record that a task was completed on a file.
 
-    Snapshots the file's current SHA256 hash, timestamp, and git HEAD SHA
-    so that the needful scorer knows when this was last done and whether
-    the file has changed since.
-
     Important: commit your changes BEFORE calling mark_done so that the
-    stored git SHA is a clean baseline for future ``git diff`` targeting.
-    Pattern: edit → git commit → mark_done.
+    stored git SHA is a clean baseline for future diffs.
 
     Args:
         task: Task name (must match a name in config.yaml needful section).
@@ -3114,18 +2951,6 @@ def mark_done(task: str, file: str, note: str = "") -> str:
 @mcp_server.tool()
 def file_diff(file: str, task: str = "", base: str = "") -> str:
     """Show what changed in a file since the last review.
-
-    Computes a git diff annotated with LaTeX section headings and changed
-    line ranges.  Designed for review targeting: focus on changed regions
-    instead of re-reading the entire file.
-
-    With task: auto-pulls base SHA from needful completion state.
-    With base: uses the explicit SHA (overrides task lookup).
-    Without either: reports "no baseline" and the file's line count.
-
-    Output includes a structured header (file, base, head, stat) followed
-    by a numbered list of changed regions with nearest section headings,
-    then the full unified diff.
 
     Args:
         file: Relative path to the file (e.g. 'sections/logic-mechanisms.tex').

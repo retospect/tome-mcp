@@ -1,6 +1,27 @@
 """Tests for tome.issues — LLM-reported tool issue tracking."""
 
-from tome.issues import append_issue, count_open, issues_path, load_issues
+from tome.issues import append_issue, count_open, report_issue_guide, issues_path, load_issues
+
+
+class TestReportIssueGuide:
+    def test_returns_string(self):
+        result = report_issue_guide()
+        assert isinstance(result, str)
+        assert len(result) > 100
+
+    def test_has_severity_guidance(self):
+        result = report_issue_guide()
+        assert "minor" in result
+        assert "major" in result
+        assert "blocker" in result
+
+    def test_has_structure_guidance(self):
+        result = report_issue_guide()
+        assert "what you did" in result.lower() or "what happened" in result.lower()
+
+    def test_has_examples(self):
+        result = report_issue_guide()
+        assert "Good minor" in result or "Good major" in result
 
 
 class TestIssuesPath:
