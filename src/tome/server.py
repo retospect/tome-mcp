@@ -874,7 +874,8 @@ def list_papers(tags: str = "", status: str = "") -> str:
 @mcp_server.tool()
 def check_doi(key: str = "") -> str:
     """Verify DOI(s) via CrossRef. With a key: checks that paper's DOI.
-    Without a key: checks all papers with x-doi-status='unchecked'.
+    Without a key: checks all papers with x-doi-status='unchecked' or
+    no x-doi-status field (i.e. never checked).
     Valid DOIs are confirmed. Invalid/wrong DOIs are removed and marked 'rejected'.
 
     Args:
@@ -889,7 +890,8 @@ def check_doi(key: str = "") -> str:
         entries_to_check.append(bib.get_entry(lib, key))
     else:
         for entry in lib.entries:
-            if bib.get_x_field(entry, "x-doi-status") == "unchecked":
+            status = bib.get_x_field(entry, "x-doi-status")
+            if status in ("unchecked", None):
                 entries_to_check.append(entry)
 
     for entry in entries_to_check:
@@ -3079,6 +3081,124 @@ def main():
     except Exception:
         logger.critical("Tome server crashed:\n%s", traceback.format_exc())
         raise
+
+
+@mcp_server.tool()
+def s2ag_stats() -> str:
+    """Show local S2AG database statistics (paper count, citation count, DB size).
+
+    The S2AG database at ~/.tome/s2ag/s2ag.db is a shared read-only cache
+    of the Semantic Scholar Academic Graph, used for instant offline
+    citation lookups.
+    """
+    try:
+        from tome.s2ag import S2AGLocal, DB_PATH
+        if not DB_PATH.exists():
+            return json.dumps({"error": "S2AG database not found at ~/.tome/s2ag/s2ag.db",
+                               "hint": "Run: python -m tome.s2ag_cli sync-library <bib_file>"})
+        db = S2AGLocal()
+        return json.dumps(db.stats(), indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp_server.tool()
+def s2ag_lookup(doi: str = "", s2_id: str = "", corpus_id: int = 0) -> str:
+    """Look up a paper in the local S2AG database. Returns metadata and
+    citation/reference counts.  No API calls — purely local.
+
+    Args:
+        doi: DOI to look up (e.g. '10.1038/nature08016').
+        s2_id: Semantic Scholar paper ID (sha hash).
+        corpus_id: Semantic Scholar corpus ID (integer).
+    """
+    try:
+        from tome.s2ag import S2AGLocal, DB_PATH
+        if not DB_PATH.exists():
+            return json.dumps({"error": "S2AG database not found"})
+        db = S2AGLocal()
+
+        rec = None
+        if doi:
+            rec = db.lookup_doi(doi)
+        elif s2_id:
+            rec = db.lookup_s2id(s2_id)
+        elif corpus_id:
+            rec = db.get_paper(corpus_id)
+
+        if rec is None:
+            return json.dumps({"found": False})
+
+        citers = db.get_citers(rec.corpus_id)
+        refs = db.get_references(rec.corpus_id)
+
+        return json.dumps({
+            "found": True,
+            "corpus_id": rec.corpus_id,
+            "paper_id": rec.paper_id,
+            "doi": rec.doi,
+            "title": rec.title,
+            "year": rec.year,
+            "citation_count": rec.citation_count,
+            "local_citers": len(citers),
+            "local_references": len(refs),
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp_server.tool()
+def s2ag_shared_citers(dois: str, min_shared: int = 2) -> str:
+    """Find non-library papers that cite multiple given papers (co-citation discovery).
+    Purely local — uses the S2AG database, no API calls.
+
+    Args:
+        dois: Comma-separated DOIs to check.
+        min_shared: Minimum number of shared citations to surface.
+    """
+    try:
+        from tome.s2ag import S2AGLocal, DB_PATH
+        if not DB_PATH.exists():
+            return json.dumps({"error": "S2AG database not found"})
+        db = S2AGLocal()
+
+        doi_list = [d.strip() for d in dois.split(",") if d.strip()]
+        corpus_ids = []
+        resolved = []
+        for d in doi_list:
+            rec = db.lookup_doi(d)
+            if rec:
+                corpus_ids.append(rec.corpus_id)
+                resolved.append(d)
+
+        if len(corpus_ids) < min_shared:
+            return json.dumps({
+                "error": f"Only {len(corpus_ids)} DOIs resolved locally, need at least {min_shared}",
+                "resolved": resolved,
+            })
+
+        results = db.find_shared_citers(corpus_ids, min_shared=min_shared, limit=50)
+
+        candidates = []
+        for cid, count in results:
+            p = db.get_paper(cid)
+            if p:
+                candidates.append({
+                    "corpus_id": cid,
+                    "title": p.title,
+                    "year": p.year,
+                    "doi": p.doi,
+                    "citation_count": p.citation_count,
+                    "shared_count": count,
+                })
+
+        return json.dumps({
+            "query_dois": resolved,
+            "min_shared": min_shared,
+            "candidates": candidates,
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
 
 
 if __name__ == "__main__":

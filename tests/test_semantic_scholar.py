@@ -95,8 +95,9 @@ class TestSearch:
 
 
 class TestGetPaper:
+    @patch("tome.semantic_scholar._get_s2ag", return_value=None)
     @patch("tome.semantic_scholar.get_with_retry")
-    def test_by_id(self, mock_get):
+    def test_by_id(self, mock_get, _mock_s2ag):
         resp = MagicMock()
         resp.status_code = 200
         resp.json.return_value = SAMPLE_PAPER
@@ -106,8 +107,9 @@ class TestGetPaper:
         assert p is not None
         assert p.s2_id == "abc123"
 
+    @patch("tome.semantic_scholar._get_s2ag", return_value=None)
     @patch("tome.semantic_scholar.get_with_retry")
-    def test_not_found(self, mock_get):
+    def test_not_found(self, mock_get, _mock_s2ag):
         resp = MagicMock()
         resp.status_code = 404
         mock_get.return_value = resp
@@ -116,8 +118,9 @@ class TestGetPaper:
 
 
 class TestGetCitationGraph:
+    @patch("tome.semantic_scholar._get_s2ag", return_value=None)
     @patch("tome.semantic_scholar.get_with_retry")
-    def test_returns_graph(self, mock_get):
+    def test_returns_graph(self, mock_get, _mock_s2ag):
         def side_effect(url, **kwargs):
             resp = MagicMock()
             resp.status_code = 200
