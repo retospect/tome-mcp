@@ -2619,6 +2619,7 @@ _SCAFFOLD_DIRS = [
     "tome/pdf",
     "tome/inbox",
     "tome/figures/papers",
+    "tome/notes",
     ".tome",
 ]
 
