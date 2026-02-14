@@ -247,7 +247,7 @@ Separate from papers. Living documents that change frequently.
 
 ChromaDB collections: `paper_pages`, `paper_chunks`, `corpus_chunks` (separate).
 
-## MCP tools (19)
+## MCP tools (49)
 
 ### Paper management
 
@@ -256,36 +256,91 @@ ChromaDB collections: `paper_pages`, `paper_chunks`, `corpus_chunks` (separate).
 | `ingest` | `path?`, `key?`, `confirm?`, `tags?` | Process inbox PDFs. Without confirm: proposes. With confirm: commits. |
 | `set_paper` | `key`, field params, `raw_field?`, `raw_value?` | Set/update bib metadata. Creates entry if new. |
 | `remove_paper` | `key` | Delete paper + all derived data |
-| `get_paper` | `key` | Full metadata (bib + operational state + figures) |
+| `get_paper` | `key` | Full metadata (bib + state + figures + notes) |
 | `list_papers` | `tags?`, `status?` | Summary table, filterable |
 | `check_doi` | `key?` | Verify DOI via CrossRef. Single or batch all unchecked. |
+
+### Paper notes
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `get_notes` | `key` | Read LLM-curated notes (summary, claims, relevance, limitations). |
+| `set_notes` | `key`, `summary?`, `claims?`, `relevance?`, `limitations?`, `quality?`, `tags?` | Add/update notes. Append-only lists. Indexed into ChromaDB. |
 
 ### Content access
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `get_page` | `key`, `page` | Raw text of page N |
-| `search` | `query`, `tags?`, `key?`, `n?` | Semantic search across papers |
+| `search` | `query`, `tags?`, `key?`, `n?` | Semantic search across papers (includes notes) |
 
 ### Corpus
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `search_corpus` | `query`, `paths?`, `n?` | Semantic search across .tex/.py files. Auto-syncs stale files. |
+| `search_corpus` | `query`, `paths?`, `n?`, `labels_only?`, `cites_only?` | Semantic search across .tex/.py files. Auto-syncs stale. |
 | `sync_corpus` | `paths` | Force re-index of .tex/.py files |
+| `list_labels` | `prefix?` | All \label{} targets in indexed .tex files |
+| `find_cites` | `key`, `paths?` | Live grep for all \cite{key} occurrences |
 
-### Discovery (Semantic Scholar)
+### Document analysis
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `discover` | `query`, `n?` | Search S2. Flags papers already in library. |
-| `cite_graph` | `key` or `s2_id` | S2 citations/references. Flags in-library papers. |
+| `doc_tree` | `root?` | Ordered file list from \input{} tree |
+| `doc_lint` | `root?`, `file?` | Structural issues: undefined refs, orphan labels, shallow cites |
+| `review_status` | `root?`, `file?` | Tracked marker counts (TODOs, findings, etc.) |
+| `dep_graph` | `file`, `root?` | Labels, refs, cites for a .tex file |
+| `validate_deep_cites` | `file?`, `key?` | Verify deep-cite quotes against source PDF text |
+| `summarize_file` | `file`, `summary`, `short`, `sections` | Store content summary for quick lookup |
+| `get_summary` | `file?`, `stale_only?` | Read stored summaries |
+
+### Text search
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `find_text` | `query`, `context_lines?` | Normalized search across .tex source (handles PDF copy-paste) |
+| `grep_raw` | `query`, `key?`, `context_chars?` | Normalized grep across raw PDF extractions |
+
+### Document index
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `rebuild_doc_index` | `root?` | Rebuild back-of-book index from .idx file |
+| `search_doc_index` | `query`, `fuzzy?` | Search the document index |
+| `list_doc_index` | — | List all terms in the index |
+
+### Discovery
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `discover` | `query`, `n?` | Search Semantic Scholar. Flags in-library papers. |
+| `discover_openalex` | `query`, `n?` | Search OpenAlex. Complement to S2. |
+| `cite_graph` | `key?`, `s2_id?` | S2 citations/references. Flags in-library papers. |
+| `fetch_oa` | `key` | Download open-access PDF via Unpaywall |
+
+### Citation tree
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `build_cite_tree` | `key?` | Fetch citation graph from S2, cache in .tome/cite_tree.json |
+| `discover_citing` | `min_shared?`, `min_year?`, `n?` | Find papers citing multiple library papers |
+| `dismiss_citing` | `s2_id` | Dismiss a candidate so it doesn't resurface |
+
+### Citation exploration (beam search)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `explore_citations` | `key?`, `s2_id?`, `limit?`, `parent_s2_id?`, `depth?` | Fetch citing papers with abstracts for relevance judgment |
+| `mark_explored` | `s2_id`, `relevance`, `note?` | Mark branch as relevant/irrelevant/deferred |
+| `list_explorations` | `relevance?`, `seed?`, `expandable?` | Show exploration state |
+| `clear_explorations` | — | Reset exploration state |
 
 ### Figures
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `request_figure` | `key`, `figure`, `page?`, `reason?`, `caption?` | Queue figure request. Extracts caption + context from raw text. |
+| `request_figure` | `key`, `figure`, `page?`, `reason?`, `caption?` | Queue figure request. Extracts caption + context. |
 | `add_figure` | `key`, `figure`, `path` | Register captured screenshot. Resolves request. |
 | `list_figures` | `status?` | All figures — captured and pending. |
 
@@ -296,12 +351,22 @@ ChromaDB collections: `paper_pages`, `paper_chunks`, `corpus_chunks` (separate).
 | `request_paper` | `key`, `doi?`, `reason?`, `tentative_title?` | Track a paper you want but don't have. |
 | `list_requests` | — | Show open paper requests. |
 
+### Needful (recurring tasks)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `needful` | `n?` | List most urgent tasks, ranked by never-done > changed > overdue |
+| `mark_done` | `task`, `file`, `note?` | Record task completion. Commit first for diff baseline. |
+| `file_diff` | `file`, `task?`, `base?` | Git diff annotated with LaTeX section headings |
+
 ### Maintenance
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `rebuild` | `key?` | Re-derive `.tome/` from `tome/`. Single paper or all. |
-| `stats` | — | Counts, DOI status summary, pending figures/requests. |
+| `stats` | — | Counts, DOI status, pending figures/requests, notes, open issues. |
+| `set_root` | `path` | Switch project root. Scaffolds directories. Surfaces open issues. |
+| `report_issue` | `tool`, `description`, `severity?` | Log a tool issue to tome/issues.md (git-tracked). |
 
 ## Tool descriptions
 
@@ -381,6 +446,7 @@ Every error message includes: what happened, why, and what to do next.
 │       ├── figures.py          # Figure request/registration + caption extraction
 │       ├── manifest.py         # tome.json read/write (atomic, backup)
 │       ├── notes.py            # Paper notes (YAML + ChromaDB indexing)
+│       ├── issues.py           # Issue tracking (tome/issues.md)
 │       └── errors.py           # Exception hierarchy
 └── tests/
     ├── conftest.py             # Shared fixtures
@@ -395,5 +461,6 @@ Every error message includes: what happened, why, and what to do next.
     ├── test_figures.py
     ├── test_manifest.py
     ├── test_notes.py
+    ├── test_issues.py
     └── test_server.py
 ```
