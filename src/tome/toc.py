@@ -60,6 +60,7 @@ class TocEntry:
     anchor: str
     file: str
     line: int
+    label: str = ""
     children: list[TocEntry] = field(default_factory=list)
     figures: list[FloatEntry] = field(default_factory=list)
     tables: list[FloatEntry] = field(default_factory=list)
@@ -246,6 +247,45 @@ def parse_floats(path: Path, kind: str) -> list[FloatEntry]:
             )
         )
     return entries
+
+
+NEWLABEL_RE = re.compile(
+    r"\\newlabel\{([^}]+)\}\{\{([^}]*)\}\{(\d+)\}\{[^}]*\}\{([^}]*)\}"
+)
+
+
+def parse_labels(aux_path: Path) -> dict[str, str]:
+    """Parse ``.aux`` for ``\\newlabel`` entries.
+
+    Returns a mapping of anchor → label name (e.g. ``section.10`` → ``sec:introduction``).
+    Only includes labels whose anchor matches a heading-type pattern
+    (section, subsection, subsubsection, paragraph, part).
+    """
+    if not aux_path.exists():
+        return {}
+    anchor_to_label: dict[str, str] = {}
+    for line in aux_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        m = NEWLABEL_RE.search(line)
+        if not m:
+            continue
+        label_name = m.group(1)
+        anchor = m.group(4)
+        # Skip internal hyperref labels (e.g. @cref, @currentlabel)
+        if "@" in label_name:
+            continue
+        # Only keep heading-like anchors
+        if any(anchor.startswith(p) for p in ("section.", "subsection.", "subsubsection.",
+                                               "paragraph.", "part.", "Doc-Start")):
+            anchor_to_label[anchor] = label_name
+    return anchor_to_label
+
+
+def attach_labels(roots: list[TocEntry], anchor_to_label: dict[str, str]) -> None:
+    """Attach label names to TOC entries by matching anchors."""
+    for entry in roots:
+        if entry.anchor in anchor_to_label:
+            entry.label = anchor_to_label[entry.anchor]
+        attach_labels(entry.children, anchor_to_label)
 
 
 # ── Tree building ───────────────────────────────────────────────────────
@@ -465,8 +505,9 @@ def _render(
         loc = _location(entry, parent_file)
         pad = "  " * indent
         title = f"{prefix} {entry.title}".strip() if prefix else entry.title
+        lbl = f"  [{entry.label}]" if entry.label else ""
         pg = f"  p.{entry.page}" if entry.page else ""
-        lines.append(f"{pad}{title}{loc}{pg}")
+        lines.append(f"{pad}{title}{lbl}{loc}{pg}")
 
         # Floats
         if show_figures:
@@ -586,18 +627,34 @@ def get_toc(
     if fig_entries or tab_entries:
         attach_floats(roots, fig_entries, tab_entries)
 
+    # Attach labels from .aux
+    aux_path = base / f"{stem}.aux"
+    anchor_to_label = parse_labels(aux_path)
+    if anchor_to_label:
+        attach_labels(roots, anchor_to_label)
+
     # Compute filter set
     matched = _compute_matched(roots, query, file, page_lo, page_hi)
 
     # Header
     has_tomeinfo = any(e.file for e in toc_entries)
+    has_labels = bool(anchor_to_label)
     hdr = [f"TOC: {len(toc_entries)} headings"]
     if fig_entries:
         hdr.append(f"{len(fig_entries)} figures")
     if tab_entries:
         hdr.append(f"{len(tab_entries)} tables")
+    if has_labels:
+        hdr.append(f"{len(anchor_to_label)} labels")
+    hints: list[str] = []
     if not has_tomeinfo:
-        hdr.append("(no source attribution — add \\tomeinfo patch for file:line)")
+        hints.append("No source file:line — add \\tomeinfo currfile patch to preamble.")
+    if not aux_path.exists():
+        hints.append("No .aux file — compile the document to get \\label{} attribution.")
+    elif not has_labels:
+        hints.append("No heading labels found — add \\label{sec:...} after \\section{} commands.")
+    if not has_tomeinfo:
+        hdr.append("(no source attribution)")
     header = ", ".join(hdr)
 
     body = render_toc(
@@ -608,6 +665,10 @@ def get_toc(
         matched=matched,
     )
 
+    hint_block = ""
+    if hints:
+        hint_block = "\n" + "\n".join(f"Hint: {h}" for h in hints)
+
     if not body:
-        return f"{header}\n(no entries match the given filters)"
-    return f"{header}\n\n{body}"
+        return f"{header}\n(no entries match the given filters){hint_block}"
+    return f"{header}\n\n{body}{hint_block}"

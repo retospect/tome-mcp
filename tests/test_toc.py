@@ -17,9 +17,11 @@ from tome.toc import (
     _parse_title,
     _parse_float_title,
     attach_floats,
+    attach_labels,
     build_hierarchy,
     get_toc,
     parse_floats,
+    parse_labels,
     parse_toc,
     render_toc,
     _compute_matched,
@@ -50,12 +52,26 @@ SAMPLE_LOT = textwrap.dedent(r"""
 """).strip()
 
 
+SAMPLE_AUX = textwrap.dedent(r"""
+\relax
+\newlabel{sec:background}{{1}{5}{Background}{section.1}{}}
+\newlabel{subsec:mof}{{1.1}{5}{Metal-Organic Frameworks}{subsection.1}{}}
+\newlabel{subsec:conducting-mof}{{1.1.1}{6}{Conducting MOFs}{subsubsection.1}{}}
+\newlabel{subsec:dna-assembly}{{1.2}{7}{DNA Assembly}{subsection.2}{}}
+\newlabel{sec:architecture}{{2}{10}{Architecture}{section.2}{}}
+\newlabel{subsec:boxel-design}{{2.1}{10}{Boxel Design}{subsection.3}{}}
+\newlabel{fig:tech-tree}{{1}{6}{Technology tree}{figure.caption.1}{}}
+\newlabel{tab:substrates}{{1}{10}{Substrate comparison}{table.caption.1}{}}
+""").strip()
+
+
 @pytest.fixture
 def toc_project(tmp_path: Path) -> Path:
-    """Create a project with sample .toc/.lof/.lot files."""
+    """Create a project with sample .toc/.lof/.lot/.aux files."""
     (tmp_path / "main.toc").write_text(SAMPLE_TOC, encoding="utf-8")
     (tmp_path / "main.lof").write_text(SAMPLE_LOF, encoding="utf-8")
     (tmp_path / "main.lot").write_text(SAMPLE_LOT, encoding="utf-8")
+    (tmp_path / "main.aux").write_text(SAMPLE_AUX, encoding="utf-8")
     return tmp_path
 
 
@@ -67,6 +83,7 @@ def toc_project_build(tmp_path: Path) -> Path:
     (build / "main.toc").write_text(SAMPLE_TOC, encoding="utf-8")
     (build / "main.lof").write_text(SAMPLE_LOF, encoding="utf-8")
     (build / "main.lot").write_text(SAMPLE_LOT, encoding="utf-8")
+    (build / "main.aux").write_text(SAMPLE_AUX, encoding="utf-8")
     return tmp_path
 
 
@@ -495,3 +512,94 @@ class TestGetToc:
         result = get_toc(toc_project, pages="5-7", figures=False)
         assert "Background" in result
         assert "Architecture" not in result  # page 10
+
+    def test_labels_in_header(self, toc_project: Path):
+        result = get_toc(toc_project)
+        assert "labels" in result
+
+    def test_labels_in_output(self, toc_project: Path):
+        result = get_toc(toc_project, figures=False)
+        assert "[sec:background]" in result
+        assert "[subsec:boxel-design]" in result
+
+    def test_no_aux_hint(self, tmp_path: Path):
+        toc = r"\contentsline {section}{\numberline {1}Hello\tomeinfo {f.tex}{1}}{5}{section.1}%"
+        (tmp_path / "main.toc").write_text(toc, encoding="utf-8")
+        result = get_toc(tmp_path)
+        assert "No .aux file" in result
+
+    def test_no_labels_hint(self, tmp_path: Path):
+        toc = r"\contentsline {section}{\numberline {1}Hello\tomeinfo {f.tex}{1}}{5}{section.1}%"
+        (tmp_path / "main.toc").write_text(toc, encoding="utf-8")
+        # .aux exists but has no heading labels
+        (tmp_path / "main.aux").write_text(r"\relax", encoding="utf-8")
+        result = get_toc(tmp_path)
+        assert "No heading labels" in result
+
+
+# ── Label parsing ───────────────────────────────────────────────────────
+
+
+class TestParseLabels:
+    def test_heading_labels(self, toc_project: Path):
+        labels = parse_labels(toc_project / "main.aux")
+        assert labels["section.1"] == "sec:background"
+        assert labels["subsection.1"] == "subsec:mof"
+        assert labels["section.2"] == "sec:architecture"
+
+    def test_skips_figure_labels(self, toc_project: Path):
+        labels = parse_labels(toc_project / "main.aux")
+        assert "figure.caption.1" not in labels
+
+    def test_skips_table_labels(self, toc_project: Path):
+        labels = parse_labels(toc_project / "main.aux")
+        assert "table.caption.1" not in labels
+
+    def test_missing_file(self, tmp_path: Path):
+        assert parse_labels(tmp_path / "nonexistent.aux") == {}
+
+    def test_skips_internal_labels(self, tmp_path: Path):
+        aux = r"\newlabel{sec:foo@cref}{{1}{5}{Foo}{section.1}{}}"
+        (tmp_path / "main.aux").write_text(aux, encoding="utf-8")
+        labels = parse_labels(tmp_path / "main.aux")
+        assert not labels  # @cref label filtered out
+
+
+class TestAttachLabels:
+    def test_labels_attached(self, toc_project: Path):
+        entries = parse_toc(toc_project / "main.toc")
+        roots = build_hierarchy(entries)
+        labels = parse_labels(toc_project / "main.aux")
+        attach_labels(roots, labels)
+
+        # Part I has children: §1, §2
+        bg = roots[1].children[0]  # §1 Background
+        assert bg.label == "sec:background"
+
+        mof = bg.children[0]  # §1.1 MOFs
+        assert mof.label == "subsec:mof"
+
+        arch = roots[1].children[1]  # §2 Architecture
+        assert arch.label == "sec:architecture"
+
+    def test_no_label_stays_empty(self, toc_project: Path):
+        entries = parse_toc(toc_project / "main.toc")
+        roots = build_hierarchy(entries)
+        labels = parse_labels(toc_project / "main.aux")
+        attach_labels(roots, labels)
+
+        # Executive Overview has anchor Doc-Start, no label for it
+        assert roots[0].label == ""
+
+    def test_render_shows_labels(self, toc_project: Path):
+        entries = parse_toc(toc_project / "main.toc")
+        roots = build_hierarchy(entries)
+        labels = parse_labels(toc_project / "main.aux")
+        attach_labels(roots, labels)
+
+        output = render_toc(roots, max_depth=3, show_figures=False)
+        assert "[sec:background]" in output
+        assert "[subsec:mof]" in output
+        assert "[sec:architecture]" in output
+        # No label → no brackets
+        assert "Executive Overview  main" in output  # no [] before location
