@@ -13,6 +13,7 @@ from tome.analysis import (
     analyze_file,
     analyze_document,
     resolve_document_tree,
+    find_orphan_files,
     analyze_file_cached,
     _strip_latex_for_wordcount,
     _infer_label_type,
@@ -226,6 +227,66 @@ class TestResolveDocumentTree:
         (tmp_path / "chapter1.tex").write_text("Content.\n")
         tree = resolve_document_tree("main.tex", tmp_path)
         assert "chapter1.tex" in tree
+
+
+class TestFindOrphanFiles:
+    def test_no_orphans(self, tmp_path):
+        (tmp_path / "main.tex").write_text("\\input{sections/intro}\n")
+        (tmp_path / "sections").mkdir()
+        (tmp_path / "sections" / "intro.tex").write_text("Content.\n")
+
+        tree = resolve_document_tree("main.tex", tmp_path)
+        orphans = find_orphan_files(tree, tmp_path)
+        assert orphans == []
+
+    def test_finds_orphan(self, tmp_path):
+        (tmp_path / "main.tex").write_text("\\input{sections/intro}\n")
+        sections = tmp_path / "sections"
+        sections.mkdir()
+        (sections / "intro.tex").write_text("Content.\n")
+        (sections / "orphan.tex").write_text("Not included.\n")
+
+        tree = resolve_document_tree("main.tex", tmp_path)
+        orphans = find_orphan_files(tree, tmp_path)
+        assert orphans == ["sections/orphan"]
+
+    def test_finds_orphan_in_subdirectory(self, tmp_path):
+        (tmp_path / "main.tex").write_text("\\input{appendix/a}\n")
+        appendix = tmp_path / "appendix"
+        appendix.mkdir()
+        sub = appendix / "sub"
+        sub.mkdir()
+        (appendix / "a.tex").write_text("Content.\n")
+        (sub / "orphan.tex").write_text("Deep orphan.\n")
+
+        tree = resolve_document_tree("main.tex", tmp_path)
+        orphans = find_orphan_files(tree, tmp_path)
+        assert orphans == ["appendix/sub/orphan"]
+
+    def test_ignores_dirs_not_in_tree(self, tmp_path):
+        """Files in directories that have no tree members are not scanned."""
+        (tmp_path / "main.tex").write_text("\\input{sections/a}\n")
+        (tmp_path / "sections").mkdir()
+        (tmp_path / "sections" / "a.tex").write_text("Content.\n")
+        # figures/ has no tree members, so its .tex files are ignored
+        (tmp_path / "figures").mkdir()
+        (tmp_path / "figures" / "tikz.tex").write_text("TikZ fragment.\n")
+
+        tree = resolve_document_tree("main.tex", tmp_path)
+        orphans = find_orphan_files(tree, tmp_path)
+        assert orphans == []
+
+    def test_integrated_via_analyze_document(self, tmp_path):
+        """Orphan files appear in DocAnalysis.orphan_files."""
+        (tmp_path / "main.tex").write_text("\\input{sections/a}\n")
+        sections = tmp_path / "sections"
+        sections.mkdir()
+        (sections / "a.tex").write_text("\\label{sec:a}\n")
+        (sections / "dead.tex").write_text("Dead code.\n")
+
+        cfg = TomeConfig()
+        doc = analyze_document("main.tex", tmp_path, cfg)
+        assert "sections/dead" in doc.orphan_files
 
 
 class TestAnalyzeDocument:

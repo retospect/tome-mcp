@@ -302,6 +302,44 @@ def resolve_document_tree(
     return result
 
 
+def find_orphan_files(
+    tree: list[str],
+    project_root: Path,
+) -> list[str]:
+    """Find .tex files on disk not reachable from the \\input tree.
+
+    Scans every parent directory that appears in *tree* for additional .tex
+    files, then returns those not in the tree.  This is zero-config: if
+    the tree includes ``sections/foo.tex``, all of ``sections/`` is scanned.
+
+    Args:
+        tree: Output of :func:`resolve_document_tree` (relative paths).
+        project_root: Absolute path to the project root.
+
+    Returns:
+        Sorted list of relative paths to orphaned .tex files.
+    """
+    tree_set = {t.removesuffix(".tex") for t in tree}
+
+    # Infer search directories from the tree
+    dirs: set[str] = set()
+    for rel in tree:
+        parent = str(Path(rel).parent)
+        if parent != ".":
+            dirs.add(parent)
+
+    # Scan those directories for .tex files
+    on_disk: set[str] = set()
+    for d in dirs:
+        dirpath = project_root / d
+        if not dirpath.is_dir():
+            continue
+        for p in dirpath.rglob("*.tex"):
+            on_disk.add(str(p.relative_to(project_root)).removesuffix(".tex"))
+
+    return sorted(on_disk - tree_set)
+
+
 # ── Cross-file analysis ──────────────────────────────────────────────────
 
 
@@ -314,6 +352,7 @@ class DocAnalysis:
     undefined_refs: list[dict[str, Any]] = field(default_factory=list)
     orphan_labels: list[dict[str, Any]] = field(default_factory=list)
     shallow_high_use: list[dict[str, Any]] = field(default_factory=list)
+    orphan_files: list[str] = field(default_factory=list)
 
     @property
     def all_labels(self) -> dict[str, dict[str, Any]]:
@@ -395,6 +434,9 @@ def analyze_document(
                 "key": key, "count": len(cs),
                 "files": files,
             })
+
+    # Orphan .tex files: on disk but not in the \input tree
+    doc.orphan_files = find_orphan_files(tree, project_root)
 
     return doc
 

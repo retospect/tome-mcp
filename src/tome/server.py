@@ -2018,6 +2018,7 @@ def doc_lint(root: str = "default", file: str = "") -> str:
         "total_words": sum(fa.word_count for fa in doc.files.values()),
         "undefined_refs": doc.undefined_refs,
         "orphan_labels": doc.orphan_labels,
+        "orphan_files": doc.orphan_files,
         "shallow_high_use_cites": doc.shallow_high_use,
     }, indent=2)
 
