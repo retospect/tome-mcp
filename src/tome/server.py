@@ -2290,6 +2290,219 @@ def dismiss_citing(s2_id: str) -> str:
     return json.dumps({"status": "dismissed", "s2_id": s2_id})
 
 
+# ---------------------------------------------------------------------------
+# Exploration — LLM-guided iterative citation beam search
+# ---------------------------------------------------------------------------
+
+
+@mcp_server.tool()
+def explore_citations(
+    s2_id: str = "", key: str = "", limit: int = 30,
+    parent_s2_id: str = "", depth: int = 0,
+) -> str:
+    """Fetch citing papers with abstracts for LLM-guided exploration.
+
+    Returns citations with abstracts so you can judge relevance and decide
+    which branches to expand further. Results are cached in the exploration
+    store (7-day TTL). Use mark_explored() to tag branches as relevant,
+    irrelevant, or deferred. Then call explore_citations() again on
+    relevant citers to go deeper — iterative beam search.
+
+    Start from a library paper (key) or any S2 paper (s2_id).
+    Each call = 2 S2 API requests (paper lookup + citations).
+
+    Args:
+        s2_id: Direct Semantic Scholar paper ID. Takes priority over key.
+        key: Library bib key (looks up DOI/S2 ID from library).
+        limit: Max citing papers to return (default 30, max 100).
+        parent_s2_id: S2 ID of the paper that led here (for tree tracking).
+        depth: Exploration depth from seed (0 = seed itself).
+    """
+    paper_id = s2_id
+    if key and not paper_id:
+        lib = _load_bib()
+        entry = lib.entries_dict.get(key)
+        if not entry:
+            return json.dumps({"error": f"Key '{key}' not in library."})
+        data = _load_manifest()
+        paper_meta = manifest.get_paper(data, key) or {}
+        if paper_meta.get("s2_id"):
+            paper_id = paper_meta["s2_id"]
+        else:
+            doi_f = entry.fields_dict.get("doi")
+            if doi_f:
+                paper_id = f"DOI:{doi_f.value}"
+
+    if not paper_id:
+        return json.dumps({
+            "error": "No S2 ID or DOI found. Provide s2_id or a key with a DOI.",
+        })
+
+    tree = cite_tree_mod.load_tree(_dot_tome())
+    try:
+        result = cite_tree_mod.explore_paper(
+            tree, paper_id,
+            limit=min(limit, 100),
+            parent_s2_id=parent_s2_id,
+            depth=depth,
+        )
+    except Exception as e:
+        return json.dumps({"error": f"S2 API error: {e}"})
+
+    if result is None:
+        return json.dumps({"error": f"Paper not found on Semantic Scholar: {paper_id}"})
+
+    cite_tree_mod.save_tree(_dot_tome(), tree)
+
+    # Flag library papers in the results
+    lib = _load_bib()
+    library_dois: set[str] = set()
+    for e in lib.entries:
+        doi_f = e.fields_dict.get("doi")
+        if doi_f and doi_f.value:
+            library_dois.add(doi_f.value.lower())
+
+    cited_by = []
+    for c in result.get("cited_by", []):
+        entry_out: dict[str, Any] = {
+            "s2_id": c.get("s2_id"),
+            "title": c.get("title"),
+            "authors": c.get("authors", []),
+            "year": c.get("year"),
+            "citation_count": c.get("citation_count", 0),
+        }
+        if c.get("abstract"):
+            entry_out["abstract"] = c["abstract"]
+        if c.get("doi"):
+            entry_out["doi"] = c["doi"]
+            if c["doi"].lower() in library_dois:
+                entry_out["in_library"] = True
+        cited_by.append(entry_out)
+
+    return json.dumps({
+        "status": "ok",
+        "paper": {
+            "s2_id": result.get("s2_id"),
+            "title": result.get("title"),
+            "year": result.get("year"),
+            "citation_count": result.get("citation_count", 0),
+        },
+        "depth": result.get("depth", 0),
+        "citing_count": len(cited_by),
+        "cited_by": cited_by,
+        "hint": (
+            "Present these as a numbered table to the user: "
+            "# | Year | Title (8 words) | Cites | Abstract gist | Your verdict. "
+            "Recommend 'relevant' / 'irrelevant' / 'deferred' for each. "
+            "Wait for user confirmation, then batch mark_explored() calls. "
+            "Next: explore_citations(s2_id=<relevant_id>, "
+            f"parent_s2_id='{result.get('s2_id', '')}', "
+            f"depth={result.get('depth', 0) + 1}) on each relevant paper."
+        ),
+    }, indent=2)
+
+
+@mcp_server.tool()
+def mark_explored(s2_id: str, relevance: str, note: str = "") -> str:
+    """Mark an explored paper's relevance for beam-search pruning.
+
+    After reviewing citations from explore_citations(), mark each as:
+    - 'relevant': Worth expanding further (call explore_citations on it next)
+    - 'irrelevant': Dead end, prune this branch
+    - 'deferred': Possibly relevant, revisit later
+    - 'unknown': Reset to unmarked
+
+    Args:
+        s2_id: Semantic Scholar paper ID.
+        relevance: One of 'relevant', 'irrelevant', 'deferred', 'unknown'.
+        note: Your rationale for the decision (persisted for session continuity).
+    """
+    if relevance not in cite_tree_mod.RELEVANCE_STATES:
+        return json.dumps({
+            "error": f"Invalid relevance '{relevance}'. "
+            f"Must be one of: {', '.join(cite_tree_mod.RELEVANCE_STATES)}",
+        })
+
+    tree = cite_tree_mod.load_tree(_dot_tome())
+    ok = cite_tree_mod.mark_exploration(tree, s2_id, relevance, note)
+    if not ok:
+        return json.dumps({
+            "error": f"Paper {s2_id} not found in explorations. "
+            "Call explore_citations() first to fetch and cache it.",
+        })
+    cite_tree_mod.save_tree(_dot_tome(), tree)
+    return json.dumps({
+        "status": "marked",
+        "s2_id": s2_id,
+        "relevance": relevance,
+        "note": note or "(none)",
+    })
+
+
+@mcp_server.tool()
+def list_explorations(
+    relevance: str = "", seed: str = "", expandable: bool = False,
+) -> str:
+    """Show exploration state for session continuity and beam-search planning.
+
+    Use this to see what you've explored, what's marked relevant (expand next),
+    what's deferred (revisit later), and what branches are fully explored.
+
+    Args:
+        relevance: Filter by relevance state (relevant/irrelevant/deferred/unknown).
+        seed: Only show nodes descended from this S2 ID.
+        expandable: Only show 'relevant' nodes not yet expanded (next to explore).
+    """
+    tree = cite_tree_mod.load_tree(_dot_tome())
+    results = cite_tree_mod.list_explorations(
+        tree,
+        relevance_filter=relevance,
+        seed_s2_id=seed,
+        expandable_only=expandable,
+    )
+
+    if not results:
+        if not tree.get("explorations"):
+            msg = "No explorations yet. Start with explore_citations(key='<paper>')."
+        elif expandable:
+            msg = "No expandable nodes. Mark papers as 'relevant' to create expand targets."
+        else:
+            msg = f"No explorations match filters (relevance={relevance or 'any'}, seed={seed or 'any'})."
+        return json.dumps({"status": "empty", "message": msg})
+
+    # Summary counts
+    all_exp = tree.get("explorations", {})
+    counts = {"unknown": 0, "relevant": 0, "irrelevant": 0, "deferred": 0}
+    for e in all_exp.values():
+        r = e.get("relevance", "unknown")
+        if r in counts:
+            counts[r] += 1
+
+    return json.dumps({
+        "status": "ok",
+        "total_explored": len(all_exp),
+        "counts": counts,
+        "filtered_count": len(results),
+        "explorations": results,
+    }, indent=2)
+
+
+@mcp_server.tool()
+def clear_explorations() -> str:
+    """Remove all exploration data to start fresh.
+
+    Does NOT affect the main citation tree (library paper caches) or
+    dismissed candidates. Only clears the exploration session state.
+    """
+    tree = cite_tree_mod.load_tree(_dot_tome())
+    count = cite_tree_mod.clear_explorations(tree)
+    cite_tree_mod.save_tree(_dot_tome(), tree)
+    return json.dumps({
+        "status": "cleared",
+        "removed": count,
+    })
+
+
 _EMPTY_BIB = """\
 % Tome bibliography — managed by Tome MCP server.
 % Add entries via ingest(), set_paper(), or edit directly.

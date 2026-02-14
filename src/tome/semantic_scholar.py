@@ -20,6 +20,7 @@ S2_API = "https://api.semanticscholar.org/graph/v1"
 REQUEST_TIMEOUT = 15.0
 DEFAULT_FIELDS = "title,authors,year,externalIds,citationCount,abstract"
 CITATION_FIELDS = "title,authors,year,externalIds"
+EXPLORE_FIELDS = "title,authors,year,externalIds,citationCount,abstract"
 
 
 def _get_headers() -> dict[str, str]:
@@ -159,20 +160,23 @@ def get_citation_graph(paper_id: str, limit: int = 100) -> CitationGraph | None:
     )
 
 
-def _get_connected(s2_id: str, direction: str, limit: int) -> list[S2Paper]:
+def _get_connected(
+    s2_id: str, direction: str, limit: int, fields: str = CITATION_FIELDS,
+) -> list[S2Paper]:
     """Get citations or references for a paper.
 
     Args:
         s2_id: The S2 paper ID.
         direction: 'citations' or 'references'.
         limit: Max results.
+        fields: S2 API fields to request (default: CITATION_FIELDS).
 
     Returns:
         List of S2Papers.
     """
     url = f"{S2_API}/paper/{s2_id}/{direction}"
     params = {
-        "fields": CITATION_FIELDS,
+        "fields": fields,
         "limit": min(limit, 1000),
     }
 
@@ -193,6 +197,29 @@ def _get_connected(s2_id: str, direction: str, limit: int) -> list[S2Paper]:
         if paper_data:
             papers.append(_parse_paper(paper_data))
     return papers
+
+
+def get_citations_with_abstracts(
+    paper_id: str, limit: int = 50,
+) -> tuple[S2Paper | None, list[S2Paper]]:
+    """Get citing papers with abstracts for LLM-guided exploration.
+
+    More expensive than get_citation_graph (returns abstracts + citation counts
+    for each citer), but enables the LLM to judge relevance without extra calls.
+
+    Args:
+        paper_id: S2 paper ID or DOI identifier (e.g. 'DOI:10.xxx/...').
+        limit: Max citing papers to return.
+
+    Returns:
+        Tuple of (seed_paper, citing_papers). seed_paper is None if not found.
+    """
+    paper = get_paper(paper_id)
+    if paper is None:
+        return None, []
+
+    citations = _get_connected(paper.s2_id, "citations", limit, fields=EXPLORE_FIELDS)
+    return paper, citations
 
 
 def flag_in_library(

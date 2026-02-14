@@ -8,6 +8,11 @@ Workflow:
 1. ``build_tree(key)`` — fetch and cache citation graph for a library paper.
 2. ``refresh_stale(max_age_days)`` — re-fetch papers not checked recently.
 3. ``discover_new(min_shared)`` — find non-library papers citing ≥N library papers.
+
+Exploration (LLM-guided iterative expansion):
+4. ``explore_paper(s2_id)`` — fetch citations with abstracts, cache in explorations.
+5. ``mark_exploration(s2_id, relevance, note)`` — LLM marks branch relevance.
+6. ``list_explorations(...)`` — show exploration state for session continuity.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from tome.semantic_scholar import S2Paper, get_citation_graph
+from tome.semantic_scholar import S2Paper, get_citation_graph, get_citations_with_abstracts
 
 
 # ---------------------------------------------------------------------------
@@ -34,16 +39,18 @@ def load_tree(dot_tome: Path) -> dict[str, Any]:
     """Load cached citation tree. Returns empty structure if missing."""
     path = _tree_path(dot_tome)
     if not path.exists():
-        return {"papers": {}, "dismissed": []}
+        return {"papers": {}, "dismissed": [], "explorations": {}}
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(data, dict) and "papers" in data:
             if "dismissed" not in data:
                 data["dismissed"] = []
+            if "explorations" not in data:
+                data["explorations"] = {}
             return data
     except (json.JSONDecodeError, OSError):
         pass
-    return {"papers": {}, "dismissed": []}
+    return {"papers": {}, "dismissed": [], "explorations": {}}
 
 
 def save_tree(dot_tome: Path, data: dict[str, Any]) -> None:
@@ -282,3 +289,207 @@ def dismiss_paper(tree: dict[str, Any], s2_id: str) -> None:
     """Mark a candidate as dismissed so it doesn't resurface."""
     if s2_id not in tree["dismissed"]:
         tree["dismissed"].append(s2_id)
+
+
+# ---------------------------------------------------------------------------
+# LLM-guided exploration — iterative citation beam search
+# ---------------------------------------------------------------------------
+
+# Valid relevance states for explored papers
+RELEVANCE_STATES = ("unknown", "relevant", "irrelevant", "deferred")
+
+
+def _s2_paper_to_explore_dict(p: S2Paper) -> dict[str, Any]:
+    """Convert S2Paper to an exploration-grade dict (includes abstract)."""
+    d: dict[str, Any] = {
+        "s2_id": p.s2_id,
+        "title": p.title,
+        "authors": p.authors[:5],
+        "year": p.year,
+        "doi": p.doi,
+        "citation_count": p.citation_count,
+    }
+    if p.abstract:
+        d["abstract"] = p.abstract[:500]  # cap to limit cache bloat
+    return d
+
+
+def explore_paper(
+    tree: dict[str, Any],
+    paper_id: str,
+    limit: int = 30,
+    parent_s2_id: str = "",
+    depth: int = 0,
+) -> dict[str, Any] | None:
+    """Fetch citations with abstracts and cache as an exploration node.
+
+    If already cached and fresh (< 7 days), returns the cached version
+    without hitting the API.
+
+    Args:
+        tree: The citation tree (mutated in place).
+        paper_id: S2 paper ID or DOI identifier (e.g. 'DOI:10.xxx/...').
+        limit: Max citing papers to fetch.
+        parent_s2_id: S2 ID of the paper that led to this exploration.
+        depth: Exploration depth from the seed paper.
+
+    Returns:
+        Exploration entry dict, or None if paper not found on S2.
+    """
+    explorations = tree.setdefault("explorations", {})
+
+    # Check cache freshness (7-day TTL for explorations)
+    cached = explorations.get(paper_id)
+    if cached:
+        try:
+            fetched = datetime.fromisoformat(cached.get("last_fetched", ""))
+            if fetched.tzinfo is None:
+                fetched = fetched.replace(tzinfo=timezone.utc)
+            age_days = (datetime.now(timezone.utc) - fetched).total_seconds() / 86400.0
+            if age_days < 7.0:
+                return cached
+        except (ValueError, TypeError):
+            pass
+
+    seed, citers = get_citations_with_abstracts(paper_id, limit=limit)
+    if seed is None:
+        return None
+
+    entry: dict[str, Any] = {
+        "s2_id": seed.s2_id,
+        "title": seed.title,
+        "authors": seed.authors[:5],
+        "year": seed.year,
+        "doi": seed.doi,
+        "citation_count": seed.citation_count,
+        "last_fetched": datetime.now(timezone.utc).isoformat(),
+        "cited_by": [_s2_paper_to_explore_dict(p) for p in citers if p.s2_id],
+        "relevance": cached.get("relevance", "unknown") if cached else "unknown",
+        "note": cached.get("note", "") if cached else "",
+        "parent_s2_id": parent_s2_id or (cached.get("parent_s2_id", "") if cached else ""),
+        "depth": depth if depth else (cached.get("depth", 0) if cached else 0),
+    }
+    if seed.abstract:
+        entry["abstract"] = seed.abstract[:500]
+
+    explorations[seed.s2_id] = entry
+    return entry
+
+
+def mark_exploration(
+    tree: dict[str, Any],
+    s2_id: str,
+    relevance: str,
+    note: str = "",
+) -> bool:
+    """Mark an explored paper's relevance for beam-search pruning.
+
+    Args:
+        tree: The citation tree.
+        s2_id: Semantic Scholar paper ID.
+        relevance: One of 'relevant', 'irrelevant', 'deferred', 'unknown'.
+        note: LLM's rationale for the decision.
+
+    Returns:
+        True if the paper was found and updated, False otherwise.
+    """
+    if relevance not in RELEVANCE_STATES:
+        return False
+
+    explorations = tree.get("explorations", {})
+    entry = explorations.get(s2_id)
+    if entry is None:
+        return False
+
+    entry["relevance"] = relevance
+    if note:
+        entry["note"] = note
+    return True
+
+
+def list_explorations(
+    tree: dict[str, Any],
+    relevance_filter: str = "",
+    seed_s2_id: str = "",
+    expandable_only: bool = False,
+) -> list[dict[str, Any]]:
+    """List exploration nodes with optional filtering.
+
+    Args:
+        tree: The citation tree.
+        relevance_filter: Only return nodes with this relevance state.
+        seed_s2_id: Only return nodes descended from this seed.
+        expandable_only: Only return 'relevant' nodes that haven't been
+            explored yet (their citers haven't been fetched as explorations).
+
+    Returns:
+        List of exploration entries, sorted by depth then year.
+    """
+    explorations = tree.get("explorations", {})
+    explored_ids = set(explorations.keys())
+    results: list[dict[str, Any]] = []
+
+    for s2_id, entry in explorations.items():
+        if relevance_filter and entry.get("relevance") != relevance_filter:
+            continue
+
+        if seed_s2_id:
+            # Walk parent chain to check ancestry
+            if not _is_descendant_of(explorations, s2_id, seed_s2_id):
+                continue
+
+        if expandable_only:
+            if entry.get("relevance") != "relevant":
+                continue
+            # A node is expandable if it has citers that haven't been explored yet
+            citers = entry.get("cited_by", [])
+            if not citers:
+                continue  # nothing to expand
+            already_explored = sum(
+                1 for c in citers if c.get("s2_id") in explored_ids
+            )
+            if already_explored >= len(citers):
+                continue  # fully explored
+
+        summary = {
+            "s2_id": s2_id,
+            "title": entry.get("title"),
+            "year": entry.get("year"),
+            "relevance": entry.get("relevance", "unknown"),
+            "note": entry.get("note", ""),
+            "depth": entry.get("depth", 0),
+            "citing_count": len(entry.get("cited_by", [])),
+            "parent_s2_id": entry.get("parent_s2_id", ""),
+        }
+        results.append(summary)
+
+    results.sort(key=lambda x: (x.get("depth", 0), -(x.get("year") or 0)))
+    return results
+
+
+def _is_descendant_of(
+    explorations: dict[str, Any], s2_id: str, ancestor_s2_id: str,
+    _visited: set[str] | None = None,
+) -> bool:
+    """Check if s2_id is a descendant of ancestor_s2_id via parent chain."""
+    if s2_id == ancestor_s2_id:
+        return True
+    if _visited is None:
+        _visited = set()
+    if s2_id in _visited:
+        return False  # cycle protection
+    _visited.add(s2_id)
+    entry = explorations.get(s2_id)
+    if not entry:
+        return False
+    parent = entry.get("parent_s2_id", "")
+    if not parent:
+        return False
+    return _is_descendant_of(explorations, parent, ancestor_s2_id, _visited)
+
+
+def clear_explorations(tree: dict[str, Any]) -> int:
+    """Remove all exploration data. Returns count of entries cleared."""
+    count = len(tree.get("explorations", {}))
+    tree["explorations"] = {}
+    return count
