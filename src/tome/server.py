@@ -977,61 +977,82 @@ def get_paper(key: str, page: int = 0) -> str:
 
 @mcp_server.tool()
 def set_notes(
-    key: str,
+    key: str = "",
+    file: str = "",
     summary: str = "",
     claims: str = "",
     relevance: str = "",
     limitations: str = "",
     quality: str = "",
     tags: str = "",
+    intent: str = "",
+    status: str = "",
+    depends: str = "",
+    open: str = "",
 ) -> str:
-    """Add or update research notes for a paper. Indexed into ChromaDB.
+    """Read or write notes for a paper (key) or file (file).
 
-    Scalar fields (summary, quality) overwrite. List fields (claims,
-    limitations, tags) append and deduplicate. Relevance is a JSON array
-    of {section, note} objects.
+    No fields → read mode (returns current notes).
+    Any field set → write mode (overwrites that field, others unchanged).
+
+    Paper fields (use with key):
+        summary: One-line summary of the paper's contribution.
+        claims: Key claims (free text, overwrites).
+        relevance: How paper relates to project sections (free text).
+        limitations: Known limitations (free text).
+        quality: Quality assessment (e.g. 'high — Nature, well-cited').
+        tags: Comma-separated tags (free text, overwrites).
+
+    File fields (use with file):
+        intent: Why this section exists — its argument or purpose.
+        status: Editorial status (e.g. 'solid', 'draft — needs citation').
+        claims: Key claims that need support (free text, overwrites).
+        depends: Cross-section dependencies (free text).
+        open: Open questions (free text).
 
     Args:
-        key: Bib key (e.g. 'miller1999').
-        summary: One-line summary of the paper's contribution.
-        claims: Comma-separated key claims (appended, deduplicated).
-        relevance: JSON array of {section, note} objects (appended).
-        limitations: Comma-separated limitations (appended, deduplicated).
-        quality: Quality assessment (e.g. 'high — Nature, well-cited').
-        tags: Comma-separated tags (appended, deduplicated).
+        key: Bib key (e.g. 'miller1999'). Use for paper notes.
+        file: Relative path (e.g. 'sections/background.tex'). Use for file meta.
     """
+    if not key and not file:
+        return json.dumps({"error": "Provide key (paper) or file (tex file)."})
+    if key and file:
+        return json.dumps({"error": "Provide key OR file, not both."})
+
+    if key:
+        return _notes_paper(key, summary, claims, relevance, limitations, quality, tags)
+    else:
+        return _notes_file(file, intent, status, claims, depends, open)
+
+
+def _notes_paper(
+    key: str, summary: str, claims: str, relevance: str,
+    limitations: str, quality: str, tags: str,
+) -> str:
+    """Paper notes — read or write."""
     validate.validate_key(key)
-
-    # Parse list fields from comma-separated strings
-    claims_list = [c.strip() for c in claims.split(",") if c.strip()] if claims else None
-    limitations_list = [l.strip() for l in limitations.split(",") if l.strip()] if limitations else None
-    tags_list = [t.strip() for t in tags.split(",") if t.strip()] if tags else None
-
-    # Parse relevance from JSON
-    relevance_list = None
-    if relevance:
-        try:
-            relevance_list = json.loads(relevance)
-            if not isinstance(relevance_list, list):
-                relevance_list = [relevance_list]
-        except json.JSONDecodeError:
-            return json.dumps({"error": "relevance must be a JSON array of {section, note} objects"})
-
-    # Load, merge, save
+    paper_fields = {
+        "summary": summary, "claims": claims, "relevance": relevance,
+        "limitations": limitations, "quality": quality, "tags": tags,
+    }
+    writing = any(paper_fields.values())
     existing = notes_mod.load_note(_tome_dir(), key)
-    merged = notes_mod.merge_note(
-        existing,
-        summary=summary,
-        claims=claims_list,
-        relevance=relevance_list,
-        limitations=limitations_list,
-        quality=quality,
-        tags=tags_list,
-    )
-    notes_mod.save_note(_tome_dir(), key, merged)
 
-    # Index into ChromaDB for semantic search
-    flat_text = notes_mod.flatten_for_search(key, merged)
+    if not writing:
+        # Read mode
+        if not existing:
+            return json.dumps({"key": key, "notes": None, "hint": "No notes yet."})
+        return json.dumps({"key": key, "notes": existing}, indent=2)
+
+    # Write mode — overwrite non-empty fields
+    updated = dict(existing)
+    for field_name, value in paper_fields.items():
+        if value:
+            updated[field_name] = value
+    notes_mod.save_note(_tome_dir(), key, updated)
+
+    # Index into ChromaDB
+    flat_text = notes_mod.flatten_for_search(key, updated)
     try:
         client = store.get_client(_chroma_dir())
         embed_fn = store.get_embed_fn()
@@ -1042,93 +1063,60 @@ def set_notes(
             metadatas=[{"bib_key": key, "source_type": "note"}],
         )
     except Exception:
-        pass  # ChromaDB failure is non-fatal
+        pass
 
-    return json.dumps({
-        "key": key,
-        "status": "updated",
-        "fields_set": [
-            f for f in ["summary", "claims", "relevance", "limitations", "quality", "tags"]
-            if locals().get(f)
-        ],
-        "note": merged,
-    }, indent=2)
+    return json.dumps({"key": key, "status": "updated", "notes": updated}, indent=2)
 
 
-@mcp_server.tool()
-def edit_notes(
-    key: str,
-    action: Literal["remove", "delete"],
-    field: Literal["claims", "limitations", "tags", "relevance", "summary", "quality", ""] = "",
-    value: str = "",
+def _notes_file(
+    file: str, intent: str, status: str, claims: str,
+    depends: str, open_q: str,
 ) -> str:
-    """Remove an item from a note field, or delete the entire note.
+    """File meta notes — read or write."""
+    validate.validate_relative_path(file, field="file")
+    file_path = _project_root() / file
+    if not file_path.exists():
+        return json.dumps({"error": f"File not found: {file}"})
 
-    Use set_notes to add/update. Use this tool to remove or delete.
+    file_fields = {
+        "intent": intent, "status": status, "claims": claims,
+        "depends": depends, "open": open_q,
+    }
+    writing = any(file_fields.values())
+    existing = file_meta_mod.parse_meta_from_file(file_path)
 
-    Args:
-        key: Bib key (e.g. 'miller1999').
-        action: 'remove' or 'delete'.
-        field: Field to remove from (required for action='remove').
-        value: Item to remove (for list fields). Exact string match.
-    """
-    validate.validate_key(key)
-
-    if action == "delete":
-        deleted = notes_mod.delete_note(_tome_dir(), key)
-        # Remove from ChromaDB
-        if deleted:
-            try:
-                client = store.get_client(_chroma_dir())
-                embed_fn = store.get_embed_fn()
-                col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
-                col.delete(ids=[f"{key}::note"])
-            except Exception:
-                pass
-        return json.dumps({
-            "key": key,
-            "action": "delete",
-            "status": "deleted" if deleted else "not_found",
-        })
-
-    if action == "remove":
-        if not field:
-            return json.dumps({"error": "field is required for action='remove'"})
-        existing = notes_mod.load_note(_tome_dir(), key)
+    if not writing:
+        # Read mode
         if not existing:
-            return json.dumps({"key": key, "action": "remove", "status": "no_notes"})
-        try:
-            updated, removed = notes_mod.remove_from_note(existing, field, value)
-        except ValueError as e:
-            return json.dumps({"error": str(e)})
-        if not removed:
-            return json.dumps({
-                "key": key, "action": "remove", "field": field,
-                "status": "not_found", "note": existing,
-            }, indent=2)
-        notes_mod.save_note(_tome_dir(), key, updated)
-        # Re-index into ChromaDB
-        flat_text = notes_mod.flatten_for_search(key, updated)
-        try:
-            client = store.get_client(_chroma_dir())
-            embed_fn = store.get_embed_fn()
-            col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
-            if updated:
-                col.upsert(
-                    ids=[f"{key}::note"],
-                    documents=[flat_text],
-                    metadatas=[{"bib_key": key, "source_type": "note"}],
-                )
-            else:
-                col.delete(ids=[f"{key}::note"])
-        except Exception:
-            pass
-        return json.dumps({
-            "key": key, "action": "remove", "field": field,
-            "status": "removed", "note": updated,
-        }, indent=2)
+            return json.dumps({"file": file, "meta": None, "hint": "No meta block."})
+        return json.dumps({"file": file, "meta": existing}, indent=2)
 
-    return json.dumps({"error": f"Unknown action '{action}'. Must be 'remove' or 'delete'."})
+    # Write mode — overwrite non-empty fields
+    updated = dict(existing)
+    for field_name, value in file_fields.items():
+        if value:
+            updated[field_name] = value
+    file_meta_mod.write_meta(file_path, updated)
+
+    # Index into ChromaDB
+    flat_text = file_meta_mod.flatten_for_search(file, updated)
+    try:
+        client = store.get_client(_chroma_dir())
+        embed_fn = store.get_embed_fn()
+        col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
+        col.upsert(
+            ids=[f"{file}::meta"],
+            documents=[flat_text],
+            metadatas=[{
+                "source_file": file,
+                "source_type": "file_meta",
+                "file_type": file_path.suffix.lstrip("."),
+            }],
+        )
+    except Exception:
+        pass
+
+    return json.dumps({"file": file, "status": "updated", "meta": updated}, indent=2)
 
 
 _LIST_PAGE_SIZE = 50
@@ -1916,159 +1904,6 @@ def get_summary(file: str = "", stale_only: bool = False) -> str:
         status = "file_missing"
 
     return json.dumps({"file": file, "status": status, **entry}, indent=2)
-
-
-# ---------------------------------------------------------------------------
-# File Meta — editorial annotations stored as LaTeX comments
-# ---------------------------------------------------------------------------
-
-
-@mcp_server.tool()
-def set_file_meta(
-    file: str,
-    intent: str = "",
-    status: str = "",
-    claims: str = "",
-    depends: str = "",
-    open: str = "",
-) -> str:
-    """Add or update editorial meta for a .tex file.  Written as comments
-    at end of file, visible to LLM on read — no extra tool call needed.
-
-    Scalar fields (intent, status) overwrite.  List fields (claims,
-    depends, open) append and deduplicate.
-
-    Args:
-        file: Relative path to the file (e.g. 'sections/signal-domains.tex').
-        intent: Why this section exists — its argument or purpose.
-        status: Editorial status (e.g. 'solid', 'draft — needs citation').
-        claims: Comma-separated claims that need support (appended).
-        depends: Comma-separated cross-section dependencies (appended).
-        open: Comma-separated open questions (appended).
-    """
-    validate.validate_relative_path(file, field="file")
-    file_path = _project_root() / file
-    if not file_path.exists():
-        return json.dumps({"error": f"File not found: {file}"})
-
-    claims_list = [c.strip() for c in claims.split(",") if c.strip()] if claims else None
-    depends_list = [d.strip() for d in depends.split(",") if d.strip()] if depends else None
-    open_list = [o.strip() for o in open.split(",") if o.strip()] if open else None
-
-    existing = file_meta_mod.parse_meta_from_file(file_path)
-    merged = file_meta_mod.merge_meta(
-        existing,
-        intent=intent,
-        status=status,
-        claims=claims_list,
-        depends=depends_list,
-        open_items=open_list,
-    )
-    file_meta_mod.write_meta(file_path, merged)
-
-    # Index into ChromaDB for semantic search
-    flat_text = file_meta_mod.flatten_for_search(file, merged)
-    try:
-        client = store.get_client(_chroma_dir())
-        embed_fn = store.get_embed_fn()
-        col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
-        col.upsert(
-            ids=[f"{file}::meta"],
-            documents=[flat_text],
-            metadatas=[{
-                "source_file": file,
-                "source_type": "file_meta",
-                "file_type": file_path.suffix.lstrip("."),
-            }],
-        )
-    except Exception:
-        pass  # ChromaDB failure is non-fatal
-
-    return json.dumps({
-        "status": "updated",
-        "file": file,
-        "meta": merged,
-    }, indent=2)
-
-
-@mcp_server.tool()
-def edit_file_meta(
-    file: str,
-    action: str,
-    field: str = "",
-    value: str = "",
-) -> str:
-    """Remove an item from a file meta field, or delete the entire meta block.
-
-    Use set_file_meta to add/update.  Use this tool to remove or delete.
-
-    Args:
-        file: Relative path to the file.
-        action: 'remove' (single item) or 'delete' (entire meta block).
-        field: Field to remove from (required for action='remove').
-        value: Item to remove (for list fields).  Exact string match.
-    """
-    validate.validate_relative_path(file, field="file")
-    file_path = _project_root() / file
-    if not file_path.exists():
-        return json.dumps({"error": f"File not found: {file}"})
-
-    if action == "delete":
-        file_meta_mod.write_meta(file_path, {})
-        # Remove from ChromaDB
-        try:
-            client = store.get_client(_chroma_dir())
-            embed_fn = store.get_embed_fn()
-            col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
-            col.delete(ids=[f"{file}::meta"])
-        except Exception:
-            pass
-        return json.dumps({"status": "deleted", "file": file})
-
-    if action != "remove":
-        return json.dumps({"error": "action must be 'remove' or 'delete'"})
-
-    if not field:
-        return json.dumps({"error": "field is required for action='remove'"})
-
-    existing = file_meta_mod.parse_meta_from_file(file_path)
-    try:
-        updated, was_removed = file_meta_mod.remove_from_meta(existing, field, value)
-    except ValueError as exc:
-        return json.dumps({"error": str(exc)})
-
-    if not was_removed:
-        return json.dumps({"status": "not_found", "field": field, "value": value})
-
-    file_meta_mod.write_meta(file_path, updated)
-
-    # Re-index
-    flat_text = file_meta_mod.flatten_for_search(file, updated)
-    try:
-        client = store.get_client(_chroma_dir())
-        embed_fn = store.get_embed_fn()
-        col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
-        if updated:
-            col.upsert(
-                ids=[f"{file}::meta"],
-                documents=[flat_text],
-                metadatas=[{
-                    "source_file": file,
-                    "source_type": "file_meta",
-                    "file_type": file_path.suffix.lstrip("."),
-                }],
-            )
-        else:
-            col.delete(ids=[f"{file}::meta"])
-    except Exception:
-        pass
-
-    return json.dumps({
-        "status": "removed",
-        "file": file,
-        "field": field,
-        "meta": updated,
-    }, indent=2)
 
 
 # ---------------------------------------------------------------------------

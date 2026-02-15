@@ -24,34 +24,29 @@ Some content.
 """
         assert file_meta.parse_meta(text) == {}
 
-    def test_scalar_fields(self):
+    def test_all_fields(self):
         text = f"""{file_meta.META_HEADER}
 % intent: Establish wavelength budget
 % status: draft
+% claims: A; B; C
+% depends: signal-domains, logic-mechanisms
+% open: Which channel?
 """
         result = file_meta.parse_meta(text)
         assert result["intent"] == "Establish wavelength budget"
         assert result["status"] == "draft"
+        assert result["claims"] == "A; B; C"
+        assert result["depends"] == "signal-domains, logic-mechanisms"
+        assert result["open"] == "Which channel?"
 
-    def test_list_fields(self):
+    def test_last_value_wins(self):
+        """Duplicate keys: last one overwrites (all fields are strings now)."""
         text = f"""{file_meta.META_HEADER}
-% claims: 4 wavelengths sufficient
-% claims: BODIPY avoids crosstalk
-% depends: signal-domains
-% open: Which channel for HARVEST?
+% intent: first
+% intent: second
 """
         result = file_meta.parse_meta(text)
-        assert result["claims"] == ["4 wavelengths sufficient", "BODIPY avoids crosstalk"]
-        assert result["depends"] == ["signal-domains"]
-        assert result["open"] == ["Which channel for HARVEST?"]
-
-    def test_dedup_on_parse(self):
-        text = f"""{file_meta.META_HEADER}
-% claims: same claim
-% claims: same claim
-"""
-        result = file_meta.parse_meta(text)
-        assert result["claims"] == ["same claim"]
+        assert result["intent"] == "second"
 
     def test_ignores_unknown_keys(self):
         text = f"""{file_meta.META_HEADER}
@@ -87,40 +82,6 @@ Some content here.
 
 
 # ---------------------------------------------------------------------------
-# Merge
-# ---------------------------------------------------------------------------
-
-class TestMergeMeta:
-    def test_empty_merge(self):
-        assert file_meta.merge_meta({}) == {}
-
-    def test_scalar_overwrite(self):
-        existing = {"intent": "old", "status": "draft"}
-        result = file_meta.merge_meta(existing, intent="new")
-        assert result["intent"] == "new"
-        assert result["status"] == "draft"
-
-    def test_scalar_no_overwrite_empty(self):
-        existing = {"intent": "keep"}
-        result = file_meta.merge_meta(existing, intent="")
-        assert result["intent"] == "keep"
-
-    def test_list_append(self):
-        existing = {"claims": ["A"]}
-        result = file_meta.merge_meta(existing, claims=["B", "C"])
-        assert result["claims"] == ["A", "B", "C"]
-
-    def test_list_dedup(self):
-        existing = {"claims": ["A", "B"]}
-        result = file_meta.merge_meta(existing, claims=["B", "C"])
-        assert result["claims"] == ["A", "B", "C"]
-
-    def test_new_list_field(self):
-        result = file_meta.merge_meta({}, depends=["signal-domains"])
-        assert result["depends"] == ["signal-domains"]
-
-
-# ---------------------------------------------------------------------------
 # Render
 # ---------------------------------------------------------------------------
 
@@ -130,11 +91,11 @@ class TestRenderMeta:
 
     def test_field_order(self):
         data = {
-            "open": ["question?"],
+            "open": "question?",
             "intent": "test",
-            "claims": ["claim1"],
+            "claims": "claim1",
             "status": "draft",
-            "depends": ["other.tex"],
+            "depends": "other.tex",
         }
         rendered = file_meta.render_meta(data)
         lines = rendered.strip().split("\n")
@@ -142,13 +103,20 @@ class TestRenderMeta:
         keys = [l.split(":")[0].replace("% ", "") for l in lines[1:]]
         assert keys == ["intent", "status", "depends", "claims", "open"]
 
+    def test_skips_empty_values(self):
+        data = {"intent": "yes", "status": "", "claims": ""}
+        rendered = file_meta.render_meta(data)
+        assert "intent" in rendered
+        assert "status" not in rendered
+        assert "claims" not in rendered
+
     def test_roundtrip(self):
         data = {
             "intent": "test intent",
             "status": "solid",
-            "claims": ["A", "B"],
-            "depends": ["foo.tex"],
-            "open": ["question?"],
+            "claims": "A, B",
+            "depends": "foo.tex",
+            "open": "question?",
         }
         rendered = file_meta.render_meta(data)
         parsed = file_meta.parse_meta(rendered)
@@ -191,7 +159,6 @@ class TestStripAndWrite:
         text = f.read_text(encoding="utf-8")
         assert "% intent: new" in text
         assert "% intent: old" not in text
-        # Only one meta header
         assert text.count(file_meta.META_HEADER) == 1
 
     def test_write_empty_removes_block(self, tmp_path: Path):
@@ -215,44 +182,9 @@ class TestStripAndWrite:
 
 class TestFlatten:
     def test_flatten(self):
-        data = {
-            "intent": "test",
-            "claims": ["A", "B"],
-            "depends": ["foo.tex"],
-        }
+        data = {"intent": "test", "claims": "A, B", "depends": "foo.tex"}
         text = file_meta.flatten_for_search("sections/test.tex", data)
         assert "File: sections/test.tex" in text
         assert "Intent: test" in text
-        assert "- A" in text
-        assert "Depends on:" in text
-
-
-# ---------------------------------------------------------------------------
-# Remove
-# ---------------------------------------------------------------------------
-
-class TestRemove:
-    def test_remove_scalar(self):
-        data = {"intent": "old", "status": "draft"}
-        result, removed = file_meta.remove_from_meta(data, "intent")
-        assert removed
-        assert "intent" not in result
-
-    def test_remove_scalar_missing(self):
-        result, removed = file_meta.remove_from_meta({}, "intent")
-        assert not removed
-
-    def test_remove_list_item(self):
-        data = {"claims": ["A", "B", "C"]}
-        result, removed = file_meta.remove_from_meta(data, "claims", "B")
-        assert removed
-        assert result["claims"] == ["A", "C"]
-
-    def test_remove_list_item_missing(self):
-        data = {"claims": ["A"]}
-        result, removed = file_meta.remove_from_meta(data, "claims", "X")
-        assert not removed
-
-    def test_remove_unknown_field(self):
-        with pytest.raises(ValueError, match="Unknown field"):
-            file_meta.remove_from_meta({}, "garbage")
+        assert "Claims: A, B" in text
+        assert "Depends: foo.tex" in text

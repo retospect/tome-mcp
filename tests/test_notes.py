@@ -1,18 +1,18 @@
-"""Tests for tome.notes — paper notes YAML files."""
+"""Tests for tome.notes — paper notes YAML files.
 
-import json
+All fields are plain strings, all overwrite.  No merge/remove logic.
+"""
 
 import pytest
 
 from tome.notes import (
+    PAPER_FIELDS,
     delete_note,
     flatten_for_search,
     list_notes,
     load_note,
-    merge_note,
     note_path,
     notes_dir,
-    remove_from_note,
     save_note,
 )
 
@@ -39,12 +39,33 @@ class TestLoadNote:
         d = tmp_path / "notes"
         d.mkdir()
         (d / "xu2022.yaml").write_text(
-            "summary: First QI demo\nclaims:\n  - claim one\n",
+            "summary: First QI demo\nclaims: claim A, claim B\n",
             encoding="utf-8",
         )
         data = load_note(tmp_path, "xu2022")
         assert data["summary"] == "First QI demo"
-        assert data["claims"] == ["claim one"]
+        assert data["claims"] == "claim A, claim B"
+
+    def test_coerces_old_lists_to_strings(self, tmp_path):
+        """Old-format notes with YAML lists get coerced to strings."""
+        d = tmp_path / "notes"
+        d.mkdir()
+        (d / "xu2022.yaml").write_text(
+            "summary: test\nclaims:\n  - claim one\n  - claim two\n",
+            encoding="utf-8",
+        )
+        data = load_note(tmp_path, "xu2022")
+        assert isinstance(data["claims"], str)
+
+    def test_filters_unknown_fields(self, tmp_path):
+        d = tmp_path / "notes"
+        d.mkdir()
+        (d / "xu2022.yaml").write_text(
+            "summary: test\nbogus: should not appear\n",
+            encoding="utf-8",
+        )
+        data = load_note(tmp_path, "xu2022")
+        assert "bogus" not in data
 
     def test_non_dict_returns_empty(self, tmp_path):
         d = tmp_path / "notes"
@@ -60,79 +81,26 @@ class TestSaveNote:
         assert "summary: test" in p.read_text()
 
     def test_roundtrip(self, tmp_path):
-        data = {"summary": "QI demo", "claims": ["claim A", "claim B"]}
+        data = {"summary": "QI demo", "claims": "claim A, claim B"}
         save_note(tmp_path, "xu2022", data)
         loaded = load_note(tmp_path, "xu2022")
-        assert loaded["summary"] == "QI demo"
-        assert loaded["claims"] == ["claim A", "claim B"]
+        assert loaded == data
 
+    def test_empty_fields_not_written(self, tmp_path):
+        save_note(tmp_path, "xu2022", {"summary": "test", "claims": ""})
+        loaded = load_note(tmp_path, "xu2022")
+        assert "claims" not in loaded
 
-class TestMergeNote:
-    def test_empty_merge(self):
-        result = merge_note({})
-        assert result == {}
+    def test_all_empty_deletes_file(self, tmp_path):
+        save_note(tmp_path, "xu2022", {"summary": "test"})
+        assert (tmp_path / "notes" / "xu2022.yaml").exists()
+        save_note(tmp_path, "xu2022", {"summary": "", "claims": ""})
+        assert not (tmp_path / "notes" / "xu2022.yaml").exists()
 
-    def test_set_summary(self):
-        result = merge_note({}, summary="First QI demo")
-        assert result["summary"] == "First QI demo"
-
-    def test_overwrite_summary(self):
-        result = merge_note({"summary": "old"}, summary="new")
-        assert result["summary"] == "new"
-
-    def test_empty_summary_preserves(self):
-        result = merge_note({"summary": "keep"}, summary="")
-        assert result["summary"] == "keep"
-
-    def test_append_claims(self):
-        existing = {"claims": ["A"]}
-        result = merge_note(existing, claims=["B", "C"])
-        assert result["claims"] == ["A", "B", "C"]
-
-    def test_deduplicate_claims(self):
-        existing = {"claims": ["A", "B"]}
-        result = merge_note(existing, claims=["B", "C"])
-        assert result["claims"] == ["A", "B", "C"]
-
-    def test_append_limitations(self):
-        result = merge_note({}, limitations=["thin film only"])
-        assert result["limitations"] == ["thin film only"]
-
-    def test_append_tags(self):
-        existing = {"tags": ["conductivity"]}
-        result = merge_note(existing, tags=["conductivity", "MOF"])
-        assert result["tags"] == ["conductivity", "MOF"]
-
-    def test_append_relevance(self):
-        existing = {"relevance": [{"section": "connectivity", "note": "QI evidence"}]}
-        result = merge_note(
-            existing,
-            relevance=[
-                {"section": "signal-domains", "note": "supports QI"},
-                {"section": "connectivity", "note": "QI evidence"},  # duplicate
-            ],
-        )
-        assert len(result["relevance"]) == 2
-        sections = [r["section"] for r in result["relevance"]]
-        assert "connectivity" in sections
-        assert "signal-domains" in sections
-
-    def test_set_quality(self):
-        result = merge_note({}, quality="high")
-        assert result["quality"] == "high"
-
-    def test_combined(self):
-        result = merge_note(
-            {"summary": "old", "claims": ["A"]},
-            summary="new",
-            claims=["B"],
-            quality="high",
-            tags=["test"],
-        )
-        assert result["summary"] == "new"
-        assert result["claims"] == ["A", "B"]
-        assert result["quality"] == "high"
-        assert result["tags"] == ["test"]
+    def test_ignores_unknown_fields(self, tmp_path):
+        save_note(tmp_path, "xu2022", {"summary": "test", "bogus": "ignored"})
+        loaded = load_note(tmp_path, "xu2022")
+        assert "bogus" not in loaded
 
 
 class TestFlattenForSearch:
@@ -141,21 +109,20 @@ class TestFlattenForSearch:
         assert "xu2022" in text
         assert "QI demo" in text
 
-    def test_full(self):
+    def test_all_fields(self):
         data = {
             "summary": "First QI demo",
-            "claims": ["claim A", "claim B"],
-            "relevance": [{"section": "connectivity", "note": "supports QI"}],
-            "limitations": ["thin film only"],
+            "claims": "claim A, claim B",
+            "relevance": "connectivity: supports QI",
+            "limitations": "thin film only",
             "quality": "high",
-            "tags": ["conductivity", "MOF"],
+            "tags": "conductivity, MOF",
         }
         text = flatten_for_search("xu2022", data)
         assert "First QI demo" in text
         assert "claim A" in text
-        assert "claim B" in text
         assert "connectivity" in text
-        assert "thin film only" in text
+        assert "thin film" in text
         assert "high" in text
         assert "conductivity" in text
 
@@ -176,88 +143,9 @@ class TestListNotes:
         d.mkdir()
         (d / "xu2022.yaml").write_text("summary: test\n")
         (d / "chen2023.yaml").write_text("summary: test\n")
-        (d / "readme.txt").write_text("ignore me\n")  # not yaml
+        (d / "readme.txt").write_text("ignore me\n")
         keys = list_notes(tmp_path)
         assert keys == ["chen2023", "xu2022"]
-
-
-class TestRemoveFromNote:
-    def test_remove_claim(self):
-        existing = {"claims": ["A", "B", "C"]}
-        result, removed = remove_from_note(existing, "claims", "B")
-        assert removed is True
-        assert result["claims"] == ["A", "C"]
-
-    def test_remove_claim_not_found(self):
-        existing = {"claims": ["A", "B"]}
-        result, removed = remove_from_note(existing, "claims", "Z")
-        assert removed is False
-        assert result["claims"] == ["A", "B"]
-
-    def test_remove_from_empty_list(self):
-        result, removed = remove_from_note({}, "claims", "A")
-        assert removed is False
-
-    def test_remove_limitation(self):
-        existing = {"limitations": ["thin film only", "bulk ensemble"]}
-        result, removed = remove_from_note(existing, "limitations", "thin film only")
-        assert removed is True
-        assert result["limitations"] == ["bulk ensemble"]
-
-    def test_remove_tag(self):
-        existing = {"tags": ["MOF", "conductivity"]}
-        result, removed = remove_from_note(existing, "tags", "MOF")
-        assert removed is True
-        assert result["tags"] == ["conductivity"]
-
-    def test_clear_summary(self):
-        existing = {"summary": "old summary", "claims": ["A"]}
-        result, removed = remove_from_note(existing, "summary")
-        assert removed is True
-        assert "summary" not in result
-        assert result["claims"] == ["A"]
-
-    def test_clear_empty_summary(self):
-        result, removed = remove_from_note({}, "summary")
-        assert removed is False
-
-    def test_clear_quality(self):
-        existing = {"quality": "high"}
-        result, removed = remove_from_note(existing, "quality")
-        assert removed is True
-        assert "quality" not in result
-
-    def test_remove_relevance(self):
-        existing = {"relevance": [
-            {"section": "connectivity", "note": "QI evidence"},
-            {"section": "signal-domains", "note": "supports QI"},
-        ]}
-        value = json.dumps({"section": "connectivity", "note": "QI evidence"})
-        result, removed = remove_from_note(existing, "relevance", value)
-        assert removed is True
-        assert len(result["relevance"]) == 1
-        assert result["relevance"][0]["section"] == "signal-domains"
-
-    def test_remove_relevance_not_found(self):
-        existing = {"relevance": [{"section": "connectivity", "note": "QI evidence"}]}
-        value = json.dumps({"section": "other", "note": "nope"})
-        result, removed = remove_from_note(existing, "relevance", value)
-        assert removed is False
-
-    def test_unknown_field_raises(self):
-        with pytest.raises(ValueError, match="Unknown field"):
-            remove_from_note({}, "bogus", "x")
-
-    def test_bad_relevance_json_raises(self):
-        existing = {"relevance": [{"section": "a", "note": "b"}]}
-        with pytest.raises(ValueError, match="JSON"):
-            remove_from_note(existing, "relevance", "not json{{{")
-
-    def test_remove_last_claim_leaves_empty_list(self):
-        existing = {"claims": ["only one"]}
-        result, removed = remove_from_note(existing, "claims", "only one")
-        assert removed is True
-        assert result["claims"] == []
 
 
 class TestDeleteNote:
