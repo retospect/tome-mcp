@@ -6,6 +6,7 @@ The server uses stdio transport for MCP client communication.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import json
 import logging
@@ -103,9 +104,22 @@ def _attach_file_log(dot_tome: Path) -> None:
     logger.info("Tome server started — log attached to %s", log_path)
 
 
+def _flush_log() -> None:
+    """Flush the file handler to disk so the last log line survives a hang."""
+    if _file_handler is not None:
+        _file_handler.flush()
+
+
 # ---------------------------------------------------------------------------
 # Tool invocation logging — wraps every @mcp_server.tool() with timing,
 # error classification, and LockTimeout → JSON error conversion.
+#
+# The wrapper is declared ``async`` so FastMCP dispatches it as a
+# coroutine.  The original *sync* tool function is run via
+# ``asyncio.to_thread()`` so it executes in a thread-pool worker.
+# This decouples lock-holding tool code from the event loop that
+# writes responses to stdout — if the stdout pipe blocks, any file
+# locks have already been released in the worker thread.
 # ---------------------------------------------------------------------------
 
 _original_tool = mcp_server.tool
@@ -117,20 +131,26 @@ def _logging_tool(**kwargs):
 
     def wrapper(fn):
         @functools.wraps(fn)
-        def logged(*args, **kw):
+        async def logged(*args, **kw):
             name = fn.__name__
             logger.info("TOOL %s called", name)
+            _flush_log()
             t0 = time.monotonic()
             try:
-                result = fn(*args, **kw)
+                result = await asyncio.to_thread(fn, *args, **kw)
                 dt = time.monotonic() - t0
-                logger.info("TOOL %s completed in %.2fs", name, dt)
+                rsize = len(result) if isinstance(result, str) else 0
+                logger.info(
+                    "TOOL %s completed in %.2fs (%d bytes)", name, dt, rsize
+                )
+                _flush_log()
                 return result
             except LockTimeout as exc:
                 dt = time.monotonic() - t0
                 logger.error(
                     "TOOL %s failed (LockTimeout) after %.2fs: %s", name, dt, exc
                 )
+                _flush_log()
                 return json.dumps({
                     "error": f"Lock timeout: {exc}. "
                     "Another Tome process may be stuck. "
@@ -142,6 +162,7 @@ def _logging_tool(**kwargs):
                     "TOOL %s failed (%s) after %.2fs: %s",
                     name, type(exc).__name__, dt, exc,
                 )
+                _flush_log()
                 raise
             except Exception:
                 dt = time.monotonic() - t0
@@ -149,6 +170,7 @@ def _logging_tool(**kwargs):
                     "TOOL %s crashed after %.2fs:\n%s",
                     name, dt, traceback.format_exc(),
                 )
+                _flush_log()
                 raise
 
         return decorator(logged)
@@ -898,17 +920,29 @@ def edit_notes(
     return json.dumps({"error": f"Unknown action '{action}'. Must be 'remove' or 'delete'."})
 
 
+_LIST_PAGE_SIZE = 50
+_MAX_RESULTS = 30
+
+
+def _truncate(items: list, label: str = "results") -> dict[str, Any]:
+    """Return {label: items[:_MAX_RESULTS], 'truncated': N} if over limit."""
+    if len(items) <= _MAX_RESULTS:
+        return {label: items}
+    return {label: items[:_MAX_RESULTS], "truncated": len(items) - _MAX_RESULTS}
+
+
 @mcp_server.tool()
-def list_papers(tags: str = "", status: str = "") -> str:
+def list_papers(tags: str = "", status: str = "", page: int = 1) -> str:
     """List papers in the library. Returns a summary table.
 
     Args:
         tags: Filter by tags (comma-separated). Papers must have at least one matching tag.
         status: Filter by x-doi-status (valid, unchecked, rejected, missing).
+        page: Page number (1-indexed, 50 papers per page).
     """
     lib = _load_bib()
     tag_filter = {t.strip() for t in tags.split(",") if t.strip()} if tags else set()
-    results = []
+    all_matching = []
 
     for entry in lib.entries:
         summary = _paper_summary(entry)
@@ -916,7 +950,7 @@ def list_papers(tags: str = "", status: str = "") -> str:
             continue
         if status and summary.get("doi_status") != status:
             continue
-        results.append(
+        all_matching.append(
             {
                 "key": summary["key"],
                 "title": summary.get("title", "")[:80],
@@ -927,7 +961,20 @@ def list_papers(tags: str = "", status: str = "") -> str:
             }
         )
 
-    return json.dumps({"count": len(results), "papers": results}, indent=2)
+    total = len(all_matching)
+    start = (max(1, page) - 1) * _LIST_PAGE_SIZE
+    page_items = all_matching[start:start + _LIST_PAGE_SIZE]
+    total_pages = (total + _LIST_PAGE_SIZE - 1) // _LIST_PAGE_SIZE
+    result: dict[str, Any] = {
+        "total": total,
+        "page": page,
+        "total_pages": total_pages,
+        "showing": len(page_items),
+        "papers": page_items,
+    }
+    if page < total_pages:
+        result["hint"] = f"Use page={page + 1} for more."
+    return json.dumps(result, indent=2)
 
 
 @mcp_server.tool()
@@ -2075,10 +2122,10 @@ def doc_lint(root: str = "default", file: str = "") -> str:
             sum(1 for c in fa.cites if c.is_deep) for fa in doc.files.values()
         ),
         "total_words": sum(fa.word_count for fa in doc.files.values()),
-        "undefined_refs": doc.undefined_refs,
-        "orphan_labels": doc.orphan_labels,
-        "orphan_files": doc.orphan_files,
-        "shallow_high_use_cites": doc.shallow_high_use,
+        "undefined_refs": doc.undefined_refs[:_MAX_RESULTS],
+        "orphan_labels": doc.orphan_labels[:_MAX_RESULTS],
+        "orphan_files": doc.orphan_files[:_MAX_RESULTS],
+        "shallow_high_use_cites": doc.shallow_high_use[:_MAX_RESULTS],
     }, indent=2)
 
 
@@ -2306,7 +2353,7 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
         "ok": ok_count,
         "low_match": low_count,
         "errors": err_count,
-        "results": results,
+        **_truncate(results),
     }, indent=2)
 
 
@@ -2348,7 +2395,7 @@ def find_text(query: str, context_lines: int = 3) -> str:
     return json.dumps({
         "query": query[:200],
         "match_count": len(results),
-        "results": results,
+        **_truncate(results),
     }, indent=2)
 
 
@@ -2397,7 +2444,7 @@ def grep_raw(query: str, key: str = "", context_chars: int = 200, paragraphs: in
         return json.dumps({
             "query": query,
             "match_count": len(results),
-            "results": results,
+            **_truncate(results),
         }, indent=2)
 
     # Character-context mode (original behavior)
@@ -2416,7 +2463,7 @@ def grep_raw(query: str, key: str = "", context_chars: int = 200, paragraphs: in
         "query": query,
         "normalized_query": gr.normalize(query),
         "match_count": len(results),
-        "results": results,
+        **_truncate(results),
     }, indent=2)
 
 
@@ -2576,7 +2623,7 @@ def dismiss_citing(s2_id: str) -> str:
 
 @mcp_server.tool()
 def explore_citations(
-    s2_id: str = "", key: str = "", limit: int = 30,
+    s2_id: str = "", key: str = "", limit: int = 20,
     parent_s2_id: str = "", depth: int = 0,
 ) -> str:
     """Fetch citing papers with abstracts for LLM-guided exploration.
