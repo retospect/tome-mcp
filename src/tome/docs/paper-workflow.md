@@ -80,5 +80,19 @@ re-verifying the same papers.
 
 ## Key format
 
-Bib keys follow `authorYYYY[a-c]?` format (first author surname +
-publication year). Datasheets use `manufacturer_partid`.
+All keys use first author surname (lowercase) + 4-digit year.
+Year in key must match the `year` field. Three valid forms:
+
+- **`authorYYYYslug`** (recommended) — 1–2 word topic slug, no
+  separators, all lowercase. Pick the most distinctive noun from
+  the title: `park2008dna`, `collier2001rotaxane`, `chen2023qifet`.
+- **`authorYYYY`** — valid when unambiguous.
+- **`authorYYYYa`/`b`/`c`** — letter suffixes for disambiguation.
+
+All three forms coexist. Do not rename existing keys — they are
+stable identifiers referenced across `.tex`, notes, and PDFs.
+
+The `ingest` tool auto-suggests `authorYYYY` keys. Override with
+`key="smith2024ndr"` to use a slug.
+
+Datasheets use `manufacturer_partid` (e.g., `thorlabs_m365l4`).

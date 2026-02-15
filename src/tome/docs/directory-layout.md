@@ -10,7 +10,7 @@ Tome uses two directories at the project root:
 | Path | Contents |
 |------|----------|
 | `tome/references.bib` | Bibliography (managed by Tome) |
-| `tome/pdf/` | Paper PDFs (`authorYYYY.pdf`) |
+| `tome/pdf/` | Paper PDFs (`authorYYYY[slug].pdf`) |
 | `tome/inbox/` | Drop zone for new PDFs (ingest picks up from here) |
 | `tome/figures/` | Source figures from papers |
 | `tome/notes/` | Research notes YAML (`{key}.yaml`) |
@@ -35,9 +35,11 @@ Tome uses two directories at the project root:
 ## Conventions
 
 ### Bib keys
-- Papers: `authorYYYY[a-c]?` (first author + year, letter suffix for conflicts)
+- **`authorYYYYslug`** (recommended) — e.g., `park2008dna`, `chen2023qifet`
+- **`authorYYYY`** — when unambiguous (one paper by that author+year)
+- **`authorYYYYa`/`b`/`c`** — letter suffixes for disambiguation
 - Datasheets: `manufacturer_partid` (e.g., `thorlabs_m365l4`)
-- Year in key must match year field. Only exception: patents.
+- Year in key must match year field. Do not rename existing keys.
 
 ### PDF naming
 - **Supplementary info**: `<key>_sup<N>.pdf` (e.g., `jang2003b_sup1.pdf`).
