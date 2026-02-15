@@ -1466,9 +1466,12 @@ def sync_corpus(paths: str = "sections/*.tex") -> str:
     col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
 
     for f in removed:
+        logger.info("sync_corpus: removing %s", f)
         store.delete_corpus_file(client, f, embed_fn)
 
-    for f in changed + added:
+    to_index = changed + added
+    for i, f in enumerate(to_index, 1):
+        logger.info("sync_corpus: indexing %s (%d/%d)", f, i, len(to_index))
         store.delete_corpus_file(client, f, embed_fn)
         abs_path = root / f
         text = abs_path.read_text(encoding="utf-8")
