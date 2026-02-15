@@ -205,7 +205,8 @@ def _project_root() -> Path:
         "or set the TOME_ROOT environment variable. "
         "The project root is the directory containing tome/config.yaml "
         "and the .tome/ cache directory (these are created on first run "
-        "and may not exist yet for new projects)."
+        "and may not exist yet for new projects). "
+        "After connecting, call guide('getting-started') for orientation."
     )
 
 
@@ -386,7 +387,12 @@ def ingest(
         # Scan inbox
         pdfs = sorted(inbox.glob("*.pdf"))
         if not pdfs:
-            return json.dumps({"status": "empty", "message": "No PDFs in tome/inbox/."})
+            return json.dumps({
+                "status": "empty",
+                "message": "No PDFs in tome/inbox/.",
+                "hint": "Drop PDF files into tome/inbox/ then call ingest() again. "
+                         "See guide('paper-workflow') for the full pipeline.",
+            })
         results = []
         for pdf in pdfs:
             results.append(_propose_ingest(pdf))
@@ -619,6 +625,11 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
         "pages": ext_result.pages,
         "chunks": len(all_chunks),
         "embedded": embedded,
+        "next_steps": (
+            f"Verify: check_doi(key='{key}'). "
+            f"Enrich: set_notes(key='{key}', summary='...'). "
+            f"See guide('paper-workflow') for the full pipeline."
+        ),
     }
 
 
@@ -988,7 +999,12 @@ def list_papers(tags: str = "", status: str = "", page: int = 1) -> str:
         "showing": len(page_items),
         "papers": page_items,
     }
-    if page < total_pages:
+    if total == 0:
+        result["hint"] = (
+            "Library is empty. Use ingest() to add papers from tome/inbox/, "
+            "or set_paper() to create entries."
+        )
+    elif page < total_pages:
         result["hint"] = f"Use page={page + 1} for more."
     return json.dumps(result, indent=2)
 
@@ -1136,7 +1152,13 @@ def search(query: str, key: str = "", tags: str = "", n: int = 10) -> str:
                 pass
         results = filtered
 
-    return json.dumps({"count": len(results), "results": results}, indent=2)
+    response: dict[str, Any] = {"count": len(results), "results": results}
+    if not results:
+        response["hint"] = (
+            "No results. Try broader terms, or check that papers have been "
+            "ingested and embedded (stats() to verify)."
+        )
+    return json.dumps(response, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -1177,7 +1199,13 @@ def search_corpus(
     except Exception as e:
         raise ChromaDBError(str(e))
 
-    return json.dumps({"count": len(results), "results": results}, indent=2)
+    response: dict[str, Any] = {"count": len(results), "results": results}
+    if not results:
+        response["hint"] = (
+            "No results. Run sync_corpus() to index files, "
+            "or check tex_globs in tome/config.yaml."
+        )
+    return json.dumps(response, indent=2)
 
 
 @mcp_server.tool()
@@ -1676,6 +1704,7 @@ def fetch_oa(key: str) -> str:
             "is_oa": result.is_oa,
             "oa_status": result.oa_status,
             "message": "No open-access PDF available.",
+            "hint": "Try request_paper() to track it, or manually place the PDF in tome/inbox/.",
         })
 
     # Download PDF
@@ -1959,31 +1988,44 @@ def stats() -> str:
     open_issues = issues_mod.count_open(_tome_dir())
     notes_count = len(notes_mod.list_notes(_tome_dir()))
 
-    return json.dumps(
-        {
-            "total_papers": len(lib.entries),
-            "with_pdf": has_pdf,
-            "doi_status": doi_stats,
-            "pending_figures": pending_figs,
-            "open_requests": open_reqs,
-            "papers_with_notes": notes_count,
-            "open_issues": open_issues,
-        },
-        indent=2,
-    )
+    result: dict[str, Any] = {
+        "total_papers": len(lib.entries),
+        "with_pdf": has_pdf,
+        "doi_status": doi_stats,
+        "pending_figures": pending_figs,
+        "open_requests": open_reqs,
+        "papers_with_notes": notes_count,
+        "open_issues": open_issues,
+    }
+    if not lib.entries:
+        result["hint"] = (
+            "Library is empty. Drop PDFs in tome/inbox/ and run ingest(), "
+            "or use set_paper() to create entries manually."
+        )
+    return json.dumps(result, indent=2)
 
 
 @mcp_server.tool()
 def guide(topic: str = "") -> str:
-    """On-demand usage guides. Call without args for topic index.
+    """On-demand usage guides. START HERE for new sessions.
 
-    Covers tool strategies, workflows, examples, and when-to-use advice
-    that complements the brief tool descriptions.
+    Call without args for the topic index. Key topics:
+    'getting-started' (orientation + tool groups),
+    'paper-workflow' (ingest → search → cite pipeline),
+    'search' (semantic search strategies),
+    'needful' (recurring task tracking),
+    'exploration' (citation discovery workflows).
+
+    Works before set_root — no project root needed.
 
     Args:
         topic: Topic slug or search term. Empty = list all topics.
     """
-    proj = _project_root()
+    try:
+        proj = _project_root()
+    except TomeError:
+        # No root yet — use a dummy path so only built-in docs are found
+        proj = Path("/nonexistent")
     if not topic:
         topics = guide_mod.list_topics(proj)
         return guide_mod.render_index(topics)
@@ -2191,7 +2233,10 @@ def review_status(root: str = "default", file: str = "") -> str:
     if not cfg.track:
         return json.dumps({
             "status": "no_tracked_patterns",
-            "hint": "Add 'track:' entries to tome/config.yaml to index project-specific macros.",
+            "hint": (
+                "Add 'track:' entries to tome/config.yaml to index project-specific macros. "
+                "See examples/config.yaml for pattern examples, or guide('configuration') for details."
+            ),
         }, indent=2)
 
     return json.dumps({
@@ -2284,7 +2329,8 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
     if not deep_cite_pattern:
         return json.dumps({
             "error": "No 'deep_cite' pattern in config.yaml. Add a tracked pattern named "
-                     "'deep_cite' with groups [key, page, quote] to enable quote validation.",
+                     "'deep_cite' with groups [key, page, quote] to enable quote validation. "
+                     "See guide('configuration') for tracked pattern setup.",
             "example": {
                 "name": "deep_cite",
                 "pattern": "\\\\mciteboxp\\{([^}]+)\\}\\{([^}]+)\\}\\{([^}]+)\\}",
@@ -2593,7 +2639,8 @@ def discover_citing(min_shared: int = 2, min_year: int = 0, n: int = 20) -> str:
     tree = cite_tree_mod.load_tree(_dot_tome())
     if not tree["papers"]:
         return json.dumps({
-            "error": "Citation tree is empty. Run build_cite_tree() first.",
+            "error": "Citation tree is empty. Run build_cite_tree() first. "
+                     "See guide('exploration') for the full discovery workflow.",
         })
 
     lib = _load_bib()
@@ -2990,7 +3037,9 @@ def set_root(path: str) -> str:
         response["scaffolded"] = scaffolded
         response["scaffold_hint"] = (
             "Created standard Tome directory structure. "
-            "Add .tome/ to .gitignore (it is a rebuildable cache)."
+            "Add .tome/ to .gitignore (it is a rebuildable cache). "
+            "Drop PDFs in tome/inbox/ and run ingest(). "
+            "See examples/config.yaml in the Tome source for full config options."
         )
     if orphaned_tex:
         response["orphaned_tex"] = orphaned_tex
@@ -3038,6 +3087,11 @@ def set_root(path: str) -> str:
             "Review and resolve by deleting entries or prefixing with [RESOLVED]."
         )
 
+    response["guide_hint"] = (
+        "Call guide('getting-started') for first-session orientation "
+        "and tool group overview."
+    )
+
     return json.dumps(response, indent=2)
 
 
@@ -3059,7 +3113,8 @@ def needful(n: int = 10) -> str:
             "status": "no_tasks",
             "message": (
                 "No needful tasks configured. Add a 'needful:' section to "
-                "tome/config.yaml with task definitions."
+                "tome/config.yaml with task definitions. "
+                "See guide('needful') for examples and the review workflow."
             ),
         })
 
