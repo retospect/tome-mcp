@@ -248,6 +248,7 @@ def search_papers(
     query: str,
     n: int = 10,
     key: str | None = None,
+    keys: list[str] | None = None,
     tags: list[str] | None = None,
     embed_fn: EmbeddingFunction | None = None,
 ) -> list[dict[str, Any]]:
@@ -258,6 +259,7 @@ def search_papers(
         query: Natural language search query.
         n: Maximum results.
         key: Filter to a single paper by bib key.
+        keys: Filter to multiple papers by bib key list.
         tags: Not directly filterable in ChromaDB (filtered post-query).
         embed_fn: Embedding function.
 
@@ -269,6 +271,8 @@ def search_papers(
     where_filter = None
     if key:
         where_filter = {"bib_key": key}
+    elif keys:
+        where_filter = {"bib_key": {"$in": keys}}
 
     results = col.query(
         query_texts=[query],
@@ -402,6 +406,9 @@ def get_all_labels(
     return results
 
 
+_INTERNAL_META_KEYS = {"chunk_index", "file_sha256", "source_type"}
+
+
 def _format_results(results: dict) -> list[dict[str, Any]]:
     """Format ChromaDB query results into a clean list of dicts."""
     formatted = []
@@ -420,7 +427,9 @@ def _format_results(results: dict) -> list[dict[str, Any]]:
             "distance": distances[i] if i < len(distances) else None,
         }
         if i < len(metas) and metas[i]:
-            entry.update(metas[i])
+            for k, v in metas[i].items():
+                if k not in _INTERNAL_META_KEYS:
+                    entry[k] = v
         formatted.append(entry)
 
     return formatted
