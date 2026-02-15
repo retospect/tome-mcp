@@ -42,6 +42,7 @@ from tome import (
 from tome import guide as guide_mod
 from tome import rejected_dois as rejected_dois_mod
 from tome import issues as issues_mod
+from tome import file_meta as file_meta_mod
 from tome import notes as notes_mod
 from tome import toc as toc_mod
 from tome import openalex
@@ -1915,6 +1916,159 @@ def get_summary(file: str = "", stale_only: bool = False) -> str:
         status = "file_missing"
 
     return json.dumps({"file": file, "status": status, **entry}, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# File Meta — editorial annotations stored as LaTeX comments
+# ---------------------------------------------------------------------------
+
+
+@mcp_server.tool()
+def set_file_meta(
+    file: str,
+    intent: str = "",
+    status: str = "",
+    claims: str = "",
+    depends: str = "",
+    open: str = "",
+) -> str:
+    """Add or update editorial meta for a .tex file.  Written as comments
+    at end of file, visible to LLM on read — no extra tool call needed.
+
+    Scalar fields (intent, status) overwrite.  List fields (claims,
+    depends, open) append and deduplicate.
+
+    Args:
+        file: Relative path to the file (e.g. 'sections/signal-domains.tex').
+        intent: Why this section exists — its argument or purpose.
+        status: Editorial status (e.g. 'solid', 'draft — needs citation').
+        claims: Comma-separated claims that need support (appended).
+        depends: Comma-separated cross-section dependencies (appended).
+        open: Comma-separated open questions (appended).
+    """
+    validate.validate_relative_path(file, field="file")
+    file_path = _project_root() / file
+    if not file_path.exists():
+        return json.dumps({"error": f"File not found: {file}"})
+
+    claims_list = [c.strip() for c in claims.split(",") if c.strip()] if claims else None
+    depends_list = [d.strip() for d in depends.split(",") if d.strip()] if depends else None
+    open_list = [o.strip() for o in open.split(",") if o.strip()] if open else None
+
+    existing = file_meta_mod.parse_meta_from_file(file_path)
+    merged = file_meta_mod.merge_meta(
+        existing,
+        intent=intent,
+        status=status,
+        claims=claims_list,
+        depends=depends_list,
+        open_items=open_list,
+    )
+    file_meta_mod.write_meta(file_path, merged)
+
+    # Index into ChromaDB for semantic search
+    flat_text = file_meta_mod.flatten_for_search(file, merged)
+    try:
+        client = store.get_client(_chroma_dir())
+        embed_fn = store.get_embed_fn()
+        col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
+        col.upsert(
+            ids=[f"{file}::meta"],
+            documents=[flat_text],
+            metadatas=[{
+                "source_file": file,
+                "source_type": "file_meta",
+                "file_type": file_path.suffix.lstrip("."),
+            }],
+        )
+    except Exception:
+        pass  # ChromaDB failure is non-fatal
+
+    return json.dumps({
+        "status": "updated",
+        "file": file,
+        "meta": merged,
+    }, indent=2)
+
+
+@mcp_server.tool()
+def edit_file_meta(
+    file: str,
+    action: str,
+    field: str = "",
+    value: str = "",
+) -> str:
+    """Remove an item from a file meta field, or delete the entire meta block.
+
+    Use set_file_meta to add/update.  Use this tool to remove or delete.
+
+    Args:
+        file: Relative path to the file.
+        action: 'remove' (single item) or 'delete' (entire meta block).
+        field: Field to remove from (required for action='remove').
+        value: Item to remove (for list fields).  Exact string match.
+    """
+    validate.validate_relative_path(file, field="file")
+    file_path = _project_root() / file
+    if not file_path.exists():
+        return json.dumps({"error": f"File not found: {file}"})
+
+    if action == "delete":
+        file_meta_mod.write_meta(file_path, {})
+        # Remove from ChromaDB
+        try:
+            client = store.get_client(_chroma_dir())
+            embed_fn = store.get_embed_fn()
+            col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
+            col.delete(ids=[f"{file}::meta"])
+        except Exception:
+            pass
+        return json.dumps({"status": "deleted", "file": file})
+
+    if action != "remove":
+        return json.dumps({"error": "action must be 'remove' or 'delete'"})
+
+    if not field:
+        return json.dumps({"error": "field is required for action='remove'"})
+
+    existing = file_meta_mod.parse_meta_from_file(file_path)
+    try:
+        updated, was_removed = file_meta_mod.remove_from_meta(existing, field, value)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)})
+
+    if not was_removed:
+        return json.dumps({"status": "not_found", "field": field, "value": value})
+
+    file_meta_mod.write_meta(file_path, updated)
+
+    # Re-index
+    flat_text = file_meta_mod.flatten_for_search(file, updated)
+    try:
+        client = store.get_client(_chroma_dir())
+        embed_fn = store.get_embed_fn()
+        col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
+        if updated:
+            col.upsert(
+                ids=[f"{file}::meta"],
+                documents=[flat_text],
+                metadatas=[{
+                    "source_file": file,
+                    "source_type": "file_meta",
+                    "file_type": file_path.suffix.lstrip("."),
+                }],
+            )
+        else:
+            col.delete(ids=[f"{file}::meta"])
+    except Exception:
+        pass
+
+    return json.dumps({
+        "status": "removed",
+        "file": file,
+        "field": field,
+        "meta": updated,
+    }, indent=2)
 
 
 # ---------------------------------------------------------------------------
