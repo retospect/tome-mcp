@@ -35,6 +35,7 @@ SECTION_RE = re.compile(
     r"\\(part|chapter|section|subsection|subsubsection|paragraph)\*?\{([^}]*)\}"
 )
 INPUT_RE = re.compile(r"\\(?:input|include)\{([^}]+)\}")
+USEPACKAGE_RE = re.compile(r"\\usepackage(?:\[[^\]]*\])?\{([^}]+)\}")
 INDEX_RE = re.compile(r"\\index\{([^}]+)\}")
 
 # Label type inference from prefix
@@ -300,6 +301,35 @@ def resolve_document_tree(
 
     _walk(root_tex)
     return result
+
+
+def resolve_local_packages(
+    tree: list[str],
+    project_root: Path,
+) -> set[str]:
+    """Collect .sty/.cls files referenced by \\usepackage in the document tree.
+
+    Returns relative paths (e.g. 'tex/citations.sty') for local packages
+    that exist on disk.  These should be excluded from orphan detection.
+    """
+    referenced: set[str] = set()
+    for rel in tree:
+        abs_path = project_root / rel
+        if not abs_path.is_file():
+            continue
+        text = abs_path.read_text(encoding="utf-8")
+        for m in USEPACKAGE_RE.finditer(text):
+            pkg = m.group(1)
+            # \usepackage{foo} → look for foo.sty in common locations
+            for candidate in [
+                f"{pkg}.sty",
+                f"tex/{pkg}.sty",
+                f"{pkg}.cls",
+                f"tex/{pkg}.cls",
+            ]:
+                if (project_root / candidate).is_file():
+                    referenced.add(candidate)
+    return referenced
 
 
 def find_orphan_files(

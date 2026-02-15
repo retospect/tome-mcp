@@ -1323,16 +1323,20 @@ def sync_corpus(paths: str = "sections/*.tex") -> str:
             chunk_markers=markers, file_type=ft,
         )
 
-    # Detect orphaned .tex files (exist on disk but not in any \input tree)
+    # Detect orphaned .tex/.sty/.cls files (exist on disk but not referenced)
     orphans: list[str] = []
-    tex_files_indexed = [f for f in current_files if f.endswith(".tex")]
+    tex_files_indexed = [f for f in current_files if current_files[f] == "tex" or f.endswith((".tex", ".sty", ".cls"))]
     if tex_files_indexed:
         try:
             cfg = tome_config.load_config(_tome_dir())
             tree_files: set[str] = set()
+            pkg_files: set[str] = set()
             for root_name, root_tex in cfg.roots.items():
-                tree_files.update(analysis.resolve_document_tree(root_tex, root))
-            orphans = sorted(f for f in tex_files_indexed if f not in tree_files)
+                tree = analysis.resolve_document_tree(root_tex, root)
+                tree_files.update(tree)
+                pkg_files.update(analysis.resolve_local_packages(tree, root))
+            referenced = tree_files | pkg_files
+            orphans = sorted(f for f in tex_files_indexed if f not in referenced)
         except Exception:
             pass  # Don't fail sync over orphan detection
 
@@ -3009,15 +3013,19 @@ def set_root(path: str) -> str:
     for rel, ft in discovered.items():
         type_counts[ft] = type_counts.get(ft, 0) + 1
 
-    # Detect orphaned .tex files (not in any \input tree)
+    # Detect orphaned .tex/.sty/.cls files (not referenced by \input or \usepackage)
     orphaned_tex: list[str] = []
     if config_status == "loaded" and type_counts.get("tex", 0) > 0:
         try:
             tree_files: set[str] = set()
+            pkg_files: set[str] = set()
             for _rname, root_tex in cfg.roots.items():
-                tree_files.update(analysis.resolve_document_tree(root_tex, p))
+                tree = analysis.resolve_document_tree(root_tex, p)
+                tree_files.update(tree)
+                pkg_files.update(analysis.resolve_local_packages(tree, p))
+            referenced = tree_files | pkg_files
             tex_on_disk = sorted(r for r, ft in discovered.items() if ft == "tex")
-            orphaned_tex = [f for f in tex_on_disk if f not in tree_files]
+            orphaned_tex = [f for f in tex_on_disk if f not in referenced]
         except Exception:
             pass
 
