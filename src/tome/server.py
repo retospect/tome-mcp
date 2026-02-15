@@ -2592,13 +2592,10 @@ def _paginate_toc(result: str, page: int) -> str:
 
 def _toc_locate_cite(key: str, root: str = "default") -> str:
     """Find every line where a bib key is \\cite{}'d in the .tex source."""
-    import glob as globmod
-
     if not key:
-        return json.dumps({"error": "query is required for locate='cite' — provide the bib key."})
+        return "Error: query is required for locate='cite' — provide the bib key."
     validate.validate_key(key)
 
-    # Scan .tex files from config globs
     proj = _project_root()
     cfg = _load_config()
     tex_files: list[Path] = []
@@ -2608,16 +2605,21 @@ def _toc_locate_cite(key: str, root: str = "default") -> str:
                 tex_files.append(p)
 
     locations = latex.find_cite_locations(key, tex_files)
-    return json.dumps(
-        {
-            "locate": "cite",
-            "key": key,
-            "count": len(locations),
-            "files_scanned": len(tex_files),
-            "locations": locations,
-        },
-        indent=2,
-    )
+    if not locations:
+        return f"No citations of '{key}' found ({len(tex_files)} files scanned)."
+
+    lines: list[str] = [
+        f"Citations of '{key}' ({len(locations)} locations, "
+        f"{len(tex_files)} files scanned)",
+        "",
+    ]
+    for loc in locations:
+        rel = str(Path(loc["file"]).relative_to(proj))
+        lines.append(f"  {rel}:{loc['line']}  {loc['command']}")
+        ctx = loc.get("context", "")
+        if ctx:
+            lines.append(f"    {ctx}")
+    return "\n".join(lines)
 
 
 def _toc_locate_label(prefix: str = "") -> str:
@@ -2632,48 +2634,69 @@ def _toc_locate_label(prefix: str = "") -> str:
     if prefix:
         labels = [l for l in labels if l["label"].startswith(prefix)]
 
-    return json.dumps({"locate": "label", "count": len(labels), "labels": labels}, indent=2)
+    if not labels:
+        msg = f"No labels matching '{prefix}'." if prefix else "No labels found."
+        return msg
+
+    header = f"Labels matching '{prefix}'" if prefix else "All labels"
+    lines: list[str] = [f"{header} ({len(labels)} labels)", ""]
+    for lab in labels:
+        file_str = lab.get("file", "")
+        sec_str = lab.get("section", "")
+        extra = f"  ({sec_str})" if sec_str else ""
+        lines.append(f"  {lab['label']}  {file_str}{extra}")
+    return "\n".join(lines)
 
 
 def _toc_locate_index(query: str = "") -> str:
     """Search or list the document index."""
     index = index_mod.load_index(_dot_tome())
     if not index.get("terms"):
-        return json.dumps({
-            "error": "No index available. Run rebuild_doc_index() after compiling.",
-        })
+        return "No index available. Run rebuild_doc_index() after compiling."
 
     if query:
-        # Search mode
         results = index_mod.search_index(index, query, fuzzy=True)
-        return json.dumps({
-            "locate": "index",
-            "query": query,
-            "count": len(results),
-            "results": results,
-        }, indent=2)
-    else:
-        # List all mode
-        terms_summary = []
-        for term, data in index["terms"].items():
-            entry: dict[str, Any] = {
-                "term": term,
-                "pages": len(data.get("pages", [])),
-            }
-            subs = data.get("subterms", {})
-            if subs:
-                entry["subterms"] = len(subs)
-            see = data.get("see")
-            if see:
-                entry["see"] = see
-            terms_summary.append(entry)
+        if not results:
+            return f'No index entries matching "{query}".'
 
-        return json.dumps({
-            "locate": "index",
-            "total_terms": index["total_terms"],
-            "total_entries": index["total_entries"],
-            "terms": terms_summary,
-        }, indent=2)
+        lines: list[str] = [f'Index: "{query}" ({len(results)} matches)', ""]
+        for r in results:
+            term = r["term"]
+            pages = r.get("pages", [])
+            see = r.get("see")
+            matched_subs = r.get("matched_subterms", [])
+            term_matched = query.lower() in term.lower()
+
+            if term_matched and pages:
+                lines.append(f"  {term}  p.{', '.join(str(p) for p in pages)}")
+            elif term_matched and not pages:
+                lines.append(f"  {term}")
+            if see:
+                lines.append(f"    → see: {see}")
+            # Show matched subterms (or all subterms if term itself matched)
+            subs_to_show = r.get("subterms", []) if term_matched else matched_subs
+            for sub in subs_to_show:
+                sp = sub.get("pages", [])
+                pg = f"  p.{', '.join(str(p) for p in sp)}" if sp else ""
+                lines.append(f"    > {sub['subterm']}{pg}")
+        return "\n".join(lines)
+    else:
+        terms = index.get("terms", {})
+        lines = [
+            f"Document index: {index.get('total_terms', 0)} terms, "
+            f"{index.get('total_entries', 0)} entries",
+            "",
+        ]
+        for term, data in terms.items():
+            pages = data.get("pages", [])
+            subs = data.get("subterms", {})
+            see = data.get("see")
+            pg = f"  p.{', '.join(str(p) for p in pages)}" if pages else ""
+            sub_note = f"  ({len(subs)} subterms)" if subs else ""
+            lines.append(f"  {term}{pg}{sub_note}")
+            if see:
+                lines.append(f"    → see: {see}")
+        return "\n".join(lines)
 
 
 def _toc_locate_tree(root: str = "default") -> str:
@@ -2682,24 +2705,19 @@ def _toc_locate_tree(root: str = "default") -> str:
     proj = _project_root()
     files = analysis.resolve_document_tree(root_tex, proj)
 
-    file_info = []
+    lines: list[str] = [f"File tree for '{root}' ({root_tex}): {len(files)} files", ""]
     for f in files:
         fp = proj / f
-        info: dict[str, Any] = {"file": f, "exists": fp.exists()}
         if fp.exists():
-            info["size"] = fp.stat().st_size
-        file_info.append(info)
-
-    return json.dumps(
-        {
-            "locate": "tree",
-            "root": root,
-            "root_file": root_tex,
-            "file_count": len(files),
-            "files": file_info,
-        },
-        indent=2,
-    )
+            sz = fp.stat().st_size
+            if sz >= 1024:
+                size_str = f"{sz / 1024:.1f} KB"
+            else:
+                size_str = f"{sz} B"
+            lines.append(f"  {f}  ({size_str})")
+        else:
+            lines.append(f"  {f}  [MISSING]")
+    return "\n".join(lines)
 
 
 @mcp_server.tool()

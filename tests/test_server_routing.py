@@ -278,30 +278,28 @@ class TestSearchAll:
 
 class TestTocLocateCite:
     def test_requires_key(self):
-        result = json.loads(server._toc_locate_cite(""))
-        assert "error" in result
+        result = server._toc_locate_cite("")
+        assert "error" in result.lower() or "required" in result.lower()
 
     def test_finds_citation(self, fake_project):
         sections = fake_project / "sections"
         sections.mkdir(exist_ok=True)
         (sections / "intro.tex").write_text("See \\cite{xu2022} for details.\n")
 
-        result = json.loads(server._toc_locate_cite("xu2022"))
-        assert result["locate"] == "cite"
-        assert result["key"] == "xu2022"
-        assert result["count"] >= 1
+        result = server._toc_locate_cite("xu2022")
+        assert "xu2022" in result
+        assert "1 location" in result or "locations" in result
 
 
 class TestTocLocateLabel:
     def test_returns_all_labels(self, mock_store):
-        result = json.loads(server._toc_locate_label())
-        assert result["locate"] == "label"
-        assert result["count"] == 2
+        result = server._toc_locate_label()
+        assert "2 labels" in result
 
     def test_prefix_filter(self, mock_store):
-        result = json.loads(server._toc_locate_label("fig:"))
-        assert result["count"] == 1
-        assert result["labels"][0]["label"] == "fig:one"
+        result = server._toc_locate_label("fig:")
+        assert "1 label" in result
+        assert "fig:one" in result
 
 
 class TestTocLocateIndex:
@@ -318,28 +316,27 @@ class TestTocLocateIndex:
 
     def test_search_mode(self, fake_project):
         self._write_index(fake_project)
-        result = json.loads(server._toc_locate_index("molecular"))
-        assert result["locate"] == "index"
-        assert result["count"] >= 1
+        result = server._toc_locate_index("molecular")
+        assert "molecular" in result.lower()
+        assert "match" in result.lower()
 
     def test_list_all_mode(self, fake_project):
         self._write_index(fake_project)
-        result = json.loads(server._toc_locate_index(""))
-        assert result["locate"] == "index"
-        assert "terms" in result
-        assert len(result["terms"]) == 2
+        result = server._toc_locate_index("")
+        assert "2 terms" in result
+        assert "molecular switch" in result
+        assert "assembly" in result
 
     def test_no_index_error(self):
-        result = json.loads(server._toc_locate_index("x"))
-        assert "error" in result
+        result = server._toc_locate_index("x")
+        assert "no index" in result.lower()
 
 
 class TestTocLocateTree:
     def test_returns_file_list(self):
-        result = json.loads(server._toc_locate_tree())
-        assert result["locate"] == "tree"
-        assert "files" in result
-        assert result["file_count"] >= 1
+        result = server._toc_locate_tree()
+        assert "File tree" in result
+        assert "files" in result.lower()
 
 
 # ===========================================================================
