@@ -55,6 +55,13 @@ def validate_key(key: str) -> str:
     return key
 
 
+def validate_key_if_given(key: str) -> str | None:
+    """Validate a bib key only if non-empty. Returns the key or None."""
+    if not key:
+        return None
+    return validate_key(key)
+
+
 def validate_relative_path(path: str, field: str = "path") -> str:
     """Validate a relative path (no traversal, no absolute).
 
