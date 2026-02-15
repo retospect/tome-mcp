@@ -28,6 +28,10 @@ View open requests: `list_requests()`.
 
 ## 3. Obtain & Ingest
 
+**Never edit `tome/references.bib` directly.** Tome manages it with
+roundtrip-safe writes and lock files. Use `set_paper` to update
+metadata, `ingest` to add entries, `remove_paper` to delete.
+
 Drop PDFs into `tome/inbox/`, then:
 
 ```
