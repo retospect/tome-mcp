@@ -7,67 +7,16 @@ The server uses stdio transport for MCP client communication.
 from __future__ import annotations
 
 import functools
-import io
 import json
 import logging
 import logging.handlers
 import os
-import queue
 import shutil
 import sys
-import threading
 import time
 import traceback
 from pathlib import Path
 from typing import Any, Literal
-
-# ---------------------------------------------------------------------------
-# Non-blocking stdout — prevents event-loop deadlocks on macOS.
-#
-# The macOS stdout pipe buffer is 64 KB.  When the MCP client reads
-# slowly, a synchronous write() blocks and the asyncio event loop
-# freezes.  This wrapper queues bytes and drains them in a daemon
-# thread so the event loop never blocks on pipe writes.
-# ---------------------------------------------------------------------------
-
-
-class _QueuedRawIO(io.RawIOBase):
-    """Raw I/O that queues writes for a background thread to drain."""
-
-    def __init__(self, fd: int) -> None:
-        self._fd = fd
-        self._q: queue.Queue[bytes | None] = queue.Queue()
-        t = threading.Thread(target=self._drain, daemon=True, name="stdout-drain")
-        t.start()
-
-    def writable(self) -> bool:
-        return True
-
-    def readable(self) -> bool:
-        return False
-
-    def write(self, data: bytes | memoryview) -> int:  # type: ignore[override]
-        b = bytes(data)
-        self._q.put(b)
-        return len(b)
-
-    def fileno(self) -> int:
-        return self._fd
-
-    def _drain(self) -> None:
-        fd = self._fd
-        while True:
-            chunk = self._q.get()
-            if chunk is None:
-                break
-            mv = memoryview(chunk)
-            while mv:
-                try:
-                    n = os.write(fd, mv)
-                    mv = mv[n:]
-                except BlockingIOError:
-                    time.sleep(0.005)
-
 
 from mcp.server.fastmcp import FastMCP
 
@@ -3786,18 +3735,6 @@ def main():
             _attach_file_log(Path(root) / ".tome")
         except Exception:
             pass  # will attach later via _dot_tome()
-
-    # Replace stdout with a non-blocking pipe wrapper.  FastMCP's stdio
-    # transport wraps sys.stdout.buffer in a TextIOWrapper — by swapping
-    # the underlying raw I/O to a queue-backed writer, pipe writes never
-    # block the event loop even when the client reads slowly.
-    raw_fd = sys.stdout.buffer.fileno()
-    queued = _QueuedRawIO(raw_fd)
-    sys.stdout = io.TextIOWrapper(
-        io.BufferedWriter(queued, buffer_size=65536),
-        encoding="utf-8",
-        line_buffering=False,
-    )
 
     try:
         mcp_server.run(transport="stdio")
