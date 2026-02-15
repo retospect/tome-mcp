@@ -42,6 +42,7 @@ from tome import (
     validate,
 )
 from tome import guide as guide_mod
+from tome import rejected_dois as rejected_dois_mod
 from tome import issues as issues_mod
 from tome import notes as notes_mod
 from tome import toc as toc_mod
@@ -481,7 +482,19 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
         existing = set(bib.list_keys(lib))
         suggested_key = bib.generate_key(surname, year, existing)
 
-    return {
+    # Check if DOI is known-bad
+    doi_warning = None
+    if result.doi:
+        rejected = rejected_dois_mod.is_rejected(_tome_dir(), result.doi)
+        if rejected:
+            doi_warning = (
+                f"⚠ DOI {result.doi} is in rejected-dois.yaml: "
+                f"{rejected.get('reason', 'unknown')} "
+                f"(key: {rejected.get('key', '?')}, date: {rejected.get('date', '?')}). "
+                f"This DOI may be wrong — verify before ingesting."
+            )
+
+    proposal: dict[str, Any] = {
         "source_file": str(pdf_path.name),
         "status": "pending_confirmation",
         "suggested_key": suggested_key,
@@ -504,6 +517,9 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
             f"from the title as a slug (e.g. 'smith2024ndr')."
         ),
     }
+    if doi_warning:
+        proposal["warning"] = doi_warning
+    return proposal
 
 
 def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
@@ -2055,6 +2071,18 @@ def request_paper(
         reason: Why you need this paper.
         tentative_title: Best-guess title.
     """
+    # Warn if DOI is known-bad
+    warning = None
+    if doi:
+        rejected = rejected_dois_mod.is_rejected(_tome_dir(), doi)
+        if rejected:
+            warning = (
+                f"⚠ DOI {doi} was previously rejected: "
+                f"{rejected.get('reason', 'unknown')} "
+                f"(key: {rejected.get('key', '?')}, date: {rejected.get('date', '?')}). "
+                f"Request created anyway — remove with reject_doi if confirmed bad."
+            )
+
     data = _load_manifest()
     req: dict[str, Any] = {
         "doi": doi or None,
@@ -2065,7 +2093,10 @@ def request_paper(
     }
     manifest.set_request(data, key, req)
     _save_manifest(data)
-    return json.dumps({"status": "requested", "key": key, **req}, indent=2)
+    result: dict[str, Any] = {"status": "requested", "key": key, **req}
+    if warning:
+        result["warning"] = warning
+    return json.dumps(result, indent=2)
 
 
 @mcp_server.tool()
@@ -2075,6 +2106,65 @@ def list_requests() -> str:
     opens = manifest.list_open_requests(data)
     results = [{"key": k, **v} for k, v in opens.items()]
     return json.dumps({"count": len(results), "requests": results}, indent=2)
+
+
+# ---------------------------------------------------------------------------
+# Rejected DOIs
+# ---------------------------------------------------------------------------
+
+
+@mcp_server.tool()
+def reject_doi(
+    doi: str,
+    key: str = "",
+    reason: str = "",
+) -> str:
+    """Record a DOI as invalid (doesn't resolve). Prevents re-requesting.
+
+    If the DOI belongs to an open request, that request is auto-resolved.
+    Stored in tome/rejected-dois.yaml (git-tracked).
+
+    Args:
+        doi: The DOI to reject.
+        key: Associated bib key (for reference).
+        reason: Why this DOI is invalid.
+    """
+    if not doi.strip():
+        return json.dumps({"error": "DOI is required."})
+
+    entry = rejected_dois_mod.add(
+        _tome_dir(), doi, key=key, reason=reason or "DOI does not resolve",
+    )
+
+    # Auto-resolve any open request with this DOI
+    resolved_keys: list[str] = []
+    data = _load_manifest()
+    for rkey, req in list(data.get("requests", {}).items()):
+        if (
+            req.get("resolved") is None
+            and req.get("doi")
+            and req["doi"].strip().lower() == doi.strip().lower()
+        ):
+            manifest.resolve_request(data, rkey)
+            resolved_keys.append(rkey)
+    if resolved_keys:
+        _save_manifest(data)
+
+    return json.dumps(
+        {
+            "status": "rejected",
+            "entry": entry,
+            "resolved_requests": resolved_keys,
+        },
+        indent=2,
+    )
+
+
+@mcp_server.tool()
+def list_rejected_dois() -> str:
+    """List all rejected DOIs from tome/rejected-dois.yaml."""
+    entries = rejected_dois_mod.load(_tome_dir())
+    return json.dumps({"count": len(entries), "rejected": entries}, indent=2)
 
 
 # ---------------------------------------------------------------------------
