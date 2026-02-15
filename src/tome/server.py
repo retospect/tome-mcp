@@ -65,7 +65,6 @@ from tome.errors import (
     UnpaywallNotConfigured,
     UnsafeInput,
 )
-from tome.filelock import LockTimeout
 
 mcp_server = FastMCP("Tome")
 
@@ -106,15 +105,9 @@ def _attach_file_log(dot_tome: Path) -> None:
     logger.info("Tome server started — log attached to %s", log_path)
 
 
-def _flush_log() -> None:
-    """Flush the file handler to disk so the last log line survives a hang."""
-    if _file_handler is not None:
-        _file_handler.flush()
-
-
 # ---------------------------------------------------------------------------
-# Tool invocation logging — wraps every @mcp_server.tool() with timing,
-# error classification, and LockTimeout → JSON error conversion.
+# Tool invocation logging — wraps every @mcp_server.tool() with timing
+# and error classification.
 #
 # The wrapper is declared ``async`` so FastMCP dispatches it as a
 # coroutine.  The original *sync* tool function is run via
@@ -127,6 +120,27 @@ def _flush_log() -> None:
 _original_tool = mcp_server.tool
 
 
+# Maximum response size (bytes) returned to the MCP client.  The macOS
+# stdout pipe buffer is 64 KB; keeping responses below this avoids blocking
+# writes that cascade into deadlocks when the client reads slowly.
+_MAX_RESPONSE_BYTES = 48_000
+
+
+def _cap_response(result: str, name: str) -> str:
+    """Truncate an oversized tool response with a hint."""
+    if len(result) <= _MAX_RESPONSE_BYTES:
+        return result
+    logger.warning(
+        "TOOL %s response truncated: %d → %d bytes",
+        name, len(result), _MAX_RESPONSE_BYTES,
+    )
+    return (
+        result[:_MAX_RESPONSE_BYTES]
+        + f"\n\n… (truncated from {len(result)} bytes — "
+        "use pagination or narrower filters)"
+    )
+
+
 def _logging_tool(**kwargs):
     """Drop-in replacement for ``mcp_server.tool()`` that adds invocation logging."""
     decorator = _original_tool(**kwargs)
@@ -136,7 +150,6 @@ def _logging_tool(**kwargs):
         async def logged(*args, **kw):
             name = fn.__name__
             logger.info("TOOL %s called", name)
-            _flush_log()
             t0 = time.monotonic()
             try:
                 result = await asyncio.to_thread(fn, *args, **kw)
@@ -145,26 +158,13 @@ def _logging_tool(**kwargs):
                 logger.info(
                     "TOOL %s completed in %.2fs (%d bytes)", name, dt, rsize
                 )
-                _flush_log()
-                return result
-            except LockTimeout as exc:
-                dt = time.monotonic() - t0
-                logger.error(
-                    "TOOL %s failed (LockTimeout) after %.2fs: %s", name, dt, exc
-                )
-                _flush_log()
-                return json.dumps({
-                    "error": f"Lock timeout: {exc}. "
-                    "Another Tome process may be stuck. "
-                    "Try again in a few seconds.",
-                })
+                return _cap_response(result, name) if isinstance(result, str) else result
             except TomeError as exc:
                 dt = time.monotonic() - t0
                 logger.warning(
                     "TOOL %s failed (%s) after %.2fs: %s",
                     name, type(exc).__name__, dt, exc,
                 )
-                _flush_log()
                 raise
             except Exception:
                 dt = time.monotonic() - t0
@@ -172,7 +172,6 @@ def _logging_tool(**kwargs):
                     "TOOL %s crashed after %.2fs:\n%s",
                     name, dt, traceback.format_exc(),
                 )
-                _flush_log()
                 raise
 
         return decorator(logged)

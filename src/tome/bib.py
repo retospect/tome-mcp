@@ -16,7 +16,6 @@ import bibtexparser
 from bibtexparser.model import Entry, Field
 
 from tome.errors import BibParseError, BibWriteError, DuplicateKey, PaperNotFound
-from tome.filelock import file_lock
 
 # x-fields managed by Tome
 X_FIELDS = {"x-pdf", "x-doi-status", "x-tags"}
@@ -224,17 +223,16 @@ def write_bib(
 
     _check_roundtrip(library, reparsed, path)
 
-    # Lock, backup, and atomic write
-    with file_lock(path):
-        if path.exists():
-            bak_dir = backup_dir or path.parent
-            bak_dir.mkdir(parents=True, exist_ok=True)
-            bak_path = bak_dir / (path.name + ".bak")
-            shutil.copy2(path, bak_path)
+    # Backup and atomic write
+    if path.exists():
+        bak_dir = backup_dir or path.parent
+        bak_dir.mkdir(parents=True, exist_ok=True)
+        bak_path = bak_dir / (path.name + ".bak")
+        shutil.copy2(path, bak_path)
 
-        tmp_path = path.with_suffix(".bib.tmp")
-        tmp_path.write_text(serialized, encoding="utf-8")
-        tmp_path.replace(path)
+    tmp_path = path.with_suffix(".bib.tmp")
+    tmp_path.write_text(serialized, encoding="utf-8")
+    tmp_path.replace(path)
 
 
 def _check_roundtrip(

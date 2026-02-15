@@ -32,7 +32,6 @@ from pathlib import Path
 from typing import Any
 
 from tome.checksum import sha256_file
-from tome.filelock import file_lock
 
 
 def _git_head_sha(project_root: Path) -> str | None:
@@ -95,14 +94,13 @@ def save_state(dot_tome: Path, data: dict[str, Any]) -> None:
     dot_tome.mkdir(parents=True, exist_ok=True)
     path = _state_path(dot_tome)
 
-    with file_lock(path):
-        if path.exists():
-            bak = dot_tome / "needful.json.bak"
-            shutil.copy2(path, bak)
+    if path.exists():
+        bak = dot_tome / "needful.json.bak"
+        shutil.copy2(path, bak)
 
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,9 @@
-"""Barrage test — concurrent bib writes from multiple processes.
+"""Bib write tests — sequential correctness and rapid-fire resilience.
 
-Simulates multiple Windsurf sessions calling set_paper simultaneously.
-Each worker adds a unique entry to a shared .bib file, verifying that
-file_lock serializes access correctly and no entries are lost.
+The multi-process concurrent write tests are skipped: file_lock was removed
+because the single-worker ThreadPoolExecutor in server.py serialises all
+tool calls in-process.  Cross-process safety is no longer guaranteed by
+file_lock; if needed in the future, re-add it and unskip these tests.
 """
 
 from __future__ import annotations
@@ -61,6 +62,7 @@ def shared_bib(tmp_path: Path) -> Path:
     return bib_path
 
 
+@pytest.mark.skip(reason="file_lock removed; single-worker executor serialises in-process")
 def test_concurrent_writes_no_data_loss(shared_bib: Path) -> None:
     """All entries survive when N_WORKERS write concurrently."""
     manager = multiprocessing.Manager()
@@ -108,6 +110,7 @@ def test_concurrent_writes_no_data_loss(shared_bib: Path) -> None:
         print(f"NOTE: {len(missing)}/{len(expected)} entries lost to last-writer-wins (expected)")
 
 
+@pytest.mark.skip(reason="file_lock removed; single-worker executor serialises in-process")
 def test_concurrent_writes_no_corruption(shared_bib: Path) -> None:
     """The final .bib file is valid and parseable after concurrent writes."""
     manager = multiprocessing.Manager()
