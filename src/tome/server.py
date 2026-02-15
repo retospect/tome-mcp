@@ -991,13 +991,10 @@ def set_notes(
     open: str = "",
     clear: str = "",
 ) -> str:
-    """Read or write notes. Provide key (paper) or file (tex file), not both.
+    """Read, write, or delete notes. Provide paper key or tex file path.
 
-    No fields → read.  Fields → write (each overwrites).  clear → delete fields.
-    clear='field1,field2' or '*'.  Cannot combine clear with write fields.
-
-    Paper (key): summary, claims, relevance, limitations, quality, tags.
-    File (file): intent, status, claims, depends, open.
+    No fields → read.  field="text" → stores text, overwrites existing.
+    clear="field" or clear="*" → deletes fields.  Cannot mix clear with writes.
     """
     if not key and not file:
         return json.dumps({"error": "Provide key (paper) or file (tex file)."})
