@@ -168,6 +168,32 @@ def remove_entry(library: bibtexparser.Library, key: str) -> Entry:
     return entry
 
 
+def rename_key(library: bibtexparser.Library, old_key: str, new_key: str) -> Entry:
+    """Rename an entry's bib key.
+
+    Args:
+        library: The bib library.
+        old_key: Current bib key.
+        new_key: New bib key.
+
+    Returns:
+        The entry with its key changed.
+
+    Raises:
+        PaperNotFound: If old_key does not exist.
+        DuplicateKey: If new_key already exists.
+    """
+    existing_keys = {e.key for e in library.entries}
+    if old_key not in existing_keys:
+        raise PaperNotFound(old_key)
+    if new_key in existing_keys:
+        raise DuplicateKey(new_key)
+
+    entry = get_entry(library, old_key)
+    entry.key = new_key
+    return entry
+
+
 def write_bib(
     library: bibtexparser.Library,
     path: Path,

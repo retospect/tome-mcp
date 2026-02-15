@@ -15,6 +15,7 @@ from tome.bib import (
     list_keys,
     parse_bib,
     remove_entry,
+    rename_key,
     remove_field,
     set_field,
     write_bib,
@@ -252,3 +253,38 @@ class TestXFields:
         lib = parse_bib(small_bib)
         entry = get_entry(lib, "chen2023")
         assert get_tags(entry) == []
+
+
+class TestRenameKey:
+    def test_rename_basic(self, small_bib: Path):
+        lib = parse_bib(small_bib)
+        entry = rename_key(lib, "xu2022", "xu2022qi")
+        assert entry.key == "xu2022qi"
+        assert "xu2022qi" in list_keys(lib)
+        assert "xu2022" not in list_keys(lib)
+
+    def test_rename_preserves_fields(self, small_bib: Path):
+        lib = parse_bib(small_bib)
+        rename_key(lib, "xu2022", "xu2022qi")
+        entry = get_entry(lib, "xu2022qi")
+        assert get_x_field(entry, "x-doi-status") == "valid"
+        assert get_x_field(entry, "x-pdf") == "true"
+
+    def test_rename_old_key_not_found(self, small_bib: Path):
+        lib = parse_bib(small_bib)
+        with pytest.raises(PaperNotFound):
+            rename_key(lib, "nonexistent", "newkey")
+
+    def test_rename_new_key_exists(self, small_bib: Path):
+        lib = parse_bib(small_bib)
+        with pytest.raises(DuplicateKey):
+            rename_key(lib, "xu2022", "chen2023")
+
+    def test_rename_roundtrip(self, small_bib: Path, tmp_path: Path):
+        lib = parse_bib(small_bib)
+        rename_key(lib, "xu2022", "xu2022qi")
+        out = tmp_path / "out.bib"
+        write_bib(lib, out)
+        lib2 = parse_bib(out)
+        assert "xu2022qi" in list_keys(lib2)
+        assert "xu2022" not in list_keys(lib2)
