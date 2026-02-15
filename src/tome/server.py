@@ -991,33 +991,13 @@ def set_notes(
     open: str = "",
     clear: str = "",
 ) -> str:
-    """Read or write notes for a paper (key) or file (file).
+    """Read or write notes. Provide key (paper) or file (tex file), not both.
 
-    Three modes (mutually exclusive):
-    - No fields, no clear → **read** (returns current notes).
-    - Any field set → **write** (overwrites that field, others unchanged).
-    - clear set → **clear** fields. Comma-separated names or '*' for all.
-      clear cannot be combined with write fields.
+    No fields → read.  Fields → write (each overwrites).  clear → delete fields.
+    clear='field1,field2' or '*'.  Cannot combine clear with write fields.
 
-    Paper fields (use with key):
-        summary: One-line summary of the paper's contribution.
-        claims: Key claims (free text, overwrites).
-        relevance: How paper relates to project sections (free text).
-        limitations: Known limitations (free text).
-        quality: Quality assessment (e.g. 'high — Nature, well-cited').
-        tags: Comma-separated tags (free text, overwrites).
-
-    File fields (use with file):
-        intent: Why this section exists — its argument or purpose.
-        status: Editorial status (e.g. 'solid', 'draft — needs citation').
-        claims: Key claims that need support (free text, overwrites).
-        depends: Cross-section dependencies (free text).
-        open: Open questions (free text).
-
-    Args:
-        key: Bib key (e.g. 'miller1999'). Use for paper notes.
-        file: Relative path (e.g. 'sections/background.tex'). Use for file meta.
-        clear: Comma-separated field names to delete, or '*' for all.
+    Paper (key): summary, claims, relevance, limitations, quality, tags.
+    File (file): intent, status, claims, depends, open.
     """
     if not key and not file:
         return json.dumps({"error": "Provide key (paper) or file (tex file)."})
