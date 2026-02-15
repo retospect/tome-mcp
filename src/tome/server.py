@@ -7,6 +7,7 @@ The server uses stdio transport for MCP client communication.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import functools
 import json
 import logging
@@ -14,7 +15,6 @@ import logging.handlers
 import os
 import shutil
 import sys
-import threading
 import time
 import traceback
 from pathlib import Path
@@ -262,11 +262,6 @@ def _save_manifest(data):
 # Tool helpers
 # ---------------------------------------------------------------------------
 
-# In-process lock serializing bib read-modify-write cycles.  FastMCP may
-# dispatch concurrent tool calls via asyncio.to_thread(); without this lock,
-# parallel set_paper/remove_paper/check_doi calls would each read the bib,
-# modify in memory, and write — last writer wins, losing earlier changes.
-_bib_lock = threading.Lock()
 
 
 def _resolve_keys(
@@ -595,15 +590,13 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     if tags:
         fields["x-tags"] = tags
 
-    with _bib_lock:
-        # Re-read under lock to avoid lost updates from concurrent ingests
-        lib = _load_bib()
-        if key in set(bib.list_keys(lib)):
-            return {
-                "error": f"Key '{key}' already exists (race). Use set_paper to update, or choose another key."
-            }
-        bib.add_entry(lib, key, "article", fields)
-        bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
+    lib = _load_bib()
+    if key in set(bib.list_keys(lib)):
+        return {
+            "error": f"Key '{key}' already exists. Use set_paper to update, or choose another key."
+        }
+    bib.add_entry(lib, key, "article", fields)
+    bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
 
     # Commit: move files
     dest_pdf = _tome_dir() / "pdf" / f"{key}.pdf"
@@ -703,51 +696,50 @@ def set_paper(
         raw_field: For LaTeX-specific field values — field name to set verbatim.
         raw_value: The verbatim value for raw_field (no escaping applied).
     """
-    with _bib_lock:
-        lib = _load_bib()
-        existing = set(bib.list_keys(lib))
+    lib = _load_bib()
+    existing = set(bib.list_keys(lib))
 
-        if key not in existing:
-            fields: dict[str, str] = {}
-            if title:
-                fields["title"] = title
-            if author:
-                fields["author"] = author
-            if year:
-                fields["year"] = year
-            if journal:
-                fields["journal"] = journal
-            if doi:
-                fields["doi"] = doi
-                fields["x-doi-status"] = "unchecked"
-            else:
-                fields["x-doi-status"] = "missing"
-            fields["x-pdf"] = "false"
-            if tags:
-                fields["x-tags"] = tags
-            if raw_field and raw_value:
-                fields[raw_field] = raw_value
-            bib.add_entry(lib, key, entry_type, fields)
+    if key not in existing:
+        fields: dict[str, str] = {}
+        if title:
+            fields["title"] = title
+        if author:
+            fields["author"] = author
+        if year:
+            fields["year"] = year
+        if journal:
+            fields["journal"] = journal
+        if doi:
+            fields["doi"] = doi
+            fields["x-doi-status"] = "unchecked"
         else:
-            entry = bib.get_entry(lib, key)
-            if title:
-                bib.set_field(entry, "title", title)
-            if author:
-                bib.set_field(entry, "author", author)
-            if year:
-                bib.set_field(entry, "year", year)
-            if journal:
-                bib.set_field(entry, "journal", journal)
-            if doi:
-                bib.set_field(entry, "doi", doi)
-                bib.set_field(entry, "x-doi-status", "unchecked")
-            if tags:
-                bib.set_field(entry, "x-tags", tags)
-            if raw_field and raw_value:
-                bib.set_field(entry, raw_field, raw_value)
+            fields["x-doi-status"] = "missing"
+        fields["x-pdf"] = "false"
+        if tags:
+            fields["x-tags"] = tags
+        if raw_field and raw_value:
+            fields[raw_field] = raw_value
+        bib.add_entry(lib, key, entry_type, fields)
+    else:
+        entry = bib.get_entry(lib, key)
+        if title:
+            bib.set_field(entry, "title", title)
+        if author:
+            bib.set_field(entry, "author", author)
+        if year:
+            bib.set_field(entry, "year", year)
+        if journal:
+            bib.set_field(entry, "journal", journal)
+        if doi:
+            bib.set_field(entry, "doi", doi)
+            bib.set_field(entry, "x-doi-status", "unchecked")
+        if tags:
+            bib.set_field(entry, "x-tags", tags)
+        if raw_field and raw_value:
+            bib.set_field(entry, raw_field, raw_value)
 
-        bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
-        action = "created" if key not in existing else "updated"
+    bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
+    action = "created" if key not in existing else "updated"
     return json.dumps({"status": action, "key": key})
 
 
@@ -758,10 +750,9 @@ def remove_paper(key: str) -> str:
     Args:
         key: Bib key of the paper to remove.
     """
-    with _bib_lock:
-        lib = _load_bib()
-        bib.remove_entry(lib, key)
-        bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
+    lib = _load_bib()
+    bib.remove_entry(lib, key)
+    bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
 
     # Remove PDF
     pdf = _tome_dir() / "pdf" / f"{key}.pdf"
@@ -810,10 +801,9 @@ def rename_paper(old_key: str, new_key: str) -> str:
     errors: list[str] = []
 
     # 1. Rename bib entry
-    with _bib_lock:
-        lib = _load_bib()
-        bib.rename_key(lib, old_key, new_key)
-        bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
+    lib = _load_bib()
+    bib.rename_key(lib, old_key, new_key)
+    bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
     renamed.append("references.bib")
 
     # 2. Rename PDF(s) — main, _sup*, _wrong
@@ -1295,8 +1285,7 @@ def check_doi(key: str = "") -> str:
                 }
             )
 
-    with _bib_lock:
-        bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
+    bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
     _save_manifest(data)
 
     return json.dumps({"checked": len(results), "results": results}, indent=2)
@@ -3734,6 +3723,15 @@ def main():
             _attach_file_log(Path(root) / ".tome")
         except Exception:
             pass  # will attach later via _dot_tome()
+
+    # Single-worker executor: all asyncio.to_thread() tool calls are
+    # serialised, eliminating lock contention between concurrent tools
+    # while still keeping work off the event loop (pipe-buffer safety).
+    loop = asyncio.new_event_loop()
+    loop.set_default_executor(
+        concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    )
+    asyncio.set_event_loop(loop)
 
     try:
         mcp_server.run(transport="stdio")
