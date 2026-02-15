@@ -6,8 +6,6 @@ The server uses stdio transport for MCP client communication.
 
 from __future__ import annotations
 
-import asyncio
-import concurrent.futures
 import functools
 import json
 import logging
@@ -106,23 +104,20 @@ def _attach_file_log(dot_tome: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tool invocation logging — wraps every @mcp_server.tool() with timing
-# and error classification.
+# Tool invocation logging — wraps every @mcp_server.tool() with timing,
+# error classification, and response-size capping.
 #
-# The wrapper is declared ``async`` so FastMCP dispatches it as a
-# coroutine.  The original *sync* tool function is run via
-# ``asyncio.to_thread()`` so it executes in a thread-pool worker.
-# This decouples lock-holding tool code from the event loop that
-# writes responses to stdout — if the stdout pipe blocks, any file
-# locks have already been released in the worker thread.
+# Tools run directly on the event loop (single-threaded).  Multiple
+# Cascade windows calling Tome are naturally serialised: each request
+# waits for the previous to finish, including its stdout response
+# write.  No threads → no locks → no deadlocks.
 # ---------------------------------------------------------------------------
 
 _original_tool = mcp_server.tool
 
 
-# Maximum response size (bytes) returned to the MCP client.  The macOS
-# stdout pipe buffer is 64 KB; keeping responses below this avoids blocking
-# writes that cascade into deadlocks when the client reads slowly.
+# Maximum response size (bytes) returned to the MCP client.  Keeps
+# responses well under the macOS 64 KB stdout pipe buffer.
 _MAX_RESPONSE_BYTES = 48_000
 
 
@@ -147,12 +142,12 @@ def _logging_tool(**kwargs):
 
     def wrapper(fn):
         @functools.wraps(fn)
-        async def logged(*args, **kw):
+        def logged(*args, **kw):
             name = fn.__name__
             logger.info("TOOL %s called", name)
             t0 = time.monotonic()
             try:
-                result = await asyncio.to_thread(fn, *args, **kw)
+                result = fn(*args, **kw)
                 dt = time.monotonic() - t0
                 rsize = len(result) if isinstance(result, str) else 0
                 logger.info(
@@ -3740,15 +3735,6 @@ def main():
             _attach_file_log(Path(root) / ".tome")
         except Exception:
             pass  # will attach later via _dot_tome()
-
-    # Single-worker executor: all asyncio.to_thread() tool calls are
-    # serialised, eliminating lock contention between concurrent tools
-    # while still keeping work off the event loop (pipe-buffer safety).
-    loop = asyncio.new_event_loop()
-    loop.set_default_executor(
-        concurrent.futures.ThreadPoolExecutor(max_workers=1)
-    )
-    asyncio.set_event_loop(loop)
 
     try:
         mcp_server.run(transport="stdio")
