@@ -269,6 +269,30 @@ def _save_manifest(data):
 _bib_lock = threading.Lock()
 
 
+def _resolve_keys(
+    key: str = "",
+    keys: str = "",
+    tags: str = "",
+) -> list[str] | None:
+    """Resolve key/keys/tags into a list of bib keys, or None for all."""
+    result: set[str] = set()
+    if key:
+        result.add(key.strip())
+    if keys:
+        result.update(k.strip() for k in keys.split(",") if k.strip())
+    if tags:
+        tag_set = {t.strip() for t in tags.split(",") if t.strip()}
+        lib = _load_bib()
+        for entry_key in bib.list_keys(lib):
+            try:
+                entry = bib.get_entry(lib, entry_key)
+                if tag_set & set(bib.get_tags(entry)):
+                    result.add(entry_key)
+            except PaperNotFound:
+                pass
+    return sorted(result) if result else None
+
+
 # ---------------------------------------------------------------------------
 # File discovery helpers
 # ---------------------------------------------------------------------------
@@ -925,11 +949,12 @@ def rename_paper(old_key: str, new_key: str) -> str:
 
 
 @mcp_server.tool()
-def get_paper(key: str) -> str:
+def get_paper(key: str, page: int = 0) -> str:
     """Get full metadata for a paper in the library.
 
     Args:
         key: Bib key (e.g. 'miller1999'). Same as used in \\cite{}.
+        page: Page number (1-indexed) to include raw text for. 0 = no page text.
     """
     lib = _load_bib()
     entry = bib.get_entry(lib, key)
@@ -952,19 +977,17 @@ def get_paper(key: str) -> str:
     if note_data:
         result["notes"] = note_data
 
+    # Include page text if requested
+    if page > 0:
+        text = extract.read_page(_raw_dir(), key, page)
+        result["page"] = page
+        result["page_text"] = text
+
     return json.dumps(result, indent=2)
 
 
-@mcp_server.tool()
-def get_notes(key: str) -> str:
-    """Get research notes for a paper. Notes are in tome/notes/{key}.yaml.
-
-    Args:
-        key: Bib key (e.g. 'miller1999').
-    """
-    validate.validate_key(key)
-    data = notes_mod.load_note(_tome_dir(), key)
-    return json.dumps({"key": key, "has_notes": bool(data), **data}, indent=2)
+# get_notes has been folded into get_paper (notes are always included).
+# get_page has been folded into get_paper(page=N).
 
 
 @mcp_server.tool()
@@ -1280,56 +1303,90 @@ def check_doi(key: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
-# Content Access Tools
+# Unified Search
 # ---------------------------------------------------------------------------
 
 
 @mcp_server.tool()
-def get_page(key: str, page: int) -> str:
-    """Get the raw extracted text of a specific page from a paper's PDF.
+def search(
+    query: str,
+    scope: Literal["all", "papers", "corpus", "notes"] = "all",
+    mode: Literal["semantic", "exact"] = "semantic",
+    # Paper/notes filters
+    key: str = "",
+    keys: str = "",
+    tags: str = "",
+    # Corpus filters
+    paths: str = "",
+    labels_only: bool = False,
+    cites_only: bool = False,
+    # Output control
+    n: int = 10,
+    context: int = 0,
+    paragraphs: int = 0,
+) -> str:
+    """Search papers, project files, or notes. Returns ranked results.
 
     Args:
-        key: Bib key (e.g. 'xu2022').
-        page: Page number (1-indexed).
-    """
-    text = extract.read_page(_raw_dir(), key, page)
-    return json.dumps({"key": key, "page": page, "text": text})
-
-
-@mcp_server.tool()
-def search(query: str, key: str = "", tags: str = "", n: int = 10) -> str:
-    """Semantic search across papers in the library. Returns ranked text passages
-    matching the query. Filter to one paper with key, or to a topic with tags.
-
-    Args:
-        query: Natural language search query.
-        key: Restrict to one paper (bib key).
-        tags: Comma-separated tags to filter by (post-filter on results).
+        query: Search query (natural language for semantic, text for exact).
+        scope: What to search — 'all', 'papers', 'corpus', or 'notes'.
+        mode: 'semantic' (embedding similarity) or 'exact' (normalized text match).
+        key: Restrict to one paper (bib key). Papers/notes scopes.
+        keys: Comma-separated bib keys. Papers/notes scopes.
+        tags: Comma-separated tags to filter papers by.
+        paths: Glob pattern to restrict corpus search (e.g. 'sections/*.tex').
+        labels_only: Only return corpus chunks with \\label{} targets.
+        cites_only: Only return corpus chunks with \\cite{} references.
         n: Maximum results.
+        context: Exact mode: chars of context for papers, lines for corpus.
+        paragraphs: Exact+papers: return N cleaned paragraphs around match.
     """
+    if scope == "papers":
+        return _search_papers(query, mode, key, keys, tags, n, context, paragraphs)
+    elif scope == "corpus":
+        return _search_corpus(query, mode, paths, labels_only, cites_only, n, context)
+    elif scope == "notes":
+        return _search_notes(query, mode, key, keys, tags, n)
+    else:  # "all"
+        return _search_all(query, mode, key, keys, tags, paths,
+                           labels_only, cites_only, n)
+
+
+def _search_papers(
+    query: str, mode: str,
+    key: str, keys: str, tags: str,
+    n: int, context: int, paragraphs: int,
+) -> str:
+    """Search papers — semantic or exact."""
     validate.validate_key_if_given(key)
+    resolved = _resolve_keys(key=key, keys=keys, tags=tags)
+
+    if mode == "exact":
+        return _search_papers_exact(query, resolved, n, context, paragraphs)
+
+    # Semantic mode
     try:
         client = store.get_client(_chroma_dir())
         embed_fn = store.get_embed_fn()
-        results = store.search_papers(client, query, n=n, key=key or None, embed_fn=embed_fn)
+        if resolved and len(resolved) == 1:
+            results = store.search_papers(
+                client, query, n=n, key=resolved[0], embed_fn=embed_fn,
+            )
+        elif resolved:
+            results = store.search_papers(
+                client, query, n=n, keys=resolved, embed_fn=embed_fn,
+            )
+        else:
+            results = store.search_papers(
+                client, query, n=n, embed_fn=embed_fn,
+            )
     except Exception as e:
         raise ChromaDBError(str(e))
 
-    if tags:
-        tag_set = {t.strip() for t in tags.split(",") if t.strip()}
-        lib = _load_bib()
-        filtered = []
-        for r in results:
-            try:
-                entry = bib.get_entry(lib, r.get("bib_key", ""))
-                entry_tags = set(bib.get_tags(entry))
-                if tag_set & entry_tags:
-                    filtered.append(r)
-            except PaperNotFound:
-                pass
-        results = filtered
-
-    response: dict[str, Any] = {"count": len(results), "results": results}
+    response: dict[str, Any] = {
+        "scope": "papers", "mode": "semantic",
+        "count": len(results), "results": results,
+    }
     if not results:
         response["hint"] = (
             "No results. Try broader terms, or check that papers have been "
@@ -1338,29 +1395,82 @@ def search(query: str, key: str = "", tags: str = "", n: int = 10) -> str:
     return json.dumps(response, indent=2)
 
 
-# ---------------------------------------------------------------------------
-# Corpus Tools
-# ---------------------------------------------------------------------------
-
-
-@mcp_server.tool()
-def search_corpus(
-    query: str,
-    paths: str = "",
-    n: int = 10,
-    labels_only: bool = False,
-    cites_only: bool = False,
+def _search_papers_exact(
+    query: str, resolved: list[str] | None,
+    n: int, context: int, paragraphs: int,
 ) -> str:
-    """Semantic search across .tex/.py project files. Auto-syncs stale files
-    before searching. Returns ranked text passages matching the query.
+    """Exact (normalized grep) search across raw PDF text."""
+    from tome import grep_raw as gr
 
-    Args:
-        query: Natural language search query.
-        paths: Glob patterns to restrict search (e.g. 'sections/*.tex').
-        n: Maximum results.
-        labels_only: Only return chunks that define \\label{} targets.
-        cites_only: Only return chunks that contain \\cite{} references.
-    """
+    raw_dir = _dot_tome() / "raw"
+    if not raw_dir.is_dir():
+        return json.dumps({
+            "error": "No raw text directory (.tome/raw/) found. "
+            "No papers have been ingested yet, or the cache was deleted. "
+            "Use ingest to add papers, or run rebuild to regenerate from tome/pdf/."
+        })
+
+    context_chars = context if context > 0 else 200
+
+    # Paragraph mode: single-paper, cleaned output
+    if paragraphs > 0:
+        if not resolved or len(resolved) != 1:
+            return json.dumps({
+                "error": "paragraphs mode requires exactly one paper "
+                "(use key= for a single bib key).",
+            })
+        matches = gr.grep_paper_paragraphs(
+            query, raw_dir, resolved[0], paragraphs=paragraphs,
+        )
+        results = []
+        for m in matches:
+            entry: dict[str, Any] = {
+                "match_page": m.page,
+                "score": m.score,
+            }
+            if isinstance(m.text, dict):
+                entry["paragraphs"] = m.text
+            else:
+                entry["text"] = m.text
+            results.append(entry)
+
+        return json.dumps({
+            "scope": "papers", "mode": "exact",
+            "query": query,
+            "match_count": len(results),
+            **_truncate(results),
+        }, indent=2)
+
+    # Character-context mode
+    matches = gr.grep_all(query, raw_dir, keys=resolved, context_chars=context_chars)
+
+    results = []
+    for m in matches:
+        results.append({
+            "key": m.key,
+            "page": m.page,
+            "context": m.context,
+        })
+
+    return json.dumps({
+        "scope": "papers", "mode": "exact",
+        "query": query,
+        "normalized_query": gr.normalize(query),
+        "match_count": len(results),
+        **_truncate(results),
+    }, indent=2)
+
+
+def _search_corpus(
+    query: str, mode: str, paths: str,
+    labels_only: bool, cites_only: bool,
+    n: int, context: int,
+) -> str:
+    """Search corpus (.tex/.py) — semantic or exact."""
+    if mode == "exact":
+        return _search_corpus_exact(query, paths, context)
+
+    # Semantic mode
     try:
         client = store.get_client(_chroma_dir())
         embed_fn = store.get_embed_fn()
@@ -1376,7 +1486,10 @@ def search_corpus(
     except Exception as e:
         raise ChromaDBError(str(e))
 
-    response: dict[str, Any] = {"count": len(results), "results": results}
+    response: dict[str, Any] = {
+        "scope": "corpus", "mode": "semantic",
+        "count": len(results), "results": results,
+    }
     if not results:
         response["hint"] = (
             "No results. Run sync_corpus() to index files, "
@@ -1385,57 +1498,170 @@ def search_corpus(
     return json.dumps(response, indent=2)
 
 
-@mcp_server.tool()
-def list_labels(prefix: str = "") -> str:
-    """List all \\label{} targets in the indexed .tex files.
+def _search_corpus_exact(query: str, paths: str, context: int) -> str:
+    """Exact (normalized text match) search across .tex source files."""
+    from tome import find_text as ft
 
-    Args:
-        prefix: Filter labels by prefix (e.g. 'fig:', 'sec:', 'tab:', 'eq:').
-            Empty = all labels.
-    """
+    proj = _project_root()
+    cfg = _load_config()
+    context_lines = context if context > 0 else 3
+
+    # Collect .tex files from paths glob or config globs
+    tex_files: list[str] = []
+    if paths:
+        import glob as globmod
+        for pattern in [p.strip() for p in paths.split(",") if p.strip()]:
+            for f in sorted(globmod.glob(str(proj / pattern), recursive=True)):
+                fp = Path(f)
+                if fp.is_file():
+                    rel = str(fp.relative_to(proj))
+                    if rel not in tex_files:
+                        tex_files.append(rel)
+    else:
+        for glob_pat in cfg.tex_globs:
+            for p in sorted(proj.glob(glob_pat)):
+                rel = str(p.relative_to(proj))
+                if rel not in tex_files:
+                    tex_files.append(rel)
+
+    if not tex_files:
+        raise NoTexFiles(cfg.tex_globs)
+
+    matches = ft.find_all(query, proj, tex_files, context_lines=context_lines)
+
+    results = []
+    for m in matches:
+        results.append({
+            "file": m.file,
+            "line_start": m.line_start,
+            "line_end": m.line_end,
+            "context": m.context,
+        })
+
+    return json.dumps({
+        "scope": "corpus", "mode": "exact",
+        "query": query[:200],
+        "match_count": len(results),
+        **_truncate(results),
+    }, indent=2)
+
+
+def _search_notes(
+    query: str, mode: str,
+    key: str, keys: str, tags: str, n: int,
+) -> str:
+    """Search notes only — semantic over note chunks in paper_chunks."""
+    validate.validate_key_if_given(key)
+    resolved = _resolve_keys(key=key, keys=keys, tags=tags)
+
     try:
         client = store.get_client(_chroma_dir())
         embed_fn = store.get_embed_fn()
-        labels = store.get_all_labels(client, embed_fn)
+        col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
+
+        where_clauses: list[dict] = [{"source_type": "note"}]
+        if resolved and len(resolved) == 1:
+            where_clauses.append({"bib_key": resolved[0]})
+        elif resolved:
+            where_clauses.append({"bib_key": {"$in": resolved}})
+
+        where_filter: dict | None = None
+        if len(where_clauses) == 1:
+            where_filter = where_clauses[0]
+        else:
+            where_filter = {"$and": where_clauses}
+
+        results = col.query(
+            query_texts=[query], n_results=n, where=where_filter,
+        )
+        formatted = store._format_results(results)
     except Exception as e:
         raise ChromaDBError(str(e))
 
-    if prefix:
-        labels = [l for l in labels if l["label"].startswith(prefix)]
+    response: dict[str, Any] = {
+        "scope": "notes", "mode": "semantic",
+        "count": len(formatted), "results": formatted,
+    }
+    return json.dumps(response, indent=2)
 
-    return json.dumps({"count": len(labels), "labels": labels}, indent=2)
+
+def _search_all(
+    query: str, mode: str,
+    key: str, keys: str, tags: str, paths: str,
+    labels_only: bool, cites_only: bool, n: int,
+) -> str:
+    """Search across both papers and corpus, merge by distance."""
+    validate.validate_key_if_given(key)
+
+    if mode == "exact":
+        # Exact mode: search both, concatenate results
+        papers_json = _search_papers(query, "exact", key, keys, tags, n, 0, 0)
+        corpus_json = _search_corpus(query, "exact", paths, False, False, n, 0)
+        papers_data = json.loads(papers_json)
+        corpus_data = json.loads(corpus_json)
+        return json.dumps({
+            "scope": "all", "mode": "exact",
+            "papers": papers_data.get("results", []),
+            "papers_count": papers_data.get("match_count", 0),
+            "corpus": corpus_data.get("results", []),
+            "corpus_count": corpus_data.get("match_count", 0),
+        }, indent=2)
+
+    # Semantic mode: query both collections, merge by distance
+    resolved = _resolve_keys(key=key, keys=keys, tags=tags)
+    all_results: list[dict[str, Any]] = []
+
+    try:
+        client = store.get_client(_chroma_dir())
+        embed_fn = store.get_embed_fn()
+
+        # Papers
+        if resolved and len(resolved) == 1:
+            paper_hits = store.search_papers(
+                client, query, n=n, key=resolved[0], embed_fn=embed_fn,
+            )
+        elif resolved:
+            paper_hits = store.search_papers(
+                client, query, n=n, keys=resolved, embed_fn=embed_fn,
+            )
+        else:
+            paper_hits = store.search_papers(
+                client, query, n=n, embed_fn=embed_fn,
+            )
+        for r in paper_hits:
+            r["_source"] = "papers"
+        all_results.extend(paper_hits)
+
+        # Corpus
+        corpus_hits = store.search_corpus(
+            client, query, n=n,
+            source_file=paths or None,
+            labels_only=labels_only,
+            cites_only=cites_only,
+            embed_fn=embed_fn,
+        )
+        for r in corpus_hits:
+            r["_source"] = "corpus"
+        all_results.extend(corpus_hits)
+
+    except Exception as e:
+        raise ChromaDBError(str(e))
+
+    # Sort by distance (lower = better)
+    all_results.sort(key=lambda r: r.get("distance", float("inf")))
+    top = all_results[:n]
+
+    return json.dumps({
+        "scope": "all", "mode": "semantic",
+        "count": len(top),
+        "results": top,
+    }, indent=2)
 
 
-@mcp_server.tool()
-def find_cites(key: str, paths: str = "sections/*.tex") -> str:
-    """Find every line where a bib key is \\cite{}'d in the .tex source.
 
-    Args:
-        key: Bib key to find (e.g. 'miller1999'). Same as used in \\cite{}.
-        paths: Glob patterns for .tex files to scan (default: 'sections/*.tex').
-            Comma-separated for multiple patterns.
-    """
-    import glob as globmod
-
-    validate.validate_key(key)
-    patterns = [p.strip() for p in paths.split(",") if p.strip()]
-    tex_files: list[Path] = []
-    for pattern in patterns:
-        for f in sorted(globmod.glob(pattern, recursive=True)):
-            p = Path(f)
-            if p.is_file() and p.suffix == ".tex":
-                tex_files.append(p)
-
-    locations = latex.find_cite_locations(key, tex_files)
-    return json.dumps(
-        {
-            "key": key,
-            "count": len(locations),
-            "files_scanned": len(tex_files),
-            "locations": locations,
-        },
-        indent=2,
-    )
+# list_labels and find_cites have been folded into the unified toc() tool.
+# Use toc(locate="label") for list_labels behavior.
+# Use toc(locate="cite", query="key") for find_cites behavior.
 
 
 @mcp_server.tool()
@@ -1585,57 +1811,10 @@ def rebuild_doc_index(root: str = "default") -> str:
     })
 
 
-@mcp_server.tool()
-def search_doc_index(query: str, fuzzy: bool = True) -> str:
-    """Search the document index for terms matching a query.
 
-    Args:
-        query: Search string (case-insensitive).
-        fuzzy: If True, match anywhere in term. If False, prefix match only.
-    """
-    index = index_mod.load_index(_dot_tome())
-    if not index.get("terms"):
-        return json.dumps({
-            "error": "No index available. Run rebuild_doc_index() after compiling.",
-        })
-
-    results = index_mod.search_index(index, query, fuzzy=fuzzy)
-    return json.dumps({
-        "query": query,
-        "count": len(results),
-        "results": results,
-    }, indent=2)
-
-
-@mcp_server.tool()
-def list_doc_index() -> str:
-    """List all terms in the document index.
-    """
-    index = index_mod.load_index(_dot_tome())
-    if not index.get("terms"):
-        return json.dumps({
-            "error": "No index available. Run rebuild_doc_index() after compiling.",
-        })
-
-    terms_summary = []
-    for term, data in index["terms"].items():
-        entry: dict[str, Any] = {
-            "term": term,
-            "pages": len(data.get("pages", [])),
-        }
-        subs = data.get("subterms", {})
-        if subs:
-            entry["subterms"] = len(subs)
-        see = data.get("see")
-        if see:
-            entry["see"] = see
-        terms_summary.append(entry)
-
-    return json.dumps({
-        "total_terms": index["total_terms"],
-        "total_entries": index["total_entries"],
-        "terms": terms_summary,
-    }, indent=2)
+# search_doc_index and list_doc_index have been folded into toc(locate="index").
+# Use toc(locate="index", query="term") for search_doc_index behavior.
+# Use toc(locate="index") with no query for list_doc_index behavior.
 
 
 @mcp_server.tool()
@@ -1671,6 +1850,26 @@ def summarize_file(
     sum_data = summaries.load_summaries(_dot_tome())
     entry = summaries.set_summary(sum_data, file, summary, short, section_list, sha)
     summaries.save_summaries(_dot_tome(), sum_data)
+
+    # Index summary into ChromaDB corpus_chunks for searchability
+    flat_text = f"File: {file}\nSummary: {summary}\nShort: {short}"
+    for sec in section_list:
+        flat_text += f"\nSection ({sec.get('lines', '?')}): {sec.get('description', '')}"
+    try:
+        client = store.get_client(_chroma_dir())
+        embed_fn = store.get_embed_fn()
+        col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
+        col.upsert(
+            ids=[f"{file}::summary"],
+            documents=[flat_text],
+            metadatas=[{
+                "source_file": file,
+                "source_type": "summary",
+                "file_sha256": sha,
+            }],
+        )
+    except Exception:
+        pass  # ChromaDB failure is non-fatal
 
     return json.dumps({"status": "saved", "file": file, **entry}, indent=2)
 
@@ -2329,6 +2528,7 @@ def _resolve_root(root: str) -> str:
 @mcp_server.tool()
 def toc(
     root: str = "default",
+    locate: Literal["heading", "cite", "label", "index", "tree"] = "heading",
     depth: str = "subsubsection",
     query: str = "",
     file: str = "",
@@ -2337,20 +2537,34 @@ def toc(
     part: str = "",
     page: int = 1,
 ) -> str:
-    """Parse the compiled TOC into a hierarchical, indented document map.
+    """Navigate document structure. Default shows the TOC; use locate to
+    find citations, labels, index entries, or the file tree.
 
     Args:
         root: Named root from config.yaml (default: 'default'), or a .tex path.
+        locate: What to find — 'heading' (TOC), 'cite' (citation locations),
+            'label' (label targets), 'index' (back-of-book index), 'tree' (file list).
         depth: Max heading level to show — part, section, subsection,
             subsubsection (default), paragraph, or all.
-        query: Case-insensitive substring filter on heading text.
-            Shows matching entries plus their full ancestor chain.
+        query: Filter text. For headings: substring match on title.
+            For cite: bib key to find. For label: prefix filter (e.g. 'fig:').
+            For index: search term (empty = list all).
         file: Only show entries from this source file (substring match).
         pages: Page range filter, e.g. '31-70'.
         figures: Include figure and table entries.
         part: Restrict to a part by number or name substring.
         page: Result page (1-indexed). Each page shows up to 200 lines.
     """
+    if locate == "cite":
+        return _toc_locate_cite(query, root)
+    elif locate == "label":
+        return _toc_locate_label(query)
+    elif locate == "index":
+        return _toc_locate_index(query)
+    elif locate == "tree":
+        return _toc_locate_tree(root)
+
+    # Default: heading mode — standard TOC
     root_tex = _resolve_root(root)
     proj = _project_root()
     result = toc_mod.get_toc(
@@ -2363,6 +2577,11 @@ def toc(
         figures=figures,
         part=part,
     )
+    return _paginate_toc(result, page)
+
+
+def _paginate_toc(result: str, page: int) -> str:
+    """Paginate TOC output into _TOC_MAX_LINES-line pages."""
     lines = result.split("\n")
     total_lines = len(lines)
     pg = max(1, page)
@@ -2382,13 +2601,94 @@ def toc(
     return "\n".join(page_lines)
 
 
-@mcp_server.tool()
-def doc_tree(root: str = "default") -> str:
-    """Show the ordered file list for a document root.
+def _toc_locate_cite(key: str, root: str = "default") -> str:
+    """Find every line where a bib key is \\cite{}'d in the .tex source."""
+    import glob as globmod
 
-    Args:
-        root: Named root from config.yaml (default: 'default'), or a .tex path.
-    """
+    if not key:
+        return json.dumps({"error": "query is required for locate='cite' — provide the bib key."})
+    validate.validate_key(key)
+
+    # Scan .tex files from config globs
+    proj = _project_root()
+    cfg = _load_config()
+    tex_files: list[Path] = []
+    for glob_pat in cfg.tex_globs:
+        for p in sorted(proj.glob(glob_pat)):
+            if p.is_file() and p.suffix == ".tex":
+                tex_files.append(p)
+
+    locations = latex.find_cite_locations(key, tex_files)
+    return json.dumps(
+        {
+            "locate": "cite",
+            "key": key,
+            "count": len(locations),
+            "files_scanned": len(tex_files),
+            "locations": locations,
+        },
+        indent=2,
+    )
+
+
+def _toc_locate_label(prefix: str = "") -> str:
+    """List all \\label{} targets in the indexed .tex files."""
+    try:
+        client = store.get_client(_chroma_dir())
+        embed_fn = store.get_embed_fn()
+        labels = store.get_all_labels(client, embed_fn)
+    except Exception as e:
+        raise ChromaDBError(str(e))
+
+    if prefix:
+        labels = [l for l in labels if l["label"].startswith(prefix)]
+
+    return json.dumps({"locate": "label", "count": len(labels), "labels": labels}, indent=2)
+
+
+def _toc_locate_index(query: str = "") -> str:
+    """Search or list the document index."""
+    index = index_mod.load_index(_dot_tome())
+    if not index.get("terms"):
+        return json.dumps({
+            "error": "No index available. Run rebuild_doc_index() after compiling.",
+        })
+
+    if query:
+        # Search mode
+        results = index_mod.search_index(index, query, fuzzy=True)
+        return json.dumps({
+            "locate": "index",
+            "query": query,
+            "count": len(results),
+            "results": results,
+        }, indent=2)
+    else:
+        # List all mode
+        terms_summary = []
+        for term, data in index["terms"].items():
+            entry: dict[str, Any] = {
+                "term": term,
+                "pages": len(data.get("pages", [])),
+            }
+            subs = data.get("subterms", {})
+            if subs:
+                entry["subterms"] = len(subs)
+            see = data.get("see")
+            if see:
+                entry["see"] = see
+            terms_summary.append(entry)
+
+        return json.dumps({
+            "locate": "index",
+            "total_terms": index["total_terms"],
+            "total_entries": index["total_entries"],
+            "terms": terms_summary,
+        }, indent=2)
+
+
+def _toc_locate_tree(root: str = "default") -> str:
+    """Show the ordered file list for a document root."""
     root_tex = _resolve_root(root)
     proj = _project_root()
     files = analysis.resolve_document_tree(root_tex, proj)
@@ -2403,6 +2703,7 @@ def doc_tree(root: str = "default") -> str:
 
     return json.dumps(
         {
+            "locate": "tree",
             "root": root,
             "root_file": root_tex,
             "file_count": len(files),
@@ -2697,114 +2998,10 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
     }, indent=2)
 
 
-@mcp_server.tool()
-def find_text(query: str, context_lines: int = 3) -> str:
-    """Normalized search across .tex source files for PDF copy-paste text.
 
-    Args:
-        query: Text copied from PDF (will be normalized before matching).
-        context_lines: Lines of .tex source context around match.
-    """
-    from tome import find_text as ft
-
-    proj = _project_root()
-    cfg = _load_config()
-
-    # Collect .tex files from config globs
-    tex_files: list[str] = []
-    for glob_pat in cfg.tex_globs:
-        for p in sorted(proj.glob(glob_pat)):
-            rel = str(p.relative_to(proj))
-            if rel not in tex_files:
-                tex_files.append(rel)
-
-    if not tex_files:
-        raise NoTexFiles(cfg.tex_globs)
-
-    matches = ft.find_all(query, proj, tex_files, context_lines=context_lines)
-
-    results = []
-    for m in matches:
-        results.append({
-            "file": m.file,
-            "line_start": m.line_start,
-            "line_end": m.line_end,
-            "context": m.context,
-        })
-
-    return json.dumps({
-        "query": query[:200],
-        "match_count": len(results),
-        **_truncate(results),
-    }, indent=2)
-
-
-@mcp_server.tool()
-def grep_raw(query: str, key: str = "", context_chars: int = 200, paragraphs: int = 0) -> str:
-    """Normalized grep across raw PDF text extractions.
-
-    Args:
-        query: Text to search for (will be normalized before matching).
-        key: Restrict to one paper (bib key). Empty = search all papers.
-        context_chars: Characters of surrounding context to return.
-        paragraphs: Return N cleaned paragraphs centered on match
-            (hyphens rejoined, whitespace collapsed). 0 = use context_chars with raw text.
-    """
-    from tome import grep_raw as gr
-
-    raw_dir = _dot_tome() / "raw"
-    if not raw_dir.is_dir():
-        return json.dumps({
-            "error": "No raw text directory (.tome/raw/) found. "
-            "No papers have been ingested yet, or the cache was deleted. "
-            "Use ingest to add papers, or run rebuild to regenerate from tome/pdf/."
-        })
-
-    # Paragraph mode: single-paper, cleaned output
-    if paragraphs > 0:
-        if not key:
-            return json.dumps({
-                "error": "paragraphs mode requires a key (single-paper search).",
-            })
-        matches = gr.grep_paper_paragraphs(
-            query, raw_dir, key, paragraphs=paragraphs,
-        )
-        results = []
-        for m in matches:
-            entry: dict[str, Any] = {
-                "match_page": m.page,
-                "score": m.score,
-            }
-            if isinstance(m.text, dict):
-                entry["paragraphs"] = m.text
-            else:
-                entry["text"] = m.text
-            results.append(entry)
-
-        return json.dumps({
-            "query": query,
-            "match_count": len(results),
-            **_truncate(results),
-        }, indent=2)
-
-    # Character-context mode (original behavior)
-    keys = [key] if key else None
-    matches = gr.grep_all(query, raw_dir, keys=keys, context_chars=context_chars)
-
-    results = []
-    for m in matches:
-        results.append({
-            "key": m.key,
-            "page": m.page,
-            "context": m.context,
-        })
-
-    return json.dumps({
-        "query": query,
-        "normalized_query": gr.normalize(query),
-        "match_count": len(results),
-        **_truncate(results),
-    }, indent=2)
+# find_text and grep_raw have been folded into the unified search() tool.
+# Use search(scope="corpus", mode="exact") for find_text behavior.
+# Use search(scope="papers", mode="exact") for grep_raw behavior.
 
 
 # ---------------------------------------------------------------------------

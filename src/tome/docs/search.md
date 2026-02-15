@@ -1,44 +1,54 @@
 ---
-description: "Search order: Tome \u2192 S2 \u2192 Perplexity \u2192 grep"
+description: "Unified search and toc — two tools for all finding/navigating"
 ---
 # Search Workflow
 
+## Two core tools
+
+All content search and structural navigation is handled by two tools:
+
+- **`search`** — find content (ranked results)
+- **`toc`** — navigate structure (hierarchical tree or structural lookups)
+
+## search(query, scope, mode, ...)
+
+| scope | mode=semantic | mode=exact |
+|-------|---------------|------------|
+| `all` | Both collections merged by distance | Grep both PDFs + .tex |
+| `papers` | ChromaDB paper chunks | Normalized grep over raw PDF text |
+| `corpus` | ChromaDB corpus chunks | Normalized match in .tex source |
+| `notes` | Paper notes only (ChromaDB) | — |
+
+**Filters** (apply to relevant scopes):
+- `key`, `keys`, `tags` — restrict to specific papers (papers/notes)
+- `paths` — glob pattern for .tex files (corpus)
+- `labels_only`, `cites_only` — metadata filters (corpus, semantic)
+- `context` — chars (papers) or lines (corpus) for exact mode
+- `paragraphs` — cleaned paragraph output (papers, exact, single key)
+
+## toc(locate, query, ...)
+
+| locate | query meaning | replaces |
+|--------|---------------|----------|
+| `heading` | Substring filter on heading text | old `toc` |
+| `cite` | Bib key to find | old `find_cites` |
+| `label` | Label prefix filter (e.g. 'fig:') | old `list_labels` |
+| `index` | Search term (empty = list all) | old `search_doc_index` / `list_doc_index` |
+| `tree` | (ignored) | old `doc_tree` |
+
 ## Mandatory search order
 
-Always start with Tome semantic search. Never jump straight to grep.
-
-1. **`search(query, key="")`** — Search paper library by semantic
-   similarity. Restrict to one paper with `key`. **Always first.**
-
-2. **`search_corpus(query)`** — Search `.tex`/`.py` project files
-   by semantic similarity. Auto-syncs stale files before searching.
-
-3. **Semantic Scholar** (`discover`, `cite_graph`) — Citation
-   expansion when you have a seed paper.
-
-4. **Perplexity** (`perplexity_ask`) — Broad discovery when no
-   seed paper exists.
-
-5. **grep** (last resort) — For literal pattern matching only.
-   Use `grep_raw` for PDF text, `find_text` for `.tex` source,
-   `find_cites` for citation locations.
-
-## Specialized search tools
-
-| Tool | Searches | Use case |
-|------|----------|----------|
-| `search` | Paper library (ChromaDB) | Find relevant passages in PDFs |
-| `search_corpus` | `.tex`/`.py` files (ChromaDB) | Find content in your document |
-| `grep_raw` | Raw PDF text (normalized) | Verify exact quotes from PDFs |
-| `find_text` | `.tex` source (normalized) | Find PDF-copied text in source |
-| `find_cites` | `.tex` source (live grep) | Where is a key `\cite{}`d? |
-| `search_doc_index` | Back-of-book index | Find indexed terms by name |
+1. **`search(query)`** — searches everything (scope='all'). **Always first.**
+2. Narrow with `scope='papers'` or `scope='corpus'` if needed.
+3. Switch to `mode='exact'` for quote verification.
+4. **Semantic Scholar** (`discover`, `cite_graph`) — citation expansion.
+5. **Perplexity** (`perplexity_ask`) — broad discovery.
 
 ## Tips
 
-- `search` with `key` restricts to one paper — much faster and
-  more precise when you know which paper to look in.
-- `search_corpus` with `labels_only=True` finds `\label{}` targets.
-- `search_corpus` with `cites_only=True` finds citation contexts.
-- `grep_raw` normalizes ligatures, smart quotes, and hyphenation —
-  ideal for verifying copy-pasted quotes from compiled PDFs.
+- `search(query, scope='papers', key='xu2022')` restricts to one paper.
+- `search(query, scope='corpus', labels_only=True)` finds label targets.
+- `search(query, scope='papers', mode='exact', paragraphs=1)` returns
+  cleaned paragraphs — ideal for deep-quote extraction.
+- `toc(locate='cite', query='collier2001')` shows where a paper is cited.
+- `get_paper(key, page=3)` retrieves metadata + page text in one call.
