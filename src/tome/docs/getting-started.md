@@ -43,3 +43,14 @@ LaTeX documents, and tracking research workflows.
 2. `search` / `search_corpus` → find relevant content
 3. Edit `.tex` files using search results
 4. `doc_lint` → check for issues before committing
+
+## Good habits
+
+- **Paginate `list_papers`**: Results are capped at 50/page.
+  Use `list_papers(page=2)` to see more.
+- **`check_doi` after every ingest**: AI tools hallucinate ~10%
+  of DOIs. Always verify.
+- **`set_notes` after reading a paper**: Build institutional
+  memory so future sessions don't re-verify the same sources.
+- **Commit before `mark_done`**: The stored git SHA is your
+  baseline for future diff-targeted reviews.

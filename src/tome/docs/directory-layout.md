@@ -39,6 +39,12 @@ Tome uses two directories at the project root:
 - Datasheets: `manufacturer_partid` (e.g., `thorlabs_m365l4`)
 - Year in key must match year field. Only exception: patents.
 
+### PDF naming
+- **Supplementary info**: `<key>_sup<N>.pdf` (e.g., `jang2003b_sup1.pdf`).
+  SI files don't get their own bib entries.
+- **Wrong PDFs**: Rename to `<key>_wrong.pdf`, set `x-pdf = {false}`,
+  add explanation to `note` field. Delete once correct PDF is fetched.
+
 ### Status fields in `.bib`
 BibTeX ignores unknown fields — Tome uses them for tracking:
 - `x-pdf = {true|false}` — PDF exists in `tome/pdf/`
@@ -48,3 +54,6 @@ BibTeX ignores unknown fields — Tome uses them for tracking:
 ### Rebuilding `.tome/`
 If cache becomes corrupt: `rebuild()` re-extracts text, re-embeds,
 and rebuilds ChromaDB from `tome/pdf/` and `tome/references.bib`.
+
+**Never edit files in `.tome/` directly.** Everything under `.tome/`
+is auto-generated and rebuildable from `tome/`.

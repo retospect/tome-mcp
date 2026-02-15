@@ -38,11 +38,19 @@ ingest(path="inbox/smith2024.pdf", key="smith2024", confirm=True)
 Ingest extracts text, computes embeddings, indexes into ChromaDB,
 and creates a bib entry in `tome/references.bib`.
 
-## 4. Enrich
+## 4. Verify & Enrich
 
-After ingesting:
+After ingesting, **always verify**:
 
-- **`check_doi(key)`** — Verify the DOI via CrossRef.
+- **`check_doi(key)`** — Verify the DOI via CrossRef. Run after
+  **every** ingest. AI-discovered DOIs are frequently wrong
+  (~10% hallucination rate from LLM-based search tools).
+- **`get_page(key, 1)`** — Read page 1 and confirm title/authors
+  match the bib entry. Zotero and DOI lookups sometimes deliver
+  the wrong PDF entirely.
+
+Then enrich:
+
 - **`set_notes(key, summary=..., claims=...)`** — Add research notes.
 - **`fetch_oa(key)`** — Try to fetch open-access PDF via Unpaywall.
 - **`build_cite_tree(key)`** — Cache citation graph from S2.
@@ -57,6 +65,14 @@ After ingesting:
 
 Use `find_cites(key)` to see where a paper is already cited.
 Use `search_corpus(query)` to find where to add new citations.
+
+## Building institutional memory
+
+After reading any paper (via `search`, `get_page`, or quote
+verification), call `set_notes(key, ...)` with summary, relevance,
+claims, and quality. Check `get_notes(key)` first to avoid
+duplicates. This prevents future sessions from re-reading and
+re-verifying the same papers.
 
 ## Key format
 
