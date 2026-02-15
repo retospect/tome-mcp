@@ -1109,6 +1109,7 @@ def edit_notes(
 
 _LIST_PAGE_SIZE = 50
 _MAX_RESULTS = 30
+_TOC_MAX_LINES = 200
 
 
 def _truncate(items: list, label: str = "results") -> dict[str, Any]:
@@ -2260,7 +2261,7 @@ def toc(
     """
     root_tex = _resolve_root(root)
     proj = _project_root()
-    return toc_mod.get_toc(
+    result = toc_mod.get_toc(
         proj,
         root_tex,
         depth=depth,
@@ -2270,6 +2271,17 @@ def toc(
         figures=figures,
         part=part,
     )
+    lines = result.split("\n")
+    if len(lines) > _TOC_MAX_LINES:
+        kept = lines[:_TOC_MAX_LINES]
+        omitted = len(lines) - _TOC_MAX_LINES
+        kept.append(
+            f"\n... {omitted} more lines omitted. "
+            "Narrow with: part, query, file, pages filters, "
+            "or depth='section'."
+        )
+        return "\n".join(kept)
+    return result
 
 
 @mcp_server.tool()
