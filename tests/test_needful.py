@@ -247,6 +247,36 @@ class TestRanking:
         assert ("sync", "appendix/gamma.tex") in task_file_pairs
         assert len(items) == 5
 
+    def test_rank_file_filter_substring(self, project):
+        tasks = [NeedfulTask(name="review", globs=["sections/*.tex"], cadence_hours=168)]
+        state = {"completions": {}}
+        items = rank_needful(tasks, project, state, n=10, now=self.NOW, file_filter="alpha")
+        assert len(items) == 1
+        assert items[0].file == "sections/alpha.tex"
+
+    def test_rank_file_filter_no_match(self, project):
+        tasks = [NeedfulTask(name="review", globs=["sections/*.tex"], cadence_hours=168)]
+        state = {"completions": {}}
+        items = rank_needful(tasks, project, state, n=10, now=self.NOW, file_filter="nonexistent")
+        assert len(items) == 0
+
+    def test_rank_file_filter_across_tasks(self, project):
+        tasks = [
+            NeedfulTask(name="review", globs=["sections/*.tex"], cadence_hours=168),
+            NeedfulTask(name="sync", globs=["sections/*.tex", "appendix/*.tex"], cadence_hours=0),
+        ]
+        state = {"completions": {}}
+        items = rank_needful(tasks, project, state, n=100, now=self.NOW, file_filter="alpha")
+        # alpha.tex matches in both review and sync tasks
+        assert len(items) == 2
+        assert all("alpha" in i.file for i in items)
+
+    def test_rank_file_filter_empty_returns_all(self, project):
+        tasks = [NeedfulTask(name="review", globs=["sections/*.tex"], cadence_hours=168)]
+        state = {"completions": {}}
+        items = rank_needful(tasks, project, state, n=10, now=self.NOW, file_filter="")
+        assert len(items) == 2  # alpha + beta
+
     def test_rank_file_changed_beats_time_overdue(self, project):
         tasks = [NeedfulTask(name="review", globs=["sections/*.tex"], cadence_hours=168)]
         from tome.checksum import sha256_file

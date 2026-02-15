@@ -2245,6 +2245,7 @@ def toc(
     pages: str = "",
     figures: bool = True,
     part: str = "",
+    page: int = 1,
 ) -> str:
     """Parse the compiled TOC into a hierarchical, indented document map.
 
@@ -2258,6 +2259,7 @@ def toc(
         pages: Page range filter, e.g. '31-70'.
         figures: Include figure and table entries.
         part: Restrict to a part by number or name substring.
+        page: Result page (1-indexed). Each page shows up to 200 lines.
     """
     root_tex = _resolve_root(root)
     proj = _project_root()
@@ -2272,16 +2274,22 @@ def toc(
         part=part,
     )
     lines = result.split("\n")
-    if len(lines) > _TOC_MAX_LINES:
-        kept = lines[:_TOC_MAX_LINES]
-        omitted = len(lines) - _TOC_MAX_LINES
-        kept.append(
-            f"\n... {omitted} more lines omitted. "
-            "Narrow with: part, query, file, pages filters, "
-            "or depth='section'."
+    total_lines = len(lines)
+    pg = max(1, page)
+    start = (pg - 1) * _TOC_MAX_LINES
+    end = start + _TOC_MAX_LINES
+    page_lines = lines[start:end]
+    remaining = total_lines - end
+    if remaining > 0:
+        next_pg = pg + 1
+        page_lines.append(
+            f"\n... {remaining} more lines. "
+            f"Continue with page={next_pg}, "
+            "or narrow with: part, query, file, pages, depth='section'."
         )
-        return "\n".join(kept)
-    return result
+    if pg > 1:
+        page_lines.insert(0, f"(page {pg}, lines {start + 1}–{min(end, total_lines)})\n")
+    return "\n".join(page_lines)
 
 
 @mcp_server.tool()
@@ -3284,11 +3292,14 @@ def set_root(path: str) -> str:
 
 
 @mcp_server.tool()
-def needful(n: int = 10) -> str:
+def needful(n: int = 10, file: str = "") -> str:
     """List the N most needful things to do, ranked by urgency.
 
     Args:
         n: Maximum items to return.
+        file: Substring filter on file path (e.g. 'logic-mechanisms.tex').
+            Only items whose file path contains this string are returned.
+            Useful for parallel workflows — one Cascade window per file.
     """
     cfg = tome_config.load_config(_tome_dir())
     if not cfg.needful_tasks:
@@ -3307,6 +3318,7 @@ def needful(n: int = 10) -> str:
         project_root=_project_root(),
         state=state,
         n=n,
+        file_filter=file,
     )
 
     if not items:

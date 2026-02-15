@@ -285,6 +285,7 @@ def rank_needful(
     state: dict[str, Any],
     n: int = 10,
     now: datetime | None = None,
+    file_filter: str = "",
 ) -> list[NeedfulItem]:
     """Compute and rank all (task, file) pairs by needfulness.
 
@@ -294,6 +295,8 @@ def rank_needful(
         state: The needful state dict.
         n: Maximum items to return.
         now: Override current time (for testing).
+        file_filter: Substring filter on file path (e.g. 'logic-mechanisms.tex').
+            Matches if the string appears anywhere in the relative file path.
 
     Returns:
         Top N items sorted by descending score, excluding score == 0.
@@ -309,6 +312,8 @@ def rank_needful(
                     files.add(str(p.relative_to(project_root)))
 
         for file_path in sorted(files):
+            if file_filter and file_filter not in file_path:
+                continue
             abs_path = project_root / file_path
             if not abs_path.exists():
                 continue
