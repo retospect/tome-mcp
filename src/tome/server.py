@@ -989,11 +989,15 @@ def set_notes(
     status: str = "",
     depends: str = "",
     open: str = "",
+    clear: str = "",
 ) -> str:
     """Read or write notes for a paper (key) or file (file).
 
-    No fields → read mode (returns current notes).
-    Any field set → write mode (overwrites that field, others unchanged).
+    Three modes (mutually exclusive):
+    - No fields, no clear → **read** (returns current notes).
+    - Any field set → **write** (overwrites that field, others unchanged).
+    - clear set → **clear** fields. Comma-separated names or '*' for all.
+      clear cannot be combined with write fields.
 
     Paper fields (use with key):
         summary: One-line summary of the paper's contribution.
@@ -1013,6 +1017,7 @@ def set_notes(
     Args:
         key: Bib key (e.g. 'miller1999'). Use for paper notes.
         file: Relative path (e.g. 'sections/background.tex'). Use for file meta.
+        clear: Comma-separated field names to delete, or '*' for all.
     """
     if not key and not file:
         return json.dumps({"error": "Provide key (paper) or file (tex file)."})
@@ -1020,16 +1025,16 @@ def set_notes(
         return json.dumps({"error": "Provide key OR file, not both."})
 
     if key:
-        return _notes_paper(key, summary, claims, relevance, limitations, quality, tags)
+        return _notes_paper(key, summary, claims, relevance, limitations, quality, tags, clear)
     else:
-        return _notes_file(file, intent, status, claims, depends, open)
+        return _notes_file(file, intent, status, claims, depends, open, clear)
 
 
 def _notes_paper(
     key: str, summary: str, claims: str, relevance: str,
-    limitations: str, quality: str, tags: str,
+    limitations: str, quality: str, tags: str, clear: str,
 ) -> str:
-    """Paper notes — read or write."""
+    """Paper notes — read, write, or clear."""
     validate.validate_key(key)
     paper_fields = {
         "summary": summary, "claims": claims, "relevance": relevance,
@@ -1037,6 +1042,38 @@ def _notes_paper(
     }
     writing = any(paper_fields.values())
     existing = notes_mod.load_note(_tome_dir(), key)
+
+    if clear and writing:
+        return json.dumps({"error": "clear cannot be combined with write fields."})
+
+    if clear:
+        # Clear mode
+        if clear.strip() == "*":
+            notes_mod.delete_note(_tome_dir(), key)
+            try:
+                client = store.get_client(_chroma_dir())
+                embed_fn = store.get_embed_fn()
+                col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
+                col.delete(ids=[f"{key}::note"])
+            except Exception:
+                pass
+            return json.dumps({"key": key, "status": "cleared", "notes": None})
+        to_clear = {f.strip() for f in clear.split(",") if f.strip()}
+        updated = {k: v for k, v in existing.items() if k not in to_clear}
+        notes_mod.save_note(_tome_dir(), key, updated)
+        flat_text = notes_mod.flatten_for_search(key, updated)
+        try:
+            client = store.get_client(_chroma_dir())
+            embed_fn = store.get_embed_fn()
+            col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
+            if updated:
+                col.upsert(ids=[f"{key}::note"], documents=[flat_text],
+                           metadatas=[{"bib_key": key, "source_type": "note"}])
+            else:
+                col.delete(ids=[f"{key}::note"])
+        except Exception:
+            pass
+        return json.dumps({"key": key, "status": "cleared", "cleared": sorted(to_clear), "notes": updated}, indent=2)
 
     if not writing:
         # Read mode
@@ -1070,9 +1107,9 @@ def _notes_paper(
 
 def _notes_file(
     file: str, intent: str, status: str, claims: str,
-    depends: str, open_q: str,
+    depends: str, open_q: str, clear: str,
 ) -> str:
-    """File meta notes — read or write."""
+    """File meta notes — read, write, or clear."""
     validate.validate_relative_path(file, field="file")
     file_path = _project_root() / file
     if not file_path.exists():
@@ -1084,6 +1121,39 @@ def _notes_file(
     }
     writing = any(file_fields.values())
     existing = file_meta_mod.parse_meta_from_file(file_path)
+
+    if clear and writing:
+        return json.dumps({"error": "clear cannot be combined with write fields."})
+
+    if clear:
+        # Clear mode
+        if clear.strip() == "*":
+            file_meta_mod.write_meta(file_path, {})
+            try:
+                client = store.get_client(_chroma_dir())
+                embed_fn = store.get_embed_fn()
+                col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
+                col.delete(ids=[f"{file}::meta"])
+            except Exception:
+                pass
+            return json.dumps({"file": file, "status": "cleared", "meta": None})
+        to_clear = {f.strip() for f in clear.split(",") if f.strip()}
+        updated = {k: v for k, v in existing.items() if k not in to_clear}
+        file_meta_mod.write_meta(file_path, updated)
+        flat_text = file_meta_mod.flatten_for_search(file, updated)
+        try:
+            client = store.get_client(_chroma_dir())
+            embed_fn = store.get_embed_fn()
+            col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
+            if updated:
+                col.upsert(ids=[f"{file}::meta"], documents=[flat_text],
+                           metadatas=[{"source_file": file, "source_type": "file_meta",
+                                       "file_type": file_path.suffix.lstrip(".")}])
+            else:
+                col.delete(ids=[f"{file}::meta"])
+        except Exception:
+            pass
+        return json.dumps({"file": file, "status": "cleared", "cleared": sorted(to_clear), "meta": updated}, indent=2)
 
     if not writing:
         # Read mode
