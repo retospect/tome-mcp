@@ -138,6 +138,36 @@ def cmd_shared_citers(args: argparse.Namespace) -> None:
             print(f"  [{count}] corpus_id={cid}")
 
 
+def cmd_incremental(args: argparse.Namespace) -> None:
+    """Sweep library papers for new citers via Graph API."""
+    db = S2AGLocal()
+
+    # Get library paper corpus_ids from bib file DOIs
+    if args.bib_file:
+        dois = _extract_dois_from_bib(args.bib_file)
+        print(f"Found {len(dois)} DOIs in {args.bib_file}")
+        corpus_ids = []
+        for doi in dois:
+            p = db.lookup_doi(doi)
+            if p:
+                corpus_ids.append(p.corpus_id)
+        print(f"  {len(corpus_ids)} resolved in local DB")
+    else:
+        corpus_ids = None  # will use all papers with paper_id
+
+    result = db.incremental_update(
+        corpus_ids,
+        min_year=args.min_year,
+        api_key=args.api_key or "",
+    )
+
+    print(f"\nResults: {result}")
+    s = db.stats()
+    print(f"\nDatabase: {db.db_path}")
+    print(f"  Papers:    {s['papers']:,}")
+    print(f"  Citations: {s['citations']:,}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="S2AG local database management",
@@ -169,6 +199,13 @@ def main() -> None:
     p4.add_argument("dois", nargs="+", help="DOIs to check")
     p4.add_argument("--min-shared", type=int, default=2, help="Minimum shared citations")
     p4.set_defaults(func=cmd_shared_citers)
+
+    # incremental-update
+    p5 = sub.add_parser("incremental-update", help="Sweep library papers for new citers via API")
+    p5.add_argument("--bib-file", default="", help="Path to references.bib (optional, uses all DB papers if omitted)")
+    p5.add_argument("--min-year", type=int, default=0, help="Only record citers from this year onwards")
+    p5.add_argument("--api-key", default="", help="S2 API key (optional, higher rate limit)")
+    p5.set_defaults(func=cmd_incremental)
 
     args = parser.parse_args()
     args.func(args)

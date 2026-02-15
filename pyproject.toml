@@ -3,12 +3,39 @@ requires = ["setuptools>=68.0", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "tome"
+name = "tome-mcp"
 version = "0.1.0"
 description = "MCP server for managing a research paper library"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT"}
+authors = [
+    {name = "Reto Stamm"},
+]
+maintainers = [
+    {name = "Reto Stamm"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    # "Programming Language :: Python :: 3.13",  # blocked on chromadb compatibility
+    "Topic :: Scientific/Engineering",
+    "Topic :: Text Processing :: Markup :: LaTeX",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/retostamm/tome-mcp"
+Repository = "https://github.com/retostamm/tome-mcp"
+Issues = "https://github.com/retostamm/tome-mcp/issues"
+
+[project.scripts]
+tome-mcp = "tome.server:main"
 
 dependencies = [
     "chromadb>=0.5.0",

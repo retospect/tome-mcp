@@ -6,12 +6,14 @@ The server uses stdio transport for MCP client communication.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import logging.handlers
 import os
 import shutil
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import Any, Literal
@@ -60,6 +62,7 @@ from tome.errors import (
     UnpaywallNotConfigured,
     UnsafeInput,
 )
+from tome.filelock import LockTimeout
 
 mcp_server = FastMCP("Tome")
 
@@ -89,7 +92,7 @@ def _attach_file_log(dot_tome: Path) -> None:
     dot_tome.mkdir(parents=True, exist_ok=True)
     log_path = dot_tome / "server.log"
     fh = logging.handlers.RotatingFileHandler(
-        log_path, maxBytes=1_000_000, backupCount=2, encoding="utf-8",
+        log_path, maxBytes=2_000_000, backupCount=3, encoding="utf-8",
     )
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(logging.Formatter(
@@ -98,6 +101,62 @@ def _attach_file_log(dot_tome: Path) -> None:
     logger.addHandler(fh)
     _file_handler = fh
     logger.info("Tome server started — log attached to %s", log_path)
+
+
+# ---------------------------------------------------------------------------
+# Tool invocation logging — wraps every @mcp_server.tool() with timing,
+# error classification, and LockTimeout → JSON error conversion.
+# ---------------------------------------------------------------------------
+
+_original_tool = mcp_server.tool
+
+
+def _logging_tool(**kwargs):
+    """Drop-in replacement for ``mcp_server.tool()`` that adds invocation logging."""
+    decorator = _original_tool(**kwargs)
+
+    def wrapper(fn):
+        @functools.wraps(fn)
+        def logged(*args, **kw):
+            name = fn.__name__
+            logger.info("TOOL %s called", name)
+            t0 = time.monotonic()
+            try:
+                result = fn(*args, **kw)
+                dt = time.monotonic() - t0
+                logger.info("TOOL %s completed in %.2fs", name, dt)
+                return result
+            except LockTimeout as exc:
+                dt = time.monotonic() - t0
+                logger.error(
+                    "TOOL %s failed (LockTimeout) after %.2fs: %s", name, dt, exc
+                )
+                return json.dumps({
+                    "error": f"Lock timeout: {exc}. "
+                    "Another Tome process may be stuck. "
+                    "Try again in a few seconds.",
+                })
+            except TomeError as exc:
+                dt = time.monotonic() - t0
+                logger.warning(
+                    "TOOL %s failed (%s) after %.2fs: %s",
+                    name, type(exc).__name__, dt, exc,
+                )
+                raise
+            except Exception:
+                dt = time.monotonic() - t0
+                logger.error(
+                    "TOOL %s crashed after %.2fs:\n%s",
+                    name, dt, traceback.format_exc(),
+                )
+                raise
+
+        return decorator(logged)
+
+    return wrapper
+
+
+mcp_server.tool = _logging_tool  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -3198,6 +3257,48 @@ def s2ag_shared_citers(dois: str, min_shared: int = 2) -> str:
             "min_shared": min_shared,
             "candidates": candidates,
         }, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@mcp_server.tool()
+def s2ag_incremental(min_year: int = 0) -> str:
+    """Sweep library papers for new citers via Graph API. Adds new
+    citation edges and paper records to the local S2AG database.
+    Fast: ~437 API calls for the whole library (~5s with API key).
+
+    Args:
+        min_year: Only record citers from this year onwards (0 = all).
+    """
+    try:
+        from tome.s2ag import S2AGLocal, DB_PATH
+        from tome import bib
+        if not DB_PATH.exists():
+            return json.dumps({"error": "S2AG database not found"})
+        db = S2AGLocal()
+
+        # Get library paper DOIs → corpus_ids
+        lib = _load_bib()
+        corpus_ids = []
+        for entry in lib.entries:
+            doi = bib.get_field(entry, "doi")
+            if doi:
+                p = db.lookup_doi(doi.lower())
+                if p:
+                    corpus_ids.append(p.corpus_id)
+
+        if not corpus_ids:
+            return json.dumps({"error": "No library papers resolved in S2AG DB"})
+
+        lines: list[str] = []
+        result = db.incremental_update(
+            corpus_ids,
+            min_year=min_year,
+            progress_fn=lambda msg: lines.append(msg),
+        )
+        result["library_papers_checked"] = len(corpus_ids)
+        result["log"] = lines[-5:] if len(lines) > 5 else lines
+        return json.dumps(result, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 

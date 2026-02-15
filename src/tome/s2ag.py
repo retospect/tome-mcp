@@ -417,6 +417,187 @@ class S2AGLocal:
         return total
 
     # ══════════════════════════════════════════════════════════════════
+    # Population — Mode 3: Incremental update (Graph API sweep)
+    # ══════════════════════════════════════════════════════════════════
+
+    def incremental_update(
+        self,
+        corpus_ids: list[int] | None = None,
+        *,
+        min_year: int = 0,
+        api_key: str = "",
+        progress_fn=None,
+    ) -> dict[str, Any]:
+        """Sweep library papers for new citers via Graph API.
+
+        For each paper, fetches its citing papers from the API and inserts
+        any new papers + citation edges into the local DB.  Much faster
+        than a full bulk download — ~437 API calls for the whole library,
+        taking ~5s with an API key.
+
+        Args:
+            corpus_ids: Papers to check (default: all papers in local DB
+                that have a paper_id).  For typical use, pass the corpus_ids
+                of your library papers only.
+            min_year: Only record citers from this year onwards (0 = all).
+            api_key: Optional API key override.
+            progress_fn: Optional ``fn(msg: str)`` for progress updates.
+
+        Returns:
+            Summary dict with counts of new papers, new edges, and errors.
+        """
+        headers = self._api_headers(api_key)
+        log = progress_fn or print
+
+        # If no corpus_ids given, use all papers that have a paper_id
+        if corpus_ids is None:
+            conn = self._connect(readonly=True)
+            rows = conn.execute(
+                "SELECT corpus_id FROM papers WHERE paper_id IS NOT NULL"
+            ).fetchall()
+            conn.close()
+            corpus_ids = [r[0] for r in rows]
+
+        log(f"  Incremental update: checking {len(corpus_ids)} papers for new citers")
+        if min_year:
+            log(f"  Filtering citers to year >= {min_year}")
+
+        # Build corpus_id → paper_id map
+        conn = self._connect(readonly=True)
+        ph = ",".join("?" * len(corpus_ids))
+        rows = conn.execute(
+            f"SELECT corpus_id, paper_id FROM papers WHERE corpus_id IN ({ph})",
+            corpus_ids,
+        ).fetchall()
+        conn.close()
+        id_map = {r[0]: r[1] for r in rows if r[1]}
+
+        results = {"checked": 0, "new_papers": 0, "new_edges": 0, "errors": 0}
+        conn = self._connect()
+
+        for idx, cid in enumerate(corpus_ids):
+            pid = id_map.get(cid)
+            if not pid:
+                continue
+
+            if idx > 0 and idx % 50 == 0:
+                log(f"    [{idx}/{len(corpus_ids)}] +{results['new_edges']} edges, +{results['new_papers']} papers")
+
+            try:
+                new_edges, new_papers = self._fetch_new_citers(
+                    conn, pid, cid, headers, min_year=min_year,
+                )
+                results["new_edges"] += new_edges
+                results["new_papers"] += new_papers
+                results["checked"] += 1
+            except Exception:
+                results["errors"] += 1
+
+            # With API key: 100 req/sec, no sleep needed.
+            # Without: be polite.
+            if not headers.get("x-api-key"):
+                time.sleep(API_SLEEP)
+
+        conn.execute(
+            "INSERT OR REPLACE INTO meta VALUES ('last_incremental_sync', ?)",
+            (time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),),
+        )
+        conn.commit()
+        conn.close()
+
+        log(f"  Done: checked {results['checked']}, "
+            f"+{results['new_edges']} edges, +{results['new_papers']} papers, "
+            f"{results['errors']} errors")
+        return results
+
+    def _fetch_new_citers(
+        self,
+        conn: sqlite3.Connection,
+        paper_id: str,
+        corpus_id: int,
+        headers: dict[str, str],
+        *,
+        min_year: int = 0,
+    ) -> tuple[int, int]:
+        """Fetch citers for one paper, insert new edges + papers.
+
+        Returns (new_edges, new_papers).
+        """
+        url = f"{GRAPH_API}/paper/{paper_id}/citations"
+        params: dict[str, Any] = {"fields": CITATION_FIELDS, "limit": 1000}
+
+        new_edges = 0
+        new_papers = 0
+        offset = 0
+
+        while True:
+            params["offset"] = offset
+            resp = httpx.get(url, params=params, headers=headers, timeout=30.0)
+            if resp.status_code == 429:
+                time.sleep(5)
+                resp = httpx.get(url, params=params, headers=headers, timeout=30.0)
+            if resp.status_code != 200:
+                break
+
+            data = resp.json().get("data", [])
+            if not data:
+                break
+
+            for item in data:
+                citing = item.get("citingPaper", {})
+                if not citing:
+                    continue
+                other_cid = citing.get("corpusId")
+                if other_cid is None:
+                    continue
+
+                year = citing.get("year")
+                if min_year and (year is None or year < min_year):
+                    continue
+
+                # Check if edge already exists
+                existing = conn.execute(
+                    "SELECT 1 FROM citations WHERE citing_corpus_id = ? AND cited_corpus_id = ?",
+                    (other_cid, corpus_id),
+                ).fetchone()
+                if existing:
+                    continue
+
+                # New edge — insert paper + edge
+                other_doi = (citing.get("externalIds") or {}).get("DOI")
+                cur = conn.execute(
+                    """INSERT OR IGNORE INTO papers
+                       (corpus_id, paper_id, doi, title, year, citation_count)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        other_cid,
+                        citing.get("paperId", ""),
+                        other_doi.lower() if other_doi else None,
+                        citing.get("title"),
+                        year,
+                        citing.get("citationCount", 0),
+                    ),
+                )
+                if cur.rowcount > 0:
+                    new_papers += 1
+
+                conn.execute(
+                    "INSERT OR IGNORE INTO citations VALUES (?, ?, 0)",
+                    (other_cid, corpus_id),
+                )
+                new_edges += 1
+
+            conn.commit()
+
+            # Paginate
+            next_offset = resp.json().get("next")
+            if next_offset is None:
+                break
+            offset = next_offset
+
+        return new_edges, new_papers
+
+    # ══════════════════════════════════════════════════════════════════
     # Population — Mode 2: Full S2AG bulk dataset
     # ══════════════════════════════════════════════════════════════════
 
