@@ -46,11 +46,35 @@ LaTeX documents, and tracking research workflows.
 
 ## Good habits
 
-- **Paginate `list_papers`**: Results are capped at 50/page.
-  Use `list_papers(page=2)` to see more.
 - **`check_doi` after every ingest**: AI tools hallucinate ~10%
   of DOIs. Always verify.
+- **Verify PDF content**: `get_page(key, 1)` — confirm
+  title/authors match the bib entry before citing.
 - **`set_notes` after reading a paper**: Build institutional
   memory so future sessions don't re-verify the same sources.
 - **Commit before `mark_done`**: The stored git SHA is your
   baseline for future diff-targeted reviews.
+
+## Bootstrapping a new project
+
+For a new project, consider setting up rules (e.g. `.windsurf/rules/`)
+that codify these practices for your specific LaTeX document:
+
+1. **Bibliography management** — bib key format, DOI verification
+   discipline, wrong-PDF conventions, file layout.
+   See `guide('paper-workflow')` and `guide('directory-layout')`.
+
+2. **Citation usage** — search order (always Tome first), deep
+   citation workflow, how to upgrade shallow cites to verbatim quotes.
+   See `guide('search')`.
+
+3. **Git workflow** — commit-before-mark_done rule, review cycle
+   with `\mrev{}` findings. See `guide('review-cycle')`.
+
+4. **Document analysis** — which tools to run and when (`doc_lint`,
+   `dep_graph`, `review_status`).
+   See `guide('document-analysis')`.
+
+These guides contain general best practices. Project rules should
+add your specific conventions (LaTeX macros, naming schemes,
+section codes, design constraints).

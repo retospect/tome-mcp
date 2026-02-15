@@ -34,24 +34,6 @@ Always start with Tome semantic search. Never jump straight to grep.
 | `find_cites` | `.tex` source (live grep) | Where is a key `\cite{}`d? |
 | `search_doc_index` | Back-of-book index | Find indexed terms by name |
 
-## Result limits
-
-- **`search`** and **`search_corpus`**: Return up to `n` results
-  (default 10). Server caps at 30 results per call.
-- **`grep_raw`**, **`doc_lint`**: Results capped at 30 items.
-  If output seems incomplete, narrow the query or add filters
-  (`key`, `tags`, `file` parameters).
-- **`list_papers`**: Paginated at 50 per page. Use
-  `list_papers(page=2)` to browse beyond the first page.
-
-## Reindexing
-
-- **Papers** (`rebuild`): after adding PDFs via `ingest`.
-  Usually automatic — only needed if cache is corrupt.
-- **Corpus** (`sync_corpus`): after editing `.tex` files.
-  `search_corpus` auto-syncs stale files, so manual sync is
-  rarely needed.
-
 ## Tips
 
 - `search` with `key` restricts to one paper — much faster and

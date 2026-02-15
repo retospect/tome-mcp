@@ -37,8 +37,6 @@ Semantic Scholar. Think of it as beam search over citations.
 
 ## Tips
 
-- **Default limit is 20** per expansion. Set `limit=30` explicitly
-  if you need more citers per call.
 - Be **narrow** (few relevant) for pointed searches.
 - Be **broader** for survey-style exploration.
 - `clear_explorations()` resets session state without affecting
