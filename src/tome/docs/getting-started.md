@@ -17,18 +17,18 @@ LaTeX documents, and tracking research workflows.
 2. **`stats()`** — See library size, DOI status, pending figures
    and paper requests.
 
-3. **`doc_tree()`** — See the ordered file list for your LaTeX
-   document (follows `\input{}`/`\include{}` tree).
+3. **`toc(locate='tree')`** — See the ordered file list for your
+   LaTeX document (follows `\input{}`/`\include{}` tree).
 
 ## Tool groups
 
 | Group | Key tools |
 |-------|-----------|
 | **Paper management** | `ingest`, `get_paper`, `set_paper`, `remove_paper`, `list_papers` |
-| **Notes** | `get_notes`, `set_notes`, `edit_notes` |
-| **Content access** | `get_page`, `search`, `grep_raw` |
-| **Corpus search** | `search_corpus`, `sync_corpus`, `find_text`, `find_cites` |
-| **Document analysis** | `doc_lint`, `dep_graph`, `review_status`, `toc` |
+| **Notes** | `set_notes`, `edit_notes` (read via `get_paper`) |
+| **Search** | `search` (scope: all/papers/corpus/notes; mode: semantic/exact) |
+| **Document navigation** | `toc` (locate: heading/cite/label/index/tree), `sync_corpus` |
+| **Document analysis** | `doc_lint`, `dep_graph`, `review_status` |
 | **Discovery** | `discover`, `discover_openalex`, `discover_citing`, `cite_graph` |
 | **Citation exploration** | `explore_citations`, `mark_explored`, `list_explorations` |
 | **Figures** | `request_figure`, `add_figure`, `list_figures_tool` |
@@ -39,8 +39,8 @@ LaTeX documents, and tracking research workflows.
 
 ## Typical session flow
 
-1. `set_root` → orient with `doc_tree` or `toc`
-2. `search` / `search_corpus` → find relevant content
+1. `set_root` → orient with `toc()` or `toc(locate='tree')`
+2. `search("topic")` → find relevant content across papers and .tex
 3. Edit `.tex` files using search results
 4. `doc_lint` → check for issues before committing
 
@@ -48,7 +48,7 @@ LaTeX documents, and tracking research workflows.
 
 - **`check_doi` after every ingest**: AI tools hallucinate ~10%
   of DOIs. Always verify.
-- **Verify PDF content**: `get_page(key, 1)` — confirm
+- **Verify PDF content**: `get_paper(key, page=1)` — confirm
   title/authors match the bib entry before citing.
 - **`set_notes` after reading a paper**: Build institutional
   memory so future sessions don't re-verify the same sources.

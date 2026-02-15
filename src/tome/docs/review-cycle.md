@@ -36,7 +36,7 @@ If your project tracks review findings via a `\mrev{}` macro:
 
 1. **Create**: Add `\mrev{RIG-CON-001}{major}{Claim unsupported}`.
 2. **Triage**: `review_status()` counts findings by file and type.
-3. **List**: `find_text("RIG-CON-001")` locates a specific finding.
+3. **List**: `search("RIG-CON-001", scope='corpus', mode='exact')` locates a specific finding.
 4. **Resolve**: Fix the issue, delete the `\mrev{}` marker.
 5. **Audit**: `review_status()` confirms count decreased.
 

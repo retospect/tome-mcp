@@ -7,11 +7,11 @@ Notes are LLM-curated observations stored as git-tracked YAML files
 in `tome/notes/{key}.yaml`. They are indexed into ChromaDB for
 semantic search alongside paper content.
 
-## Three-tool lifecycle
+## Tool lifecycle
 
 | Tool | Purpose |
 |------|---------|
-| **`get_notes(key)`** | Read notes for a paper |
+| **`get_paper(key)`** | Read notes (always included in response) |
 | **`set_notes(key, ...)`** | Add or update fields |
 | **`edit_notes(key, action, ...)`** | Remove items or delete entirely |
 

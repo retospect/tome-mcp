@@ -49,7 +49,7 @@ After ingesting, **always verify**:
 - **`check_doi(key)`** — Verify the DOI via CrossRef. Run after
   **every** ingest. AI-discovered DOIs are frequently wrong
   (~10% hallucination rate from LLM-based search tools).
-- **`get_page(key, 1)`** — Read page 1 and confirm title/authors
+- **`get_paper(key, page=1)`** — Read page 1 and confirm title/authors
   match the bib entry. Zotero and DOI lookups sometimes deliver
   the wrong PDF entirely.
 
@@ -62,21 +62,21 @@ Then enrich:
 ## 5. Search & Use
 
 - **`search(query, key="")`** — Semantic search across papers.
-- **`get_page(key, page)`** — Read raw extracted text of a page.
-- **`grep_raw(query, key="")`** — Normalized text search across PDFs.
+- **`get_paper(key, page=N)`** — Read raw extracted text of a page.
+- **`search(query, key="", mode="exact")`** — Normalized text search across PDFs.
 
 ## 6. Cite in LaTeX
 
-Use `find_cites(key)` to see where a paper is already cited.
-Use `search_corpus(query)` to find where to add new citations.
+Use `toc(locate='cite', query=key)` to see where a paper is already cited.
+Use `search(query, scope='corpus')` to find where to add new citations.
 
 ## Building institutional memory
 
-After reading any paper (via `search`, `get_page`, or quote
+After reading any paper (via `search`, `get_paper`, or quote
 verification), call `set_notes(key, ...)` with summary, relevance,
-claims, and quality. Check `get_notes(key)` first to avoid
-duplicates. This prevents future sessions from re-reading and
-re-verifying the same papers.
+claims, and quality. Check `get_paper(key)` first (notes always
+included) to avoid duplicates. This prevents future sessions from
+re-reading and re-verifying the same papers.
 
 ## Key format
 

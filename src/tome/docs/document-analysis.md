@@ -11,7 +11,7 @@ Start a session by understanding the document structure:
   Reads output of LaTeX compilation. Source file:line attribution requires
   the `\tomeinfo` currfile patch in the preamble. Without it, headings
   and page numbers still work but file attribution is omitted.
-- **`doc_tree()`** — Ordered file list from the `\input{}`/`\include{}`
+- **`toc(locate='tree')`** — Ordered file list from the `\input{}`/`\include{}`
   tree. Use at session start to see which files belong to a root.
 - **`get_summary()`** — Stored content summaries with staleness tracking.
 
@@ -31,17 +31,17 @@ Start a session by understanding the document structure:
 Track review findings by adding a `review_finding` pattern for
 `\mrev{id}{severity}{text}` in config.yaml's `track:` section. Then
 `review_status()` counts open findings by severity and file. Use
-`find_text("RIG-CON-001")` to locate a specific finding by ID.
+`search("RIG-CON-001", scope='corpus', mode='exact')` to locate a specific finding by ID.
 
 ## Text search
 
-- **`find_text(query)`** — Normalized search across `.tex` source. Strips
-  LaTeX commands, case-folds, collapses whitespace, normalizes unicode
-  and smart quotes. Use when you have text copied from the compiled PDF
-  and need to find the corresponding `.tex` source location.
-- **`grep_raw(query, key="")`** — Same normalization over raw PDF text
-  extractions. Also rejoins hyphenated line breaks. Ideal for verifying
-  copy-pasted quotes against source PDFs.
+- **`search(query, scope='corpus', mode='exact')`** — Normalized search
+  across `.tex` source. Strips LaTeX commands, case-folds, collapses
+  whitespace, normalizes unicode and smart quotes. Use when you have text
+  copied from the compiled PDF and need to find the `.tex` source location.
+- **`search(query, scope='papers', mode='exact', key="")`** — Same
+  normalization over raw PDF text extractions. Also rejoins hyphenated
+  line breaks. Ideal for verifying copy-pasted quotes against source PDFs.
 
 ### Paragraph mode (`paragraphs=N`)
 
@@ -58,15 +58,15 @@ page-keyed dict: `{"5": "...", "6": "..."}` so you know which page
 to cite. Single-paragraph results return a plain string.
 
 Matching uses two tiers:
-1. **Exact normalized substring** — same as default `grep_raw`
+1. **Exact normalized substring** — same as default exact mode
 2. **Token proximity** — finds paragraphs where query words appear
    close together, even if the exact phrase is broken by OCR artifacts
    or line-break hyphens that normalization missed
 
 Requires `key` (single-paper only). Example:
 ```
-grep_raw(query="cooperatively functioning rotaxanes",
-         key="feng2022", paragraphs=1)
+search("cooperatively functioning rotaxanes",
+       scope="papers", mode="exact", key="feng2022", paragraphs=1)
 ```
 
 ## Deep citation validation
