@@ -679,18 +679,59 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
             all_chunks.append(c)
             page_map.append(page_num)
 
-    # Commit: write bib
+    # Commit: resolve metadata (same logic as propose phase)
     id_result = identify.identify_pdf(pdf_path)
-    fields: dict[str, str] = {
-        "year": str(id_result.metadata.page_count if id_result.metadata else "")
-    }
-    if id_result.title_from_pdf:
-        fields["title"] = id_result.title_from_pdf
-    if id_result.authors_from_pdf:
-        fields["author"] = id_result.authors_from_pdf
+
+    crossref_result = None
+    if id_result.doi:
+        try:
+            crossref_result = crossref.check_doi(id_result.doi)
+        except Exception:
+            pass
+
+    s2_result = None
+    if crossref_result is None and id_result.title_from_pdf:
+        try:
+            s2_results = s2.search(id_result.title_from_pdf, limit=3)
+            if s2_results:
+                s2_result = s2_results[0]
+        except Exception:
+            pass
+
+    # Pull DOI from S2 if text extraction missed it
+    if not id_result.doi and s2_result and s2_result.doi:
+        id_result.doi = s2_result.doi
+        id_result.doi_source = "s2"
+
+    # Build bib fields from best available source
+    fields: dict[str, str] = {}
+    if crossref_result:
+        fields["title"] = crossref_result.title or id_result.title_from_pdf or ""
+        if crossref_result.authors:
+            fields["author"] = " and ".join(crossref_result.authors)
+        elif id_result.authors_from_pdf:
+            fields["author"] = id_result.authors_from_pdf
+        fields["year"] = str(crossref_result.year or "")
+        if crossref_result.journal:
+            fields["journal"] = crossref_result.journal
+    elif s2_result:
+        fields["title"] = s2_result.title or id_result.title_from_pdf or ""
+        if s2_result.authors:
+            fields["author"] = " and ".join(s2_result.authors)
+        elif id_result.authors_from_pdf:
+            fields["author"] = id_result.authors_from_pdf
+        fields["year"] = str(s2_result.year or "")
+    else:
+        if id_result.title_from_pdf:
+            fields["title"] = id_result.title_from_pdf
+        if id_result.authors_from_pdf:
+            fields["author"] = id_result.authors_from_pdf
+        fields["year"] = ""
+
     if id_result.doi:
         fields["doi"] = id_result.doi
-        fields["x-doi-status"] = "unchecked"
+        # If CrossRef confirmed the DOI during metadata resolution, mark verified
+        fields["x-doi-status"] = "verified" if crossref_result else "unchecked"
     else:
         fields["x-doi-status"] = "missing"
     fields["x-pdf"] = "true"
@@ -755,14 +796,28 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     except Exception:
         pass  # best-effort: inbox cleanup; file may be locked/gone
 
+    doi_status = fields.get("x-doi-status", "missing")
+    doi_hint = (
+        f"DOI verified via CrossRef. "
+        if doi_status == "verified"
+        else f"Verify: doi(key='{key}'). "
+        if doi_status == "unchecked"
+        else "No DOI found — add manually with paper(key='{key}', doi='...'). "
+    )
     return {
         "status": "ingested",
         "key": key,
+        "doi": fields.get("doi"),
+        "doi_status": doi_status,
+        "title": fields.get("title", ""),
+        "author": fields.get("author", ""),
+        "year": fields.get("year", ""),
+        "journal": fields.get("journal", ""),
         "pages": ext_result.pages,
         "chunks": len(all_chunks),
         "embedded": embedded,
         "next_steps": (
-            f"Verify: doi(key='{key}'). "
+            f"{doi_hint}"
             f"Enrich: notes(key='{key}', summary='...'). "
             f"See guide('paper-workflow') for the full pipeline."
         ),
