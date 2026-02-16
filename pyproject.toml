@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tome-mcp"
-version = "0.5.0"
+version = "0.5.1"
 description = "MCP server for managing a research paper library"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -50,7 +50,7 @@ dependencies = [
     "chromadb>=0.5.0",
     "PyMuPDF>=1.24.0",
     "bibtexparser>=2.0.0b1",
-    "httpx>=0.27.0",
+    "httpx>=0.27.0,<1.0",
     "mcp>=1.0.0",
     "PyYAML>=6.0",
     "rapidfuzz>=3.0.0",
@@ -110,7 +110,7 @@ ignore = ["E501"]  # line length managed by ruff format
 "tests/test_git_diff.py" = ["W293"]  # intentional trailing whitespace in diff fixtures
 
 [tool.bumpversion]
-current_version = "0.5.0"
+current_version = "0.5.1"
 commit = true
 tag = true
 tag_name = "v{new_version}"
