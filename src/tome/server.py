@@ -697,6 +697,10 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     Runs the full vault validation pipeline (PDF integrity, text quality,
     DOI-title fuzzy match, DOI duplicate check) before committing.
     """
+    from tome.vault import ensure_vault_dirs
+
+    ensure_vault_dirs()  # init catalog.db + vault dirs if missing
+
     if not key:
         return {
             "error": "Key is required for commit. Provide key='authorYYYYslug' (e.g. 'xu2022interference')."
