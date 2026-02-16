@@ -36,6 +36,7 @@ dependencies = [
     "PyYAML>=6.0",
     "rapidfuzz>=3.0.0",
     "chonkie[model2vec]>=1.0.0",
+    "stop-words>=2024.1.1",
 ]
 
 [project.urls]

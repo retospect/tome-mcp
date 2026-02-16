@@ -297,8 +297,9 @@ CREATE TABLE IF NOT EXISTS papers (
     verified_at     TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_key ON papers(key);
-CREATE INDEX IF NOT EXISTS idx_doi ON papers(doi);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_key ON papers(key);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_doi ON papers(doi) WHERE doi IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_path ON papers(vault_path) WHERE vault_path IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_first_author ON papers(first_author);
 CREATE INDEX IF NOT EXISTS idx_year ON papers(year);
 CREATE INDEX IF NOT EXISTS idx_status ON papers(status);
@@ -350,9 +351,34 @@ def init_catalog(path: Path | None = None) -> None:
 
 
 def catalog_upsert(meta: PaperMeta, path: Path | None = None) -> None:
-    """Insert or update a paper in catalog.db from PaperMeta."""
+    """Insert or update a paper in catalog.db from PaperMeta.
+
+    Raises:
+        DuplicateKey: If key already belongs to a different content_hash.
+        DuplicateDOI: If DOI already belongs to a different document.
+    """
+    from tome.errors import DuplicateDOI, DuplicateKey
+
     with _db(path) as conn:
         conn.executescript(_SCHEMA)  # ensure tables exist
+
+        # Pre-flight: check for key collision with different content_hash
+        existing = conn.execute(
+            "SELECT content_hash, key FROM papers WHERE key = ? AND content_hash != ?",
+            (meta.key, meta.content_hash),
+        ).fetchone()
+        if existing:
+            raise DuplicateKey(meta.key)
+
+        # Pre-flight: check for DOI collision with different content_hash
+        if meta.doi:
+            existing = conn.execute(
+                "SELECT content_hash, key FROM papers WHERE doi = ? AND content_hash != ?",
+                (meta.doi, meta.content_hash),
+            ).fetchone()
+            if existing:
+                raise DuplicateDOI(meta.doi, existing_key=existing["key"])
+
         conn.execute(
             """
             INSERT INTO papers (

@@ -1,4 +1,4 @@
-"""Generate URL-safe slugs from paper titles for bib key construction.
+"""Generate URL-safe slugs from document titles for bib key construction.
 
 Key format: authorYYYYslug — slug is 1-2 distinctive words from the title.
 """
@@ -8,17 +8,21 @@ from __future__ import annotations
 import re
 from unicodedata import normalize
 
-STOPWORDS = frozenset({
-    "a", "an", "the", "of", "for", "in", "on", "and", "with", "by",
-    "to", "from", "via", "using", "towards", "toward", "into", "its",
-    "new", "novel", "improved", "efficient", "highly", "based", "study",
-    "investigation", "analysis", "review", "recent", "advances", "are",
-    "that", "this", "their", "between", "through", "about", "can",
-    "has", "have", "been", "more", "than", "was", "were", "being",
-    "which", "also", "but", "not", "all", "each", "both", "such",
-    "when", "how", "what", "why", "where", "who", "will", "may",
-    "could", "should", "would", "upon", "over", "under",
+from stop_words import get_stop_words
+
+# Generic English stopwords from stop-words package (1300+)
+_ENGLISH_STOPS = frozenset(get_stop_words("en"))
+
+# Academic/technical filler words not in stop-words
+_ACADEMIC_FILLER = frozenset({
+    "advances", "analysis", "based", "efficient", "highly",
+    "improved", "investigation", "review", "study",
+    "comprehensive", "overview", "approach", "method", "methods",
+    "preliminary", "experimental", "theoretical", "computational",
+    "proposed", "systematic", "comparative", "general", "applied",
 })
+
+STOPWORDS = _ENGLISH_STOPS | _ACADEMIC_FILLER
 
 
 def slug_from_title(title: str, max_words: int = 2) -> str:

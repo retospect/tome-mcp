@@ -4351,6 +4351,170 @@ def file_diff(file: str, task: str = "", base: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
+# Vault: purgatory management
+# ---------------------------------------------------------------------------
+
+
+@mcp_server.tool()
+def purgatory(
+    key: str = "",
+    action: str = "",
+    title: str = "",
+    author: str = "",
+    year: str = "",
+    journal: str = "",
+    doi: str = "",
+    entry_type: str = "",
+    new_key: str = "",
+) -> str:
+    """Manage papers in purgatory (staging area before vault acceptance).
+
+    No args → list all purgatory entries (newest first).
+    key only → show details of one entry.
+    key + action="promote" → promote to vault (with optional metadata overrides).
+    key + action="discard" → remove from purgatory.
+
+    Args:
+        key: Purgatory entry key.
+        action: Explicit action — 'promote' or 'discard'.
+        title: Override title (promote mode).
+        author: Override authors in BibTeX format (promote mode).
+        year: Override year (promote mode).
+        journal: Override journal (promote mode).
+        doi: Override DOI (promote mode).
+        entry_type: Override entry type (promote mode).
+        new_key: Override vault key (promote mode).
+    """
+    from tome.purgatory import (
+        discard_paper,
+        get_purgatory_entry,
+        list_purgatory,
+        promote_paper,
+    )
+
+    # List mode
+    if not key and not action:
+        entries = list_purgatory()
+        if not entries:
+            return json.dumps({
+                "status": "empty",
+                "message": "Purgatory is empty. All papers have been reviewed.",
+            })
+        return json.dumps({
+            "status": "ok",
+            "count": len(entries),
+            "entries": [e.to_dict() for e in entries],
+        }, indent=2)
+
+    # Detail mode
+    if key and not action:
+        entry = get_purgatory_entry(key)
+        if entry is None:
+            return json.dumps({"error": f"Purgatory entry not found: {key}"})
+        return json.dumps({
+            "status": "ok",
+            "entry": entry.to_dict(),
+        }, indent=2)
+
+    # Promote mode
+    if action == "promote":
+        if not key:
+            return json.dumps({"error": "key required for promote"})
+        overrides: dict[str, Any] = {}
+        if title:
+            overrides["title"] = title
+        if author:
+            overrides["author"] = author
+        if year:
+            overrides["year"] = year
+        if journal:
+            overrides["journal"] = journal
+        if doi:
+            overrides["doi"] = doi
+        if entry_type:
+            overrides["entry_type"] = entry_type
+        if new_key:
+            overrides["key"] = new_key
+
+        try:
+            result = promote_paper(key, overrides=overrides if overrides else None)
+        except (KeyError, ValueError) as e:
+            return json.dumps({"error": str(e)})
+        return json.dumps({
+            "status": "promoted",
+            **result,
+        }, indent=2)
+
+    # Discard mode
+    if action == "discard":
+        if not key:
+            return json.dumps({"error": "key required for discard"})
+        removed = discard_paper(key)
+        if not removed:
+            return json.dumps({"error": f"Purgatory entry not found: {key}"})
+        return json.dumps({
+            "status": "discarded",
+            "key": key,
+        })
+
+    return json.dumps({"error": f"Unknown action: {action}"})
+
+
+# ---------------------------------------------------------------------------
+# Vault: paper link/unlink (project ↔ vault)
+# ---------------------------------------------------------------------------
+
+
+@mcp_server.tool()
+def link_paper(
+    key: str = "",
+    action: str = "",
+) -> str:
+    """Link or unlink a vault paper to the current project.
+
+    key only → link paper to project.
+    key + action="unlink" → unlink paper from project.
+    No args → list linked papers.
+    """
+    from tome.vault import (
+        catalog_get_by_key,
+        link_paper as vault_link,
+        project_papers,
+        unlink_paper,
+    )
+
+    project_id = str(_project_root())
+
+    if not key:
+        papers = project_papers(project_id)
+        return json.dumps({
+            "status": "ok",
+            "project": project_id,
+            "count": len(papers),
+            "papers": papers,
+        }, indent=2)
+
+    # Resolve key → content_hash via catalog
+    doc = catalog_get_by_key(key)
+    if doc is None:
+        return json.dumps({"error": f"No document with key '{key}' in vault catalog."})
+    content_hash = doc["content_hash"]
+
+    if action == "unlink":
+        try:
+            unlink_paper(project_id, content_hash)
+            return json.dumps({"status": "unlinked", "key": key})
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
+    try:
+        vault_link(project_id, content_hash, local_key=key)
+        return json.dumps({"status": "linked", "key": key})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

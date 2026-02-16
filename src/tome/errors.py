@@ -52,6 +52,34 @@ class DuplicateKey(TomeError):
         self.key = key
 
 
+class DuplicateDOI(TomeError):
+    """A document with this DOI already exists in the vault."""
+
+    def __init__(self, doi: str, existing_key: str = ""):
+        extra = f" (existing key: '{existing_key}')" if existing_key else ""
+        super().__init__(
+            f"DOI '{doi}' already exists in the vault{extra}. "
+            f"This PDF may be a duplicate. "
+            f"Use catalog_get_by_doi to inspect the existing entry, "
+            f"or choose a different DOI if this is a correction."
+        )
+        self.doi = doi
+        self.existing_key = existing_key
+
+
+class DuplicateExternalID(TomeError):
+    """A document with this external ID already exists in the vault."""
+
+    def __init__(self, external_id: str, existing_key: str = ""):
+        extra = f" (existing key: '{existing_key}')" if existing_key else ""
+        super().__init__(
+            f"External ID '{external_id}' already exists in the vault{extra}. "
+            f"This may be a duplicate patent, datasheet, or standard."
+        )
+        self.external_id = external_id
+        self.existing_key = existing_key
+
+
 class DOIResolutionFailed(TomeError):
     """CrossRef returned an error for a DOI lookup."""
 
