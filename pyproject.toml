@@ -40,9 +40,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/retostamm/tome-mcp"
-Repository = "https://github.com/retostamm/tome-mcp"
-Issues = "https://github.com/retostamm/tome-mcp/issues"
+Homepage = "https://github.com/retospect/tome-mcp"
+Repository = "https://github.com/retospect/tome-mcp"
+Issues = "https://github.com/retospect/tome-mcp/issues"
 
 [project.scripts]
 tome-mcp = "tome.server:main"
