@@ -3488,6 +3488,17 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
     return results
 
 
+def _dir_info(p: Path) -> dict[str, Any]:
+    """Return existence, absolute path, and item count for a directory."""
+    info: dict[str, Any] = {"path": str(p), "exists": p.is_dir()}
+    if p.is_dir():
+        try:
+            info["items"] = sum(1 for _ in p.iterdir())
+        except OSError:
+            info["items"] = -1
+    return info
+
+
 def _paper_stats() -> str:
     """Library statistics: paper counts, DOI status summary, pending figures and requests."""
     lib = _load_bib()
@@ -3507,6 +3518,13 @@ def _paper_stats() -> str:
     open_issues = issues_mod.count_open(_tome_dir())
     notes_count = len(notes_mod.list_notes(_tome_dir()))
 
+    proj = _project_root()
+    paths_info: dict[str, Any] = {
+        "home": _dir_info(tome_paths.home_dir()),
+        "project_cache": _dir_info(tome_paths.project_dir(proj)),
+        "tome": _dir_info(proj / "tome"),
+    }
+
     result: dict[str, Any] = {
         "total_papers": len(lib.entries),
         "with_pdf": has_pdf,
@@ -3515,6 +3533,7 @@ def _paper_stats() -> str:
         "open_requests": open_reqs,
         "papers_with_notes": notes_count,
         "open_issues": open_issues,
+        "paths": paths_info,
     }
     if not lib.entries:
         result["hint"] = (
