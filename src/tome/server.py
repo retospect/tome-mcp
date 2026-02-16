@@ -486,7 +486,7 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
         try:
             crossref_result = crossref.check_doi(result.doi)
         except Exception:
-            pass
+            pass  # best-effort: CrossRef down doesn't block proposal
 
     # Try S2 if we have a title but no DOI confirmation
     s2_result = None
@@ -496,7 +496,7 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
             if s2_results:
                 s2_result = s2_results[0]
         except Exception:
-            pass
+            pass  # best-effort: S2 down doesn't block proposal
 
     # Determine suggested key
     suggested_key = None
@@ -681,7 +681,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     try:
         pdf_path.unlink()
     except Exception:
-        pass
+        pass  # best-effort: inbox cleanup; file may be locked/gone
 
     return {
         "status": "ingested",
@@ -802,7 +802,7 @@ def _paper_remove(key: str) -> str:
         if doc:
             catalog_delete(doc["content_hash"])
     except Exception:
-        pass
+        pass  # best-effort: vault may not exist yet
 
     vault_archive = vault_dir() / (key + ARCHIVE_EXTENSION)
     if vault_archive.exists():
@@ -816,7 +816,7 @@ def _paper_remove(key: str) -> str:
         client = store.get_client(_vault_chroma())
         store.delete_paper(client, key, embed_fn=store.get_embed_fn())
     except Exception:
-        pass
+        pass  # best-effort: ChromaDB cleanup non-fatal
 
     # Remove from manifest
     data = _load_manifest()
@@ -912,7 +912,7 @@ def _paper_rename(old_key: str, new_key: str) -> str:
             col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
             col.delete(ids=[f"{old_key}::note"])
         except Exception:
-            pass
+            pass  # best-effort: note entry may not exist
 
         # Rebuild under new key if PDF exists
         new_pdf = pdf_dir / f"{new_key}.pdf"
@@ -973,7 +973,7 @@ def _paper_rename(old_key: str, new_key: str) -> str:
                     tex_files.append(f)
         cite_locations = latex.find_cite_locations(old_key, tex_files)
     except Exception:
-        pass
+        pass  # best-effort: cite scan is advisory only
 
     response: dict[str, Any] = {
         "status": "renamed",
@@ -1212,7 +1212,7 @@ def _notes_paper(
                 col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
                 col.delete(ids=[f"{key}::note"])
             except Exception:
-                pass
+                pass  # best-effort: ChromaDB note cleanup non-fatal
             return json.dumps({"key": key, "status": "cleared", "notes": None})
         to_clear = {f.strip() for f in clear.split(",") if f.strip()}
         updated = {k: v for k, v in existing.items() if k not in to_clear}
@@ -1228,7 +1228,7 @@ def _notes_paper(
             else:
                 col.delete(ids=[f"{key}::note"])
         except Exception:
-            pass
+            pass  # best-effort: ChromaDB note re-index non-fatal
         return json.dumps({"key": key, "status": "cleared", "cleared": sorted(to_clear), "notes": updated}, indent=2)
 
     if not writing:
@@ -1258,7 +1258,7 @@ def _notes_paper(
             metadatas=[{"bib_key": key, "source_type": "note"}],
         )
     except Exception:
-        pass
+        pass  # best-effort: note saved to YAML regardless
 
     return json.dumps({"key": key, "status": "updated", "notes": updated}, indent=2)
 
@@ -1328,7 +1328,7 @@ def _notes_file(
                 col.delete(ids=[f"{file}::meta"])
                 col.delete(ids=[f"{file}::summary"])
             except Exception:
-                pass
+                pass  # best-effort: ChromaDB meta cleanup non-fatal
             # Also clear summary sidecar
             sum_data = summaries.load_summaries(_dot_tome())
             if file in sum_data:
@@ -1367,7 +1367,7 @@ def _notes_file(
             if summary_fields:
                 col.delete(ids=[f"{file}::summary"])
         except Exception:
-            pass
+            pass  # best-effort: ChromaDB meta re-index non-fatal
         return json.dumps({"file": file, "status": "cleared", "cleared": sorted(to_clear), "meta": updated}, indent=2)
 
     if not writing:
@@ -1432,7 +1432,7 @@ def _notes_file(
                 }],
             )
         except Exception:
-            pass
+            pass  # best-effort: meta saved to file regardless
 
     sum_entry_out = None
     if writing_summary:
@@ -1475,7 +1475,7 @@ def _notes_file(
                 }],
             )
         except Exception:
-            pass
+            pass  # best-effort: summary saved to sidecar regardless
 
     result_data: dict[str, Any] = {"file": file, "status": "updated"}
     actions: list[str] = []
@@ -2196,7 +2196,7 @@ def _get_library_ids() -> tuple[set[str], set[str]]:
             if sid:
                 lib_s2_ids.add(sid)
     except Exception:
-        pass
+        pass  # best-effort: empty sets degrade gracefully
     return lib_dois, lib_s2_ids
 
 
@@ -2351,7 +2351,7 @@ def _discover_graph(key: str, doi: str, s2_id: str) -> dict[str, Any]:
                     "local_references": len(db.get_references(rec.corpus_id)),
                 }
     except Exception:
-        pass
+        pass  # best-effort: S2AG local cache optional
 
     result: dict[str, Any] = {"scope": "graph"}
     if "error" in s2_data and not s2_data.get("paper"):
@@ -2388,7 +2388,7 @@ def _discover_shared_citers(min_shared: int, min_year: int, n: int) -> dict[str,
                 results_list.extend(tree_results)
                 sources_used.append("cite_tree")
     except Exception:
-        pass
+        pass  # best-effort: cite_tree is one of several sources
 
     # --- Local S2AG ---
     try:
@@ -2418,7 +2418,7 @@ def _discover_shared_citers(min_shared: int, min_year: int, n: int) -> dict[str,
                         })
                 sources_used.append("s2ag_local")
     except Exception:
-        pass
+        pass  # best-effort: S2AG local is one of several sources
 
     # Deduplicate by DOI
     seen_dois: set[str] = set()
@@ -2597,7 +2597,7 @@ def _discover_lookup(doi: str, s2_id: str) -> dict[str, Any]:
                 result["local_references"] = len(refs)
                 return result
     except Exception:
-        pass
+        pass  # best-effort: falls through to S2 API
 
     # --- Fall back to S2 API ---
     paper_id = s2_id or (f"DOI:{doi}" if doi else "")
@@ -2698,7 +2698,7 @@ def _doi_fetch(key: str) -> str:
             cfg = _load_config()
             email = getattr(cfg, "unpaywall_email", None)
         except Exception:
-            pass
+            pass  # best-effort: env var checked first
     if not email:
         raise UnpaywallNotConfigured()
 
@@ -4005,7 +4005,7 @@ def set_root(path: str) -> str:
             tex_on_disk = sorted(r for r, ft in discovered.items() if ft == "tex")
             orphaned_tex = [f for f in tex_on_disk if f not in referenced]
         except Exception:
-            pass
+            pass  # best-effort: orphan detection is advisory
 
     response: dict[str, Any] = {
         "status": "root_changed",
@@ -4062,7 +4062,7 @@ def set_root(path: str) -> str:
                     response["toc"] = toc_info
                     break  # report first root only
         except Exception:
-            pass
+            pass  # best-effort: TOC preview is advisory
 
     # Surface open issues
     open_issues = issues_mod.count_open(tome_dir)
