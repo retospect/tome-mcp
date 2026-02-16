@@ -1,5 +1,10 @@
 # Tome
 
+[![PyPI version](https://img.shields.io/pypi/v/tome-mcp)](https://pypi.org/project/tome-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/tome-mcp)](https://pypi.org/project/tome-mcp/)
+[![CI](https://github.com/retospect/tome-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/retospect/tome-mcp/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+
 A Python MCP server that manages a research paper library: PDFs, bibliography,
 semantic search, figure tracking, and Semantic Scholar integration.
 
@@ -19,7 +24,7 @@ pip install tome-mcp
 For development (tests, linting):
 
 ```bash
-git clone https://github.com/retostamm/tome-mcp.git
+git clone https://github.com/retospect/tome-mcp.git
 cd tome-mcp
 python3 -m venv .venv
 source .venv/bin/activate

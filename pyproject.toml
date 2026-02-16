@@ -9,6 +9,22 @@ description = "MCP server for managing a research paper library"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "AGPL-3.0-or-later"}
+keywords = [
+    "mcp",
+    "model-context-protocol",
+    "research",
+    "papers",
+    "bibliography",
+    "bibtex",
+    "semantic-search",
+    "semantic-scholar",
+    "citation",
+    "latex",
+    "pdf",
+    "literature-review",
+    "ai-tools",
+    "llm",
+]
 authors = [
     {name = "Reto Stamm"},
 ]
@@ -26,6 +42,9 @@ classifiers = [
     "Topic :: Scientific/Engineering",
     "Topic :: Text Processing :: Markup :: LaTeX",
     "Typing :: Typed",
+    "Programming Language :: Python :: 3.13",
+    "Environment :: Plugins",
+    "Framework :: FastAPI",
 ]
 dependencies = [
     "chromadb>=0.5.0",
@@ -43,6 +62,7 @@ dependencies = [
 Homepage = "https://github.com/retospect/tome-mcp"
 Repository = "https://github.com/retospect/tome-mcp"
 Issues = "https://github.com/retospect/tome-mcp/issues"
+Changelog = "https://github.com/retospect/tome-mcp/blob/main/CHANGELOG.md"
 
 [project.scripts]
 tome-mcp = "tome.server:main"
