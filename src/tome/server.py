@@ -697,6 +697,16 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
     return proposal
 
 
+def _disambiguate_key(key: str, existing_keys: set[str]) -> str:
+    """Append a/b/c… suffix to *key* until it is unique in *existing_keys*."""
+    for suffix in "abcdefghijklmnopqrstuvwxyz":
+        candidate = f"{key}{suffix}"
+        if candidate not in existing_keys:
+            logger.info("Key '%s' exists — disambiguated to '%s'", key, candidate)
+            return candidate
+    raise ValueError(f"Exhausted key suffixes for '{key}'")
+
+
 def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     """Phase 2: Commit — validate, extract, embed, write bib, move file.
 
@@ -711,9 +721,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     lib = _load_bib()
     existing_keys = set(bib.list_keys(lib))
     if key in existing_keys:
-        return {
-            "error": f"Key '{key}' already exists. Use paper(key='{key}', title='...') to update, or choose another key."
-        }
+        key = _disambiguate_key(key, existing_keys)
 
     # Stage: extract text
     staging = _staging_dir() / key
@@ -840,10 +848,9 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     key = sanitize_key(key)
 
     lib = _load_bib()
-    if key in set(bib.list_keys(lib)):
-        return {
-            "error": f"Key '{key}' already exists. Use paper(key='{key}', title='...') to update, or choose another key."
-        }
+    existing_keys = set(bib.list_keys(lib))
+    if key in existing_keys:
+        key = _disambiguate_key(key, existing_keys)
     bib.add_entry(lib, key, "article", fields)
     bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
 
