@@ -71,6 +71,7 @@ def ensure_vault_dirs() -> None:
     """Create vault directory structure if it doesn't exist."""
     vault_dir().mkdir(parents=True, exist_ok=True)
     vault_chroma_dir().mkdir(parents=True, exist_ok=True)
+    init_catalog()
 
 
 @contextmanager
