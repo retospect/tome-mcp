@@ -4053,7 +4053,7 @@ def set_root(path: str) -> str:
             "Created standard Tome directory structure. "
             "Add .tome/ to .gitignore (it is a rebuildable cache). "
             "Drop PDFs in tome/inbox/ and run ingest(). "
-            "See examples/config.yaml in the Tome source for full config options."
+            "See guide('configuration') for config options."
         )
     if orphaned_tex:
         response["orphaned_tex"] = orphaned_tex
