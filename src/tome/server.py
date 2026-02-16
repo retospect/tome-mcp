@@ -3511,6 +3511,25 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
                 sha,
             )
 
+            # Write to catalog.db for dedup
+            from tome.vault import DocumentMeta, catalog_upsert
+
+            doc_meta = DocumentMeta(
+                content_hash=sha,
+                key=k,
+                doi=bib.get_field(entry, "doi"),
+                title=bib.get_field(entry, "title") or k,
+                first_author=(bib.get_field(entry, "author") or "").split(" and ")[0],
+                authors=(bib.get_field(entry, "author") or "").split(" and "),
+                year=int(bib.get_field(entry, "year")) if (bib.get_field(entry, "year") or "").isdigit() else None,
+                journal=bib.get_field(entry, "journal"),
+                page_count=ext_result.pages,
+            )
+            try:
+                catalog_upsert(doc_meta)
+            except Exception:
+                pass  # non-fatal: dedup catalog is rebuilt on next reindex
+
             results["rebuilt"].append({"key": k, "pages": ext_result.pages})
         except Exception as e:
             results["errors"].append({"key": k, "error": _sanitize_exc(e)})
