@@ -8,6 +8,7 @@ import pytest
 from tome.index import (
     IndexEntry,
     build_index,
+    is_stale,
     list_all_terms,
     load_index,
     parse_idx_file,
@@ -263,3 +264,43 @@ class TestListAllTerms:
         ])
         terms = list_all_terms(index)
         assert terms == ["alpha", "MOF", "Zebra"]
+
+
+class TestIsStale:
+    def test_no_idx_file(self, tmp_path):
+        dot_tome = tmp_path / ".tome"
+        dot_tome.mkdir()
+        idx = tmp_path / "main.idx"
+        # No .idx → nothing to rebuild from → not stale
+        assert is_stale(idx, dot_tome) is False
+
+    def test_idx_exists_no_cache(self, tmp_path):
+        dot_tome = tmp_path / ".tome"
+        dot_tome.mkdir()
+        idx = tmp_path / "main.idx"
+        idx.write_text("\\indexentry{test}{1}\n")
+        # .idx exists but no cache → stale
+        assert is_stale(idx, dot_tome) is True
+
+    def test_cache_newer_than_idx(self, tmp_path):
+        import time
+        dot_tome = tmp_path / ".tome"
+        dot_tome.mkdir()
+        idx = tmp_path / "main.idx"
+        idx.write_text("\\indexentry{test}{1}\n")
+        time.sleep(0.05)
+        # Build cache after .idx
+        rebuild_index(idx, dot_tome)
+        assert is_stale(idx, dot_tome) is False
+
+    def test_idx_newer_than_cache(self, tmp_path):
+        import time
+        dot_tome = tmp_path / ".tome"
+        dot_tome.mkdir()
+        idx = tmp_path / "main.idx"
+        idx.write_text("\\indexentry{test}{1}\n")
+        rebuild_index(idx, dot_tome)
+        time.sleep(0.05)
+        # Touch .idx to make it newer
+        idx.write_text("\\indexentry{test}{1}\n\\indexentry{new}{2}\n")
+        assert is_stale(idx, dot_tome) is True

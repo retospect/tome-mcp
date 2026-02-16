@@ -137,6 +137,39 @@ def _cap_response(result: str, name: str) -> str:
     )
 
 
+# Map tool names → relevant guide topics for error hints.
+# When a tool raises TomeError, the hint tells the LLM where to look.
+_TOOL_GUIDE: dict[str, str] = {
+    "paper": "paper-workflow",
+    "ingest": "paper-workflow",
+    "doi": "paper-workflow",
+    "notes": "notes",
+    "search": "search",
+    "toc": "document-analysis",
+    "doc_lint": "document-analysis",
+    "dep_graph": "document-analysis",
+    "review_status": "document-analysis",
+    "reindex": "search",
+    "needful": "needful",
+    "set_root": "getting-started",
+    "guide": "getting-started",
+    "discover": "exploration",
+    "explore": "exploration",
+    "report_issue": "reporting-issues",
+    "figure": "paper-workflow",
+    "validate_deep_cites": "search",
+    "file_diff": "review-cycle",
+}
+
+
+def _guide_hint(tool_name: str) -> str:
+    """Return a guide hint string for a tool, or empty if no mapping."""
+    topic = _TOOL_GUIDE.get(tool_name, "")
+    if topic:
+        return f" See guide('{topic}') for usage."
+    return ""
+
+
 def _logging_tool(**kwargs):
     """Drop-in replacement for ``mcp_server.tool()`` that adds invocation logging."""
     decorator = _original_tool(**kwargs)
@@ -157,6 +190,9 @@ def _logging_tool(**kwargs):
                 return _cap_response(result, name) if isinstance(result, str) else result
             except TomeError as exc:
                 dt = time.monotonic() - t0
+                hint = _guide_hint(name)
+                if hint and hint.rstrip(". ") not in str(exc):
+                    exc.args = (str(exc) + hint,)
                 logger.warning(
                     "TOOL %s failed (%s) after %.2fs: %s",
                     name, type(exc).__name__, dt, exc,
@@ -545,7 +581,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     existing_keys = set(bib.list_keys(lib))
     if key in existing_keys:
         return {
-            "error": f"Key '{key}' already exists. Use set_paper to update, or choose another key."
+            "error": f"Key '{key}' already exists. Use paper(key='{key}', title='...') to update, or choose another key."
         }
 
     # Stage: extract text
@@ -588,7 +624,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     lib = _load_bib()
     if key in set(bib.list_keys(lib)):
         return {
-            "error": f"Key '{key}' already exists. Use set_paper to update, or choose another key."
+            "error": f"Key '{key}' already exists. Use paper(key='{key}', title='...') to update, or choose another key."
         }
     bib.add_entry(lib, key, "article", fields)
     bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
@@ -657,15 +693,14 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
         "chunks": len(all_chunks),
         "embedded": embedded,
         "next_steps": (
-            f"Verify: check_doi(key='{key}'). "
-            f"Enrich: set_notes(key='{key}', summary='...'). "
+            f"Verify: doi(key='{key}'). "
+            f"Enrich: notes(key='{key}', summary='...'). "
             f"See guide('paper-workflow') for the full pipeline."
         ),
     }
 
 
-@mcp_server.tool()
-def set_paper(
+def _paper_set(
     key: str,
     title: str = "",
     author: str = "",
@@ -738,8 +773,7 @@ def set_paper(
     return json.dumps({"status": action, "key": key})
 
 
-@mcp_server.tool()
-def remove_paper(key: str) -> str:
+def _paper_remove(key: str) -> str:
     """Remove a paper from the library. Deletes all associated data.
 
     Args:
@@ -777,8 +811,7 @@ def remove_paper(key: str) -> str:
     return json.dumps({"status": "removed", "key": key})
 
 
-@mcp_server.tool()
-def rename_paper(old_key: str, new_key: str) -> str:
+def _paper_rename(old_key: str, new_key: str) -> str:
     """Rename a paper's bib key across the entire library.
 
     Renames the bib entry, PDF, notes, raw text, ChromaDB index, and
@@ -933,8 +966,7 @@ def rename_paper(old_key: str, new_key: str) -> str:
     return json.dumps(response, indent=2)
 
 
-@mcp_server.tool()
-def get_paper(key: str, page: int = 0) -> str:
+def _paper_get(key: str, page: int = 0) -> str:
     """Get full metadata for a paper in the library.
 
     Args:
@@ -971,15 +1003,116 @@ def get_paper(key: str, page: int = 0) -> str:
     return json.dumps(result, indent=2)
 
 
-# get_notes has been folded into get_paper (notes are always included).
-# get_page has been folded into get_paper(page=N).
+# get_notes has been folded into paper(key=...) (notes are always included).
+# get_page has been folded into paper(key=..., page=N).
+# set_paper, remove_paper, rename_paper, list_papers, request_paper,
+# list_requests, stats have been folded into paper().
 
 
 @mcp_server.tool()
-def set_notes(
+def paper(
+    key: str = "",
+    page: int = 0,
+    action: str = "",
+    # set fields
+    title: str = "",
+    author: str = "",
+    year: str = "",
+    journal: str = "",
+    doi: str = "",
+    tags: str = "",
+    entry_type: str = "article",
+    raw_field: str = "",
+    raw_value: str = "",
+    # rename
+    new_key: str = "",
+    # list filters
+    status: str = "",
+    # request fields
+    reason: str = "",
+    tentative_title: str = "",
+) -> str:
+    """Unified paper management. Read, write, list, rename, remove, request.
+
+    No args → library stats overview.
+    key only → get paper metadata (+ notes, page text if page>0).
+    key + write fields (title/author/year/...) → create or update bib entry.
+    action='list' → list papers (filter by tags, status).
+    action='rename' → rename key (requires key + new_key).
+    action='remove' → remove paper and all data (requires key).
+    action='request' → track a wanted paper (requires key).
+    action='requests' → list open paper requests.
+
+    Args:
+        key: Bib key (e.g. 'miller1999'). Same as used in \\cite{}.
+        page: Page number (1-indexed) to include raw text for. 0 = no page text.
+        action: Explicit action — 'list', 'rename', 'remove', 'request', 'requests'.
+        title: Paper title (for set/request).
+        author: Authors in BibTeX format ('Surname, Given and Surname2, Given2').
+        year: Publication year.
+        journal: Journal name.
+        doi: DOI string. Setting a DOI changes x-doi-status to 'unchecked'.
+        tags: Comma-separated tags (replaces existing x-tags).
+        entry_type: BibTeX entry type (article, inproceedings, misc, etc.).
+        raw_field: For LaTeX-specific field values — field name to set verbatim.
+        raw_value: The verbatim value for raw_field (no escaping applied).
+        new_key: New bib key for rename action.
+        status: Filter by x-doi-status when action='list'.
+        reason: Why you need this paper (for request action).
+        tentative_title: Best-guess title (for request action).
+    """
+    # --- Explicit actions ---
+    if action == "list":
+        return _paper_list(tags=tags, status=status, page=page or 1)
+
+    if action == "requests":
+        return _paper_list_requests()
+
+    if action == "request":
+        if not key:
+            return json.dumps({"error": "key is required for action='request'."
+                               + _guide_hint("paper")})
+        return _paper_request(key=key, doi=doi, reason=reason,
+                              tentative_title=tentative_title)
+
+    if action == "rename":
+        if not key or not new_key:
+            return json.dumps({"error": "Both key and new_key are required for rename."
+                               + _guide_hint("paper")})
+        return _paper_rename(key, new_key)
+
+    if action == "remove":
+        if not key:
+            return json.dumps({"error": "key is required for action='remove'."
+                               + _guide_hint("paper")})
+        return _paper_remove(key)
+
+    # --- No action specified ---
+
+    # No args at all → stats overview
+    if not key:
+        return _paper_stats()
+
+    # key + any write fields → set/update
+    write_fields = (title, author, year, journal, doi, tags, raw_field)
+    if any(write_fields):
+        return _paper_set(
+            key=key, title=title, author=author, year=year,
+            journal=journal, doi=doi, tags=tags, entry_type=entry_type,
+            raw_field=raw_field, raw_value=raw_value,
+        )
+
+    # key only → get
+    return _paper_get(key=key, page=page)
+
+
+@mcp_server.tool()
+def notes(
     key: str = "",
     file: str = "",
     summary: str = "",
+    short: str = "",
+    sections: str = "",
     claims: str = "",
     relevance: str = "",
     limitations: str = "",
@@ -990,35 +1123,92 @@ def set_notes(
     depends: str = "",
     open: str = "",
     clear: str = "",
+    fields: str = "",
 ) -> str:
     """Read, write, or delete notes. Provide paper key or tex file path.
 
     No fields → read.  field="text" → stores text, overwrites existing.
     clear="field" or clear="*" → deletes fields.  Cannot mix clear with writes.
+
+    For files, summary/short/sections are stored in .tome/summaries.json
+    (sidecar) while other fields are stored as in-file meta comments.
+    Staleness is tracked via git history since last_summarized date.
+
+    Named params (summary, claims, etc.) are convenience aliases for the
+    default field sets.  For custom fields defined in config.yaml note_fields,
+    pass a JSON object via the 'fields' param, e.g. fields='{"my_field": "value"}'.
+    Named params and 'fields' JSON are merged (named params take priority).
+
+    Args:
+        key: Bib key for paper notes.
+        file: Relative path for file notes/summaries.
+        summary: Paper summary (key mode) or file content summary (file mode).
+        short: One-line short summary (< 80 chars, file mode only).
+        sections: JSON array of {"lines": "1-45", "description": "..."} (file mode only).
+        claims: Key claims (paper mode) or file claims (file mode).
+        relevance: Relevance notes (paper mode only).
+        limitations: Limitations (paper mode only).
+        quality: Quality assessment (paper mode only).
+        tags: Tags (paper mode only).
+        intent: Section intent (file mode only).
+        status: Editorial status (file mode only).
+        depends: Cross-section dependencies (file mode only).
+        open: Open questions (file mode only).
+        clear: Field name to clear, or "*" for all.
+        fields: JSON object for custom fields.
     """
     if not key and not file:
-        return json.dumps({"error": "Provide key (paper) or file (tex file)."})
+        return json.dumps({"error": "Provide key (paper) or file (tex file).",
+                           "hint": "See guide('notes') for usage."})
     if key and file:
-        return json.dumps({"error": "Provide key OR file, not both."})
+        return json.dumps({"error": "Provide key OR file, not both.",
+                           "hint": "See guide('notes') for usage."})
+
+    # Parse generic fields JSON
+    extra: dict[str, str] = {}
+    if fields:
+        try:
+            extra = json.loads(fields)
+            if not isinstance(extra, dict):
+                return json.dumps({"error": "fields must be a JSON object.",
+                                   "hint": "Pass a JSON object, e.g. fields='{\"my_field\": \"value\"}'. See guide('notes')."})
+            extra = {str(k): str(v) for k, v in extra.items()}
+        except json.JSONDecodeError as e:
+            return json.dumps({"error": f"Invalid JSON in fields: {e}",
+                               "hint": "See guide('notes') for usage."})
 
     if key:
-        return _notes_paper(key, summary, claims, relevance, limitations, quality, tags, clear)
+        return _notes_paper(key, summary, claims, relevance, limitations, quality, tags, clear, extra)
     else:
-        return _notes_file(file, intent, status, claims, depends, open, clear)
+        return _notes_file(file, intent, status, claims, depends, open, clear, extra,
+                           summary=summary, short=short, sections_json=sections)
 
 
 def _notes_paper(
     key: str, summary: str, claims: str, relevance: str,
     limitations: str, quality: str, tags: str, clear: str,
+    extra: dict[str, str] | None = None,
 ) -> str:
     """Paper notes — read, write, or clear."""
     validate.validate_key(key)
+    cfg = _load_config()
+    allowed = set(cfg.paper_note_fields)
     paper_fields = {
         "summary": summary, "claims": claims, "relevance": relevance,
         "limitations": limitations, "quality": quality, "tags": tags,
     }
+    # Merge extra fields
+    if extra:
+        for k, v in extra.items():
+            if k not in paper_fields:  # named params take priority
+                paper_fields[k] = v
+    # Validate against config
+    bad = {k for k in paper_fields if paper_fields[k] and k not in allowed}
+    if bad:
+        return json.dumps({"error": f"Unknown paper note fields: {sorted(bad)}. "
+                           f"Allowed: {cfg.paper_note_fields}"})
     writing = any(paper_fields.values())
-    existing = notes_mod.load_note(_tome_dir(), key)
+    existing = notes_mod.load_note(_tome_dir(), key, allowed)
 
     if clear and writing:
         return json.dumps({"error": "clear cannot be combined with write fields."})
@@ -1055,7 +1245,9 @@ def _notes_paper(
     if not writing:
         # Read mode
         if not existing:
-            return json.dumps({"key": key, "notes": None, "hint": "No notes yet."})
+            return json.dumps({"key": key, "notes": None,
+                               "fields": cfg.paper_note_fields,
+                               "hint": "No notes yet."})
         return json.dumps({"key": key, "notes": existing}, indent=2)
 
     # Write mode — overwrite non-empty fields
@@ -1063,10 +1255,10 @@ def _notes_paper(
     for field_name, value in paper_fields.items():
         if value:
             updated[field_name] = value
-    notes_mod.save_note(_tome_dir(), key, updated)
+    notes_mod.save_note(_tome_dir(), key, updated, allowed)
 
     # Index into ChromaDB
-    flat_text = notes_mod.flatten_for_search(key, updated)
+    flat_text = notes_mod.flatten_for_search(key, updated, cfg.paper_note_fields)
     try:
         client = store.get_client(_chroma_dir())
         embed_fn = store.get_embed_fn()
@@ -1085,25 +1277,59 @@ def _notes_paper(
 def _notes_file(
     file: str, intent: str, status: str, claims: str,
     depends: str, open_q: str, clear: str,
+    extra: dict[str, str] | None = None,
+    summary: str = "", short: str = "", sections_json: str = "",
 ) -> str:
-    """File meta notes — read, write, or clear."""
+    """File meta notes — read, write, or clear.
+
+    Meta fields (intent, status, etc.) are stored in-file as comments.
+    Summary fields (summary, short, sections) are stored in .tome/summaries.json.
+    """
     validate.validate_relative_path(file, field="file")
     file_path = _project_root() / file
     if not file_path.exists():
         return json.dumps({"error": f"File not found: {file}"})
 
+    cfg = _load_config()
+    allowed = set(cfg.file_note_fields)
     file_fields = {
         "intent": intent, "status": status, "claims": claims,
         "depends": depends, "open": open_q,
     }
-    writing = any(file_fields.values())
-    existing = file_meta_mod.parse_meta_from_file(file_path)
+    # Merge extra fields
+    if extra:
+        for k, v in extra.items():
+            if k not in file_fields:
+                file_fields[k] = v
+    # Validate against config
+    bad = {k for k in file_fields if file_fields[k] and k not in allowed}
+    if bad:
+        return json.dumps({"error": f"Unknown file note fields: {sorted(bad)}. "
+                           f"Allowed: {cfg.file_note_fields}"})
+
+    # Parse sections JSON if provided
+    section_list: list | None = None
+    if sections_json:
+        try:
+            section_list = json.loads(sections_json)
+            if not isinstance(section_list, list):
+                return json.dumps({"error": "sections must be a JSON array.",
+                                   "hint": "See guide('notes') for usage."})
+        except json.JSONDecodeError as e:
+            return json.dumps({"error": f"Invalid JSON in sections: {e}",
+                               "hint": "See guide('notes') for usage."})
+
+    writing_meta = any(file_fields.values())
+    writing_summary = bool(summary or short or section_list is not None)
+    writing = writing_meta or writing_summary
+    existing = file_meta_mod.parse_meta_from_file(file_path, allowed)
 
     if clear and writing:
         return json.dumps({"error": "clear cannot be combined with write fields."})
 
     if clear:
         # Clear mode
+        clear_summary = clear.strip() == "*" or "summary" in clear
         if clear.strip() == "*":
             file_meta_mod.write_meta(file_path, {})
             try:
@@ -1111,12 +1337,33 @@ def _notes_file(
                 embed_fn = store.get_embed_fn()
                 col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
                 col.delete(ids=[f"{file}::meta"])
+                col.delete(ids=[f"{file}::summary"])
             except Exception:
                 pass
-            return json.dumps({"file": file, "status": "cleared", "meta": None})
+            # Also clear summary sidecar
+            sum_data = summaries.load_summaries(_dot_tome())
+            if file in sum_data:
+                del sum_data[file]
+                summaries.save_summaries(_dot_tome(), sum_data)
+            return json.dumps({"file": file, "status": "cleared", "meta": None, "summary_cleared": True})
         to_clear = {f.strip() for f in clear.split(",") if f.strip()}
-        updated = {k: v for k, v in existing.items() if k not in to_clear}
-        file_meta_mod.write_meta(file_path, updated)
+        # Clear summary fields from sidecar
+        summary_fields = to_clear & {"summary", "short", "sections"}
+        if summary_fields:
+            sum_data = summaries.load_summaries(_dot_tome())
+            entry = sum_data.get(file, {})
+            for sf in summary_fields:
+                entry.pop(sf, None)
+            if entry:
+                sum_data[file] = entry
+            else:
+                sum_data.pop(file, None)
+            summaries.save_summaries(_dot_tome(), sum_data)
+        # Clear meta fields from file
+        meta_fields = to_clear - {"summary", "short", "sections"}
+        updated = {k: v for k, v in existing.items() if k not in meta_fields}
+        if meta_fields:
+            file_meta_mod.write_meta(file_path, updated)
         flat_text = file_meta_mod.flatten_for_search(file, updated)
         try:
             client = store.get_client(_chroma_dir())
@@ -1128,42 +1375,151 @@ def _notes_file(
                                        "file_type": file_path.suffix.lstrip(".")}])
             else:
                 col.delete(ids=[f"{file}::meta"])
+            if summary_fields:
+                col.delete(ids=[f"{file}::summary"])
         except Exception:
             pass
         return json.dumps({"file": file, "status": "cleared", "cleared": sorted(to_clear), "meta": updated}, indent=2)
 
     if not writing:
-        # Read mode
-        if not existing:
-            return json.dumps({"file": file, "meta": None, "hint": "No meta block."})
-        return json.dumps({"file": file, "meta": existing}, indent=2)
+        # Read mode — merge file meta + summary sidecar
+        sum_data = summaries.load_summaries(_dot_tome())
+        sum_entry = summaries.get_summary(sum_data, file)
+        result: dict[str, Any] = {"file": file}
 
-    # Write mode — overwrite non-empty fields
-    updated = dict(existing)
-    for field_name, value in file_fields.items():
-        if value:
-            updated[field_name] = value
-    file_meta_mod.write_meta(file_path, updated)
+        if existing:
+            result["meta"] = existing
+        else:
+            result["meta"] = None
 
-    # Index into ChromaDB
-    flat_text = file_meta_mod.flatten_for_search(file, updated)
-    try:
-        client = store.get_client(_chroma_dir())
-        embed_fn = store.get_embed_fn()
-        col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
-        col.upsert(
-            ids=[f"{file}::meta"],
-            documents=[flat_text],
-            metadatas=[{
-                "source_file": file,
-                "source_type": "file_meta",
-                "file_type": file_path.suffix.lstrip("."),
-            }],
+        if sum_entry:
+            result["summary"] = sum_entry.get("summary", "")
+            result["short"] = sum_entry.get("short", "")
+            result["sections"] = sum_entry.get("sections", [])
+            last = sum_entry.get("last_summarized") or sum_entry.get("updated", "")
+            result["last_summarized"] = last
+            # Git-based staleness
+            if last:
+                commits = summaries.git_changes_since(_project_root(), file, last)
+                if commits == 0:
+                    result["summary_status"] = "fresh"
+                elif commits > 0:
+                    result["summary_status"] = "stale"
+                    result["commits_since_summary"] = commits
+                else:
+                    result["summary_status"] = "unknown"
+            else:
+                result["summary_status"] = "unknown"
+        else:
+            result["summary"] = None
+
+        if not existing and not sum_entry:
+            result["fields"] = cfg.file_note_fields
+            result["hint"] = "No meta or summary stored."
+
+        return json.dumps(result, indent=2)
+
+    # Write mode — route meta fields to file, summary fields to sidecar
+    if writing_meta:
+        updated = dict(existing)
+        for field_name, value in file_fields.items():
+            if value:
+                updated[field_name] = value
+        file_meta_mod.write_meta(file_path, updated, cfg.file_note_fields)
+
+        # Index meta into ChromaDB
+        flat_text = file_meta_mod.flatten_for_search(file, updated, cfg.file_note_fields)
+        try:
+            client = store.get_client(_chroma_dir())
+            embed_fn = store.get_embed_fn()
+            col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
+            col.upsert(
+                ids=[f"{file}::meta"],
+                documents=[flat_text],
+                metadatas=[{
+                    "source_file": file,
+                    "source_type": "file_meta",
+                    "file_type": file_path.suffix.lstrip("."),
+                }],
+            )
+        except Exception:
+            pass
+
+    sum_entry_out = None
+    if writing_summary:
+        # Dirty-git guard: summary staleness is tracked via git history,
+        # so storing a summary against uncommitted changes would make
+        # last_summarized meaningless — the date would anchor to a commit
+        # that doesn't contain the current file content.
+        if summaries.git_file_is_dirty(_project_root(), file):
+            return json.dumps({
+                "error": f"File '{file}' has uncommitted changes. "
+                         "Commit first, then store the summary.",
+                "hint": (
+                    "Summary staleness is tracked by git commits since "
+                    "last_summarized. Storing against dirty state would make "
+                    "the date unreliable — the next read would immediately "
+                    "show 'stale' once you commit."
+                ),
+            })
+        sum_data = summaries.load_summaries(_dot_tome())
+        sum_entry_out = summaries.set_summary(
+            sum_data, file, summary, short,
+            section_list if section_list is not None else [],
         )
-    except Exception:
-        pass
+        summaries.save_summaries(_dot_tome(), sum_data)
 
-    return json.dumps({"file": file, "status": "updated", "meta": updated}, indent=2)
+        # Index summary into ChromaDB
+        flat_text = f"File: {file}\nSummary: {sum_entry_out.get('summary', '')}\nShort: {sum_entry_out.get('short', '')}"
+        for sec in sum_entry_out.get("sections", []):
+            flat_text += f"\nSection ({sec.get('lines', '?')}): {sec.get('description', '')}"
+        try:
+            client = store.get_client(_chroma_dir())
+            embed_fn = store.get_embed_fn()
+            col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
+            col.upsert(
+                ids=[f"{file}::summary"],
+                documents=[flat_text],
+                metadatas=[{
+                    "source_file": file,
+                    "source_type": "summary",
+                }],
+            )
+        except Exception:
+            pass
+
+    result_data: dict[str, Any] = {"file": file, "status": "updated"}
+    actions: list[str] = []
+    if writing_meta:
+        result_data["meta"] = updated
+        actions.append("file meta updated")
+    if sum_entry_out:
+        result_data["summary"] = sum_entry_out
+        actions.append(f"summary stored (last_summarized: {sum_entry_out.get('last_summarized', '?')})")
+        # Auto-mark 'summarize' needful task as done — file is committed
+        # (dirty guard passed above), so we can safely snapshot the git SHA.
+        try:
+            cfg = _load_config()
+            task_names = {t.name for t in cfg.needful_tasks}
+            # Match any task containing "summar" (summarize, summary, etc.)
+            summ_tasks = [t for t in task_names if "summar" in t.lower()]
+            if summ_tasks:
+                file_sha = checksum.sha256_file(file_path)
+                git_sha = needful_mod._git_head_sha(_project_root())
+                state = needful_mod.load_state(_dot_tome())
+                for t in summ_tasks:
+                    needful_mod.mark_done(state, t, file, file_sha,
+                                         note="auto: summary stored via notes()",
+                                         git_sha=git_sha)
+                needful_mod.save_state(_dot_tome(), state)
+                result_data["needful_marked_done"] = summ_tasks
+                if git_sha:
+                    result_data["git_sha"] = git_sha
+                actions.append(f"needful task(s) {summ_tasks} marked done at git {git_sha[:8] if git_sha else '?'}")
+        except Exception:
+            pass  # needful auto-mark is best-effort
+    result_data["message"] = "Done: " + "; ".join(actions) + "."
+    return json.dumps(result_data, indent=2)
 
 
 _LIST_PAGE_SIZE = 50
@@ -1178,8 +1534,7 @@ def _truncate(items: list, label: str = "results") -> dict[str, Any]:
     return {label: items[:_MAX_RESULTS], "truncated": len(items) - _MAX_RESULTS}
 
 
-@mcp_server.tool()
-def list_papers(tags: str = "", status: str = "", page: int = 1) -> str:
+def _paper_list(tags: str = "", status: str = "", page: int = 1) -> str:
     """List papers in the library. Returns a summary table.
 
     Args:
@@ -1222,15 +1577,14 @@ def list_papers(tags: str = "", status: str = "", page: int = 1) -> str:
     if total == 0:
         result["hint"] = (
             "Library is empty. Use ingest() to add papers from tome/inbox/, "
-            "or set_paper() to create entries."
+            "or paper(key='...', title='...') to create entries."
         )
     elif page < total_pages:
         result["hint"] = f"Use page={page + 1} for more."
     return json.dumps(result, indent=2)
 
 
-@mcp_server.tool()
-def check_doi(key: str = "") -> str:
+def _doi_check(key: str = "") -> str:
     """Verify DOI(s) via CrossRef. With a key: checks that paper's DOI.
     Without a key: checks all papers with x-doi-status='unchecked' or
     no x-doi-status field (i.e. never checked).
@@ -1409,7 +1763,7 @@ def _search_papers(
     if not results:
         response["hint"] = (
             "No results. Try broader terms, or check that papers have been "
-            "ingested and embedded (stats() to verify)."
+            "ingested and embedded (paper() to verify)."
         )
     return json.dumps(response, indent=2)
 
@@ -1511,7 +1865,7 @@ def _search_corpus(
     }
     if not results:
         response["hint"] = (
-            "No results. Run sync_corpus() to index files, "
+            "No results. Run reindex(scope='corpus') to index files, "
             "or check tex_globs in tome/config.yaml."
         )
     return json.dumps(response, indent=2)
@@ -1684,13 +2038,42 @@ def _search_all(
 
 
 @mcp_server.tool()
-def sync_corpus(paths: str = "sections/*.tex") -> str:
-    """Force re-index .tex/.py files into the search index. Compares checksums
-    to detect changed, new, and deleted files. Only re-processes what changed.
+def reindex(
+    scope: str = "all",
+    key: str = "",
+    paths: str = "sections/*.tex",
+) -> str:
+    """Re-index papers, corpus files, or both into the search index.
+
+    scope='corpus' (or paths provided) → re-index .tex/.py files.
+    scope='papers' (or key provided) → re-extract PDFs and rebuild embeddings.
+    scope='all' → both corpus and papers.
 
     Args:
-        paths: Glob patterns to index (default: 'sections/*.tex').
+        scope: What to re-index — 'all', 'papers', or 'corpus'.
+        key: Bib key to rebuild one paper (implies scope='papers').
+        paths: Glob patterns for corpus indexing (default: 'sections/*.tex').
     """
+    # key implies papers scope; explicit scope overrides
+    if key and scope == "all":
+        scope = "papers"
+
+    do_corpus = scope in ("all", "corpus")
+    do_papers = scope in ("all", "papers")
+
+    result: dict[str, Any] = {"scope": scope}
+
+    if do_corpus:
+        result["corpus"] = _reindex_corpus(paths)
+
+    if do_papers:
+        result["papers"] = _reindex_papers(key)
+
+    return json.dumps(result, indent=2)
+
+
+def _reindex_corpus(paths: str) -> dict[str, Any]:
+    """Re-index .tex/.py files into the corpus search index."""
     root = _project_root()
     patterns = [p.strip() for p in paths.split(",") if p.strip()]
 
@@ -1728,12 +2111,12 @@ def sync_corpus(paths: str = "sections/*.tex") -> str:
     col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
 
     for f in removed:
-        logger.info("sync_corpus: removing %s", f)
+        logger.info("reindex corpus: removing %s", f)
         store.delete_corpus_file(client, f, embed_fn)
 
     to_index = changed + added
     for i, f in enumerate(to_index, 1):
-        logger.info("sync_corpus: indexing %s (%d/%d)", f, i, len(to_index))
+        logger.info("reindex corpus: indexing %s (%d/%d)", f, i, len(to_index))
         store.delete_corpus_file(client, f, embed_fn)
         abs_path = root / f
         text = abs_path.read_text(encoding="utf-8")
@@ -1765,9 +2148,10 @@ def sync_corpus(paths: str = "sections/*.tex") -> str:
         except Exception:
             pass  # Don't fail sync over orphan detection
 
-    # Check for stale/missing summaries
+    # Check for stale/missing summaries (git-based)
     sum_data = summaries.load_summaries(_dot_tome())
-    stale = summaries.check_staleness(sum_data, current_files)
+    stale_list = summaries.check_staleness_git(sum_data, root, list(current_files.keys()))
+    stale = {e["file"]: e["status"] for e in stale_list if e["status"] != "fresh"}
 
     # Count by file type
     type_counts: dict[str, int] = {}
@@ -1775,7 +2159,7 @@ def sync_corpus(paths: str = "sections/*.tex") -> str:
         ft = _file_type(f)
         type_counts[ft] = type_counts.get(ft, 0) + 1
 
-    result: dict[str, Any] = {
+    corpus_result: dict[str, Any] = {
         "added": len(added),
         "changed": len(changed),
         "removed": len(removed),
@@ -1784,18 +2168,18 @@ def sync_corpus(paths: str = "sections/*.tex") -> str:
         "by_type": type_counts,
     }
     if orphans:
-        result["orphaned_tex"] = orphans
-        result["orphan_hint"] = (
+        corpus_result["orphaned_tex"] = orphans
+        corpus_result["orphan_hint"] = (
             "These .tex files exist but are not in any \\input{} tree. "
             "They may be unused or need to be \\input'd."
         )
     if stale:
-        result["stale_summaries"] = stale
-        result["hint"] = (
-            "Some file summaries are stale or missing. Consider running "
-            "get_summary(file=<path>) to check, then summarize_file() to update."
+        corpus_result["stale_summaries"] = stale
+        corpus_result["hint"] = (
+            "Some file summaries are stale or missing. Use "
+            "notes(file=<path>) to check, then update with summary/short/sections params."
         )
-    return json.dumps(result)
+    return corpus_result
 
 
 # ---------------------------------------------------------------------------
@@ -1803,31 +2187,9 @@ def sync_corpus(paths: str = "sections/*.tex") -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool()
-def rebuild_doc_index(root: str = "default") -> str:
-    """Rebuild the document index from the .idx file produced by makeindex.
 
-    Args:
-        root: Named root from config.yaml (default: 'default').
-    """
-    cfg = tome_config.load_config(_tome_dir())
-    root_tex = cfg.roots.get(root, cfg.roots.get("default", "main.tex"))
-    # .idx file has same stem as the root .tex file
-    idx_stem = Path(root_tex).stem
-    idx_path = _project_root() / f"{idx_stem}.idx"
-
-    if not idx_path.exists():
-        return json.dumps({
-            "error": f"No .idx file found at {idx_stem}.idx. "
-                     "Compile with pdflatex first, then run makeindex.",
-        })
-
-    index = index_mod.rebuild_index(idx_path, _dot_tome())
-    return json.dumps({
-        "status": "rebuilt",
-        "total_terms": index["total_terms"],
-        "total_entries": index["total_entries"],
-    })
+# rebuild_doc_index has been folded into toc(locate="index").
+# The index auto-rebuilds from .idx when stale (mtime check).
 
 
 
@@ -1836,235 +2198,522 @@ def rebuild_doc_index(root: str = "default") -> str:
 # Use toc(locate="index") with no query for list_doc_index behavior.
 
 
-@mcp_server.tool()
-def summarize_file(
-    file: str,
-    summary: str,
-    short: str,
-    sections: str,
-) -> str:
-    """Store a content summary for a file so you can quickly find content later.
 
-    You MUST read the file before calling this.
+# summarize_file and get_summary have been folded into notes(file=...).
+# Use notes(file="x.tex", summary="...", short="...", sections="[...]") to write.
+# Use notes(file="x.tex") to read (includes summary + staleness via git).
 
-    Args:
-        file: Relative path to the file (e.g. 'sections/signal-domains.tex').
-        summary: Full summary (2-3 sentences describing what the file covers).
-        short: One-line short summary (< 80 chars).
-        sections: JSON array of {"lines": "1-45", "description": "..."} objects.
-    """
-    validate.validate_relative_path(file, field="file")
-    file_path = _project_root() / file
-    if not file_path.exists():
-        return json.dumps({"error": f"File not found: {file}"})
 
+# ---------------------------------------------------------------------------
+# Discovery — unified paper search, citation graph, co-citation, refresh
+# ---------------------------------------------------------------------------
+
+
+def _get_library_ids() -> tuple[set[str], set[str]]:
+    """Return (library_dois, library_s2_ids) for flagging results."""
+    lib_dois: set[str] = set()
+    lib_s2_ids: set[str] = set()
     try:
-        section_list = json.loads(sections)
-        if not isinstance(section_list, list):
-            return json.dumps({"error": "sections must be a JSON array"})
-    except json.JSONDecodeError as e:
-        return json.dumps({"error": f"Invalid JSON in sections: {e}"})
-
-    sha = checksum.sha256_file(file_path)
-    sum_data = summaries.load_summaries(_dot_tome())
-    entry = summaries.set_summary(sum_data, file, summary, short, section_list, sha)
-    summaries.save_summaries(_dot_tome(), sum_data)
-
-    # Index summary into ChromaDB corpus_chunks for searchability
-    flat_text = f"File: {file}\nSummary: {summary}\nShort: {short}"
-    for sec in section_list:
-        flat_text += f"\nSection ({sec.get('lines', '?')}): {sec.get('description', '')}"
-    try:
-        client = store.get_client(_chroma_dir())
-        embed_fn = store.get_embed_fn()
-        col = store.get_collection(client, store.CORPUS_CHUNKS, embed_fn)
-        col.upsert(
-            ids=[f"{file}::summary"],
-            documents=[flat_text],
-            metadatas=[{
-                "source_file": file,
-                "source_type": "summary",
-                "file_sha256": sha,
-            }],
-        )
+        lib = _load_bib()
+        for entry in lib.entries:
+            doi_f = entry.fields_dict.get("doi")
+            if doi_f and doi_f.value:
+                lib_dois.add(doi_f.value.lower())
+        data = _load_manifest()
+        for p in data.get("papers", {}).values():
+            sid = p.get("s2_id")
+            if sid:
+                lib_s2_ids.add(sid)
     except Exception:
-        pass  # ChromaDB failure is non-fatal
+        pass
+    return lib_dois, lib_s2_ids
 
-    return json.dumps({"status": "saved", "file": file, **entry}, indent=2)
+
+def _discover_search(query: str, n: int) -> dict[str, Any]:
+    """Federated search across S2 + OpenAlex, merged and deduplicated."""
+    lib_dois, lib_s2_ids = _get_library_ids()
+
+    # --- Semantic Scholar ---
+    s2_output: list[dict[str, Any]] = []
+    s2_error = None
+    try:
+        s2_results = s2.search(query, limit=n)
+        if s2_results:
+            flagged = s2.flag_in_library(s2_results, lib_dois, lib_s2_ids)
+            for paper, in_lib in flagged:
+                s2_output.append({
+                    "title": paper.title,
+                    "authors": paper.authors,
+                    "year": paper.year,
+                    "doi": paper.doi,
+                    "citation_count": paper.citation_count,
+                    "s2_id": paper.s2_id,
+                    "in_library": in_lib,
+                    "abstract": paper.abstract[:300] if paper.abstract else None,
+                    "sources": ["s2"],
+                })
+    except APIError as e:
+        s2_error = str(e)
+
+    # --- OpenAlex ---
+    oa_output: list[dict[str, Any]] = []
+    oa_error = None
+    try:
+        oa_results = openalex.search(query, limit=n)
+        if oa_results:
+            flagged_oa = openalex.flag_in_library(oa_results, lib_dois)
+            for work, in_lib in flagged_oa:
+                oa_output.append({
+                    "title": work.title,
+                    "authors": work.authors,
+                    "year": work.year,
+                    "doi": work.doi,
+                    "citation_count": work.citation_count,
+                    "is_oa": work.is_oa,
+                    "oa_url": work.oa_url,
+                    "in_library": in_lib,
+                    "abstract": work.abstract[:300] if work.abstract else None,
+                    "sources": ["openalex"],
+                })
+    except APIError as e:
+        oa_error = str(e)
+
+    # --- Merge by DOI ---
+    seen_dois: set[str] = set()
+    merged: list[dict[str, Any]] = []
+    for item in s2_output:
+        doi = (item.get("doi") or "").lower()
+        if doi:
+            seen_dois.add(doi)
+        merged.append(item)
+    for item in oa_output:
+        doi = (item.get("doi") or "").lower()
+        if doi and doi in seen_dois:
+            # Enrich existing entry with OA info
+            for m in merged:
+                if (m.get("doi") or "").lower() == doi:
+                    m["is_oa"] = item.get("is_oa")
+                    m["oa_url"] = item.get("oa_url")
+                    if "openalex" not in m.get("sources", []):
+                        m.setdefault("sources", []).append("openalex")
+                    break
+        else:
+            merged.append(item)
+
+    result: dict[str, Any] = {"scope": "search", "count": len(merged), "results": merged[:n]}
+    errors = {}
+    if s2_error:
+        errors["s2"] = s2_error
+    if oa_error:
+        errors["openalex"] = oa_error
+    if errors:
+        result["errors"] = errors
+    if not merged:
+        result["message"] = "No results from any source."
+    return result
 
 
-@mcp_server.tool()
-def get_summary(file: str = "", stale_only: bool = False) -> str:
-    """Get the stored section map for a file, or list all summaries.
+def _discover_graph(key: str, doi: str, s2_id: str) -> dict[str, Any]:
+    """Citation graph for one paper — who cites it, what it cites."""
+    paper_id = s2_id
+    if key and not paper_id:
+        data = _load_manifest()
+        paper_meta = manifest.get_paper(data, key)
+        if paper_meta and paper_meta.get("s2_id"):
+            paper_id = paper_meta["s2_id"]
+        else:
+            lib = _load_bib()
+            entry = bib.get_entry(lib, key)
+            doi_f = entry.fields_dict.get("doi")
+            if doi_f:
+                paper_id = f"DOI:{doi_f.value}"
+                doi = doi or doi_f.value
+    if doi and not paper_id:
+        paper_id = f"DOI:{doi}"
 
-    Args:
-        file: Relative path to the file. Empty = list all.
-        stale_only: Only return stale or missing summaries (ignored when file is set).
-    """
-    sum_data = summaries.load_summaries(_dot_tome())
+    if not paper_id:
+        return {"error": "No S2 ID or DOI found. Provide key, doi, or s2_id."}
 
-    if not file:
-        # List all summaries with staleness
-        entries = []
-        for f, entry in sum_data.items():
-            status = "fresh"
-            f_path = _project_root() / f
-            if f_path.exists():
-                current_sha = checksum.sha256_file(f_path)
-                if entry.get("file_sha256") != current_sha:
-                    status = "stale"
-            else:
-                status = "file_missing"
-            entries.append(
-                {
-                    "file": f,
-                    "short": entry.get("short", ""),
-                    "status": status,
-                    "updated": entry.get("updated"),
+    # --- S2 API citation graph ---
+    s2_data: dict[str, Any] = {}
+    try:
+        graph = s2.get_citation_graph(paper_id)
+        if graph:
+            if key:
+                data = _load_manifest()
+                pm = manifest.get_paper(data, key) or {}
+                pm["s2_id"] = graph.paper.s2_id
+                pm["citation_count"] = graph.paper.citation_count
+                pm["s2_fetched"] = manifest.now_iso()
+                manifest.set_paper(data, key, pm)
+                _save_manifest(data)
+            s2_data = {
+                "paper": {"title": graph.paper.title, "s2_id": graph.paper.s2_id},
+                "citations": [
+                    {"title": p.title, "year": p.year, "doi": p.doi, "s2_id": p.s2_id}
+                    for p in graph.citations[:50]
+                ],
+                "references": [
+                    {"title": p.title, "year": p.year, "doi": p.doi, "s2_id": p.s2_id}
+                    for p in graph.references[:50]
+                ],
+            }
+    except APIError as e:
+        s2_data = {"error": str(e)}
+
+    # --- Local S2AG enrichment ---
+    s2ag_data: dict[str, Any] = {}
+    try:
+        from tome.s2ag import S2AGLocal, DB_PATH
+        if DB_PATH.exists():
+            db = S2AGLocal()
+            lookup_doi = doi or (s2_data.get("paper", {}).get("doi"))
+            rec = None
+            if lookup_doi:
+                rec = db.lookup_doi(lookup_doi)
+            elif s2_id:
+                rec = db.lookup_s2id(s2_id)
+            if rec:
+                s2ag_data = {
+                    "corpus_id": rec.corpus_id,
+                    "local_citers": len(db.get_citers(rec.corpus_id)),
+                    "local_references": len(db.get_references(rec.corpus_id)),
                 }
-            )
-        if stale_only:
-            entries = [e for e in entries if e["status"] != "fresh"]
-        return json.dumps({"count": len(entries), "summaries": entries}, indent=2)
+    except Exception:
+        pass
 
-    validate.validate_relative_path(file, field="file")
-    entry = summaries.get_summary(sum_data, file)
-    if entry is None:
-        return json.dumps(
-            {
-                "error": f"No summary for '{file}'.",
-                "hint": (
-                    f"Read the file, then call summarize_file(file='{file}', "
-                    f"summary='...', short='...', sections='[...]') to create one."
-                ),
-            }
-        )
-
-    # Check staleness
-    status = "fresh"
-    f_path = _project_root() / file
-    if f_path.exists():
-        current_sha = checksum.sha256_file(f_path)
-        if entry.get("file_sha256") != current_sha:
-            status = "stale"
+    result: dict[str, Any] = {"scope": "graph"}
+    if "error" in s2_data and not s2_data.get("paper"):
+        result["error"] = s2_data["error"]
     else:
-        status = "file_missing"
-
-    return json.dumps({"file": file, "status": status, **entry}, indent=2)
-
-
-# ---------------------------------------------------------------------------
-# Discovery Tools (Semantic Scholar)
-# ---------------------------------------------------------------------------
+        result.update(s2_data)
+    result["citations_count"] = len(s2_data.get("citations", []))
+    result["references_count"] = len(s2_data.get("references", []))
+    if s2ag_data:
+        result["s2ag_local"] = s2ag_data
+    return result
 
 
-@mcp_server.tool()
-def discover(query: str, n: int = 10) -> str:
-    """Search Semantic Scholar for papers. Flags papers already in the library.
+def _discover_shared_citers(min_shared: int, min_year: int, n: int) -> dict[str, Any]:
+    """Find papers citing multiple library papers. Merges cite_tree + S2AG."""
+    results_list: list[dict[str, Any]] = []
+    sources_used: list[str] = []
 
-    Args:
-        query: Natural language search query.
-        n: Maximum results.
-    """
+    # --- Cite tree (cached S2 data) ---
     try:
-        results = s2.search(query, limit=n)
-    except APIError as e:
-        return json.dumps({"error": str(e)})
-    if not results:
-        return json.dumps(
-            {"count": 0, "results": [], "message": "No results from Semantic Scholar."}
-        )
-
-    # Get library DOIs and S2 IDs for flagging
-    lib_dois: set[str] = set()
-    try:
-        lib = _load_bib()
-        for entry in lib.entries:
-            doi_f = entry.fields_dict.get("doi")
-            if doi_f:
-                lib_dois.add(doi_f.value)
+        tree = cite_tree_mod.load_tree(_dot_tome())
+        if tree["papers"]:
+            lib = _load_bib()
+            library_keys = {e.key for e in lib.entries}
+            tree_results = cite_tree_mod.discover_new(
+                tree, library_keys,
+                min_shared=min_shared,
+                min_year=min_year or None,
+                max_results=n,
+            )
+            if tree_results:
+                for r in tree_results:
+                    r["source"] = "cite_tree"
+                results_list.extend(tree_results)
+                sources_used.append("cite_tree")
     except Exception:
         pass
 
-    data = _load_manifest()
-    lib_s2_ids = set()
-    for p in data.get("papers", {}).values():
-        sid = p.get("s2_id")
-        if sid:
-            lib_s2_ids.add(sid)
-
-    flagged = s2.flag_in_library(results, lib_dois, lib_s2_ids)
-
-    output = []
-    for paper, in_lib in flagged:
-        output.append(
-            {
-                "title": paper.title,
-                "authors": paper.authors,
-                "year": paper.year,
-                "doi": paper.doi,
-                "citation_count": paper.citation_count,
-                "s2_id": paper.s2_id,
-                "in_library": in_lib,
-                "abstract": paper.abstract[:300] if paper.abstract else None,
-            }
-        )
-
-    return json.dumps({"count": len(output), "results": output}, indent=2)
-
-
-@mcp_server.tool()
-def discover_openalex(query: str, n: int = 10) -> str:
-    """Search OpenAlex for papers. Flags papers already in the library.
-
-    Args:
-        query: Natural language search query.
-        n: Maximum results.
-    """
+    # --- Local S2AG ---
     try:
-        results = openalex.search(query, limit=n)
-    except APIError as e:
-        return json.dumps({"error": str(e)})
-    if not results:
-        return json.dumps(
-            {"count": 0, "results": [], "message": "No results from OpenAlex."}
-        )
-
-    # Get library DOIs for flagging
-    lib_dois: set[str] = set()
-    try:
-        lib = _load_bib()
-        for entry in lib.entries:
-            doi_f = entry.fields_dict.get("doi")
-            if doi_f:
-                lib_dois.add(doi_f.value)
+        from tome.s2ag import S2AGLocal, DB_PATH
+        if DB_PATH.exists():
+            db = S2AGLocal()
+            lib = _load_bib()
+            corpus_ids = []
+            for entry in lib.entries:
+                doi_f = entry.fields_dict.get("doi")
+                if doi_f and doi_f.value:
+                    rec = db.lookup_doi(doi_f.value.lower())
+                    if rec:
+                        corpus_ids.append(rec.corpus_id)
+            if len(corpus_ids) >= min_shared:
+                s2ag_results = db.find_shared_citers(corpus_ids, min_shared=min_shared, limit=n)
+                for cid, count in s2ag_results:
+                    p = db.get_paper(cid)
+                    if p:
+                        results_list.append({
+                            "title": p.title,
+                            "year": p.year,
+                            "doi": p.doi,
+                            "citation_count": p.citation_count,
+                            "shared_count": count,
+                            "source": "s2ag_local",
+                        })
+                sources_used.append("s2ag_local")
     except Exception:
         pass
 
-    flagged = openalex.flag_in_library(results, lib_dois)
+    # Deduplicate by DOI
+    seen_dois: set[str] = set()
+    deduped: list[dict[str, Any]] = []
+    for r in results_list:
+        doi = (r.get("doi") or "").lower()
+        if doi and doi in seen_dois:
+            continue
+        if doi:
+            seen_dois.add(doi)
+        deduped.append(r)
 
-    output = []
-    for work, in_lib in flagged:
-        output.append(
-            {
-                "title": work.title,
-                "authors": work.authors,
-                "year": work.year,
-                "doi": work.doi,
-                "citation_count": work.citation_count,
-                "is_oa": work.is_oa,
-                "oa_url": work.oa_url,
-                "openalex_id": work.openalex_id,
-                "in_library": in_lib,
-                "abstract": work.abstract[:300] if work.abstract else None,
+    # Sort by shared_count descending
+    deduped.sort(key=lambda x: x.get("shared_count", 0), reverse=True)
+
+    if not deduped:
+        return {
+            "scope": "shared_citers",
+            "status": "no_candidates",
+            "message": f"No papers found citing ≥{min_shared} library references.",
+            "hint": "Try discover(scope='refresh') to expand citation coverage.",
+        }
+    return {
+        "scope": "shared_citers",
+        "count": len(deduped[:n]),
+        "sources": sources_used,
+        "candidates": deduped[:n],
+    }
+
+
+def _discover_refresh(key: str, min_year: int) -> dict[str, Any]:
+    """Refresh citation data: cite_tree + S2AG incremental sweep."""
+    result: dict[str, Any] = {"scope": "refresh"}
+
+    # --- Cite tree ---
+    tree = cite_tree_mod.load_tree(_dot_tome())
+    lib = _load_bib()
+
+    if key:
+        entry = lib.entries_dict.get(key)
+        if not entry:
+            return {"error": f"Key '{key}' not in library."}
+        doi_f = entry.fields_dict.get("doi")
+        doi = doi_f.value if doi_f else None
+        data = _load_manifest()
+        paper_meta = manifest.get_paper(data, key) or {}
+        s2_id = paper_meta.get("s2_id", "")
+        if not doi and not s2_id:
+            result["cite_tree"] = {"error": f"'{key}' has no DOI or S2 ID."}
+        else:
+            try:
+                tree_entry = cite_tree_mod.build_entry(key, doi=doi, s2_id=s2_id)
+                if tree_entry:
+                    cite_tree_mod.update_tree(tree, key, tree_entry)
+                    cite_tree_mod.save_tree(_dot_tome(), tree)
+                    result["cite_tree"] = {
+                        "status": "built", "key": key,
+                        "cited_by": len(tree_entry.get("cited_by", [])),
+                        "references": len(tree_entry.get("references", [])),
+                    }
+                else:
+                    result["cite_tree"] = {"error": f"'{key}' not found on S2."}
+            except Exception as e:
+                result["cite_tree"] = {"error": str(e)[:200]}
+    else:
+        # Batch refresh stale cite trees
+        library_keys = set()
+        library_dois: dict[str, str] = {}
+        data = _load_manifest()
+        for e in lib.entries:
+            library_keys.add(e.key)
+            doi_f = e.fields_dict.get("doi")
+            if doi_f and doi_f.value:
+                library_dois[e.key] = doi_f.value
+
+        stale = cite_tree_mod.find_stale(tree, library_keys, max_age_days=30)
+        if not stale:
+            result["cite_tree"] = {
+                "status": "all_fresh",
+                "total_cached": len(tree["papers"]),
             }
-        )
+        else:
+            refreshed = []
+            errors = []
+            for k in stale[:10]:
+                doi = library_dois.get(k)
+                paper_meta = manifest.get_paper(data, k) or {}
+                s2_id = paper_meta.get("s2_id", "")
+                if not doi and not s2_id:
+                    continue
+                try:
+                    tree_entry = cite_tree_mod.build_entry(k, doi=doi, s2_id=s2_id)
+                    if tree_entry:
+                        cite_tree_mod.update_tree(tree, k, tree_entry)
+                        refreshed.append(k)
+                except Exception as e:
+                    errors.append({"key": k, "error": str(e)[:100]})
+            cite_tree_mod.save_tree(_dot_tome(), tree)
+            result["cite_tree"] = {
+                "status": "refreshed",
+                "refreshed": len(refreshed),
+                "stale_remaining": len(stale) - len(refreshed),
+                "total_cached": len(tree["papers"]),
+            }
 
-    return json.dumps({"count": len(output), "results": output}, indent=2)
+    # --- S2AG incremental sweep ---
+    try:
+        from tome.s2ag import S2AGLocal, DB_PATH
+        if DB_PATH.exists():
+            db = S2AGLocal()
+            corpus_ids = []
+            for entry in lib.entries:
+                doi_val = bib.get_field(entry, "doi")
+                if doi_val:
+                    p = db.lookup_doi(doi_val.lower())
+                    if p:
+                        corpus_ids.append(p.corpus_id)
+            if corpus_ids:
+                lines: list[str] = []
+                s2ag_result = db.incremental_update(
+                    corpus_ids, min_year=min_year,
+                    progress_fn=lambda msg: lines.append(msg),
+                )
+                s2ag_result["library_papers_checked"] = len(corpus_ids)
+                s2ag_result["log"] = lines[-5:] if len(lines) > 5 else lines
+                result["s2ag"] = s2ag_result
+            else:
+                result["s2ag"] = {"status": "no_papers_resolved"}
+    except Exception as e:
+        result["s2ag"] = {"error": str(e)[:200]}
+
+    return result
+
+
+def _discover_stats() -> dict[str, Any]:
+    """S2AG local database statistics."""
+    try:
+        from tome.s2ag import S2AGLocal, DB_PATH
+        if not DB_PATH.exists():
+            return {"error": "S2AG database not found at ~/.tome/s2ag/s2ag.db",
+                    "hint": "Run: python -m tome.s2ag_cli sync-library <bib_file>"}
+        db = S2AGLocal()
+        stats = db.stats()
+        stats["scope"] = "stats"
+        return stats
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def _discover_lookup(doi: str, s2_id: str) -> dict[str, Any]:
+    """Look up a single paper by DOI or S2 ID. Local first, then API."""
+    result: dict[str, Any] = {"scope": "lookup"}
+
+    # --- Local S2AG first (instant, no API) ---
+    try:
+        from tome.s2ag import S2AGLocal, DB_PATH
+        if DB_PATH.exists():
+            db = S2AGLocal()
+            rec = None
+            if doi:
+                rec = db.lookup_doi(doi)
+            elif s2_id:
+                rec = db.lookup_s2id(s2_id)
+            if rec:
+                citers = db.get_citers(rec.corpus_id)
+                refs = db.get_references(rec.corpus_id)
+                result["found"] = True
+                result["source"] = "s2ag_local"
+                result["corpus_id"] = rec.corpus_id
+                result["paper_id"] = rec.paper_id
+                result["doi"] = rec.doi
+                result["title"] = rec.title
+                result["year"] = rec.year
+                result["citation_count"] = rec.citation_count
+                result["local_citers"] = len(citers)
+                result["local_references"] = len(refs)
+                return result
+    except Exception:
+        pass
+
+    # --- Fall back to S2 API ---
+    paper_id = s2_id or (f"DOI:{doi}" if doi else "")
+    if not paper_id:
+        return {"scope": "lookup", "error": "Provide doi or s2_id."}
+    try:
+        graph = s2.get_citation_graph(paper_id)
+        if graph:
+            result["found"] = True
+            result["source"] = "s2_api"
+            result["title"] = graph.paper.title
+            result["s2_id"] = graph.paper.s2_id
+            result["year"] = graph.paper.year
+            result["doi"] = graph.paper.doi
+            result["citation_count"] = graph.paper.citation_count
+            result["citations_count"] = len(graph.citations)
+            result["references_count"] = len(graph.references)
+            return result
+    except APIError as e:
+        return {"scope": "lookup", "error": str(e)}
+
+    result["found"] = False
+    return result
 
 
 @mcp_server.tool()
-def fetch_oa(key: str) -> str:
+def discover(
+    query: str = "",
+    key: str = "",
+    doi: str = "",
+    s2_id: str = "",
+    scope: str = "",
+    min_shared: int = 2,
+    min_year: int = 0,
+    n: int = 10,
+) -> str:
+    """Unified paper discovery — search, citation graph, co-citation, refresh.
+
+    query set → federated search (S2 + OpenAlex, merged & deduplicated).
+    key/doi/s2_id (no query) → citation graph for one paper.
+    scope='shared_citers' → papers citing ≥min_shared of ours.
+    scope='refresh' → update cite_tree + S2AG cache (key= for one paper).
+    scope='stats' → S2AG local database statistics.
+    scope='lookup' + doi/s2_id → look up a single paper.
+
+    Args:
+        query: Natural language search query. Triggers federated search.
+        key: Bib key — for citation graph or targeted refresh.
+        doi: DOI — for lookup or citation graph.
+        s2_id: Semantic Scholar paper ID — for lookup or citation graph.
+        scope: Action scope — 'shared_citers', 'refresh', 'stats', 'lookup'.
+        min_shared: Minimum shared citations for co-citation discovery.
+        min_year: Year filter for refresh/co-citation (0 = no filter).
+        n: Maximum results.
+    """
+    if key:
+        validate.validate_key_if_given(key)
+
+    # Route by intent
+    if scope == "stats":
+        return json.dumps(_discover_stats(), indent=2)
+
+    if scope == "refresh":
+        return json.dumps(_discover_refresh(key, min_year), indent=2)
+
+    if scope == "shared_citers":
+        return json.dumps(_discover_shared_citers(min_shared, min_year, n), indent=2)
+
+    if scope == "lookup" or ((doi or s2_id) and not query and not key):
+        return json.dumps(_discover_lookup(doi, s2_id), indent=2)
+
+    if query:
+        return json.dumps(_discover_search(query, n), indent=2)
+
+    if key or doi or s2_id:
+        return json.dumps(_discover_graph(key, doi, s2_id), indent=2)
+
+    return json.dumps({
+        "error": "Provide query (search), key/doi/s2_id (graph), or scope.",
+        "hint": "discover(query='...') for search, discover(key='...') for citation graph, "
+                "discover(scope='shared_citers') for co-citation, "
+                "discover(scope='refresh') to update caches."
+                + _guide_hint("discover"),
+    })
+
+
+def _doi_fetch(key: str) -> str:
     """Fetch open-access PDF for a paper already in the library.
 
     Args:
@@ -2106,7 +2755,7 @@ def fetch_oa(key: str) -> str:
             "is_oa": result.is_oa,
             "oa_status": result.oa_status,
             "message": "No open-access PDF available.",
-            "hint": "Try request_paper() to track it, or manually place the PDF in tome/inbox/.",
+            "hint": "Try paper(action='request', key='...') to track it, or manually place the PDF in tome/inbox/.",
         })
 
     # Download PDF
@@ -2211,24 +2860,50 @@ def cite_graph(key: str = "", s2_id: str = "") -> str:
 
 
 @mcp_server.tool()
-def request_figure(
-    key: str,
-    figure: str,
+def figure(
+    key: str = "",
+    figure: str = "",
+    path: str = "",
     page: int = 0,
     reason: str = "",
     caption: str = "",
+    status: str = "",
 ) -> str:
-    """Queue a figure request. Extracts caption and in-text citation context
-    from the paper's raw text if available.
+    """Manage paper figures — request, register, or list.
+
+    No key → list all figures (filter with status='requested'|'captured').
+    key + figure, no path → request a figure screenshot.
+    key + figure + path → register a captured screenshot.
 
     Args:
         key: Bib key of the paper.
         figure: Figure label (e.g. 'fig3', 'scheme1').
+        path: Relative path to the figure file in tome/figures/.
+            When provided, registers the figure as captured.
         page: Page number where the figure appears (0 = unknown).
-        reason: Why this figure is needed.
-        caption: Manual caption (overrides auto-extraction).
+        reason: Why this figure is needed (request mode).
+        caption: Manual caption override (request mode).
+        status: Filter for list mode — 'requested' or 'captured'. Empty = all.
     """
+    # List mode — no key
+    if not key:
+        data = _load_manifest()
+        figs = figures.list_figures(data, status=status or None)
+        return json.dumps({"count": len(figs), "figures": figs}, indent=2)
+
+    if not figure:
+        return json.dumps({"error": "Provide figure label (e.g. 'fig3').",
+                           "hint": "See guide('paper-workflow') for usage."})
+
     data = _load_manifest()
+
+    # Add mode — path provided
+    if path:
+        entry = figures.add_figure(data, key, figure, path)
+        _save_manifest(data)
+        return json.dumps({"status": "captured", "key": key, "figure": figure, **entry}, indent=2)
+
+    # Request mode — no path
     entry = figures.request_figure(
         data,
         key,
@@ -2242,40 +2917,12 @@ def request_figure(
     return json.dumps({"status": "requested", "key": key, "figure": figure, **entry}, indent=2)
 
 
-@mcp_server.tool()
-def add_figure(key: str, figure: str, path: str) -> str:
-    """Register a captured figure screenshot, resolving any pending request.
-
-    Args:
-        key: Bib key.
-        figure: Figure label (must match the request, e.g. 'fig3').
-        path: Relative path to the figure file in tome/figures/.
-    """
-    data = _load_manifest()
-    entry = figures.add_figure(data, key, figure, path)
-    _save_manifest(data)
-    return json.dumps({"status": "captured", "key": key, "figure": figure, **entry}, indent=2)
-
-
-@mcp_server.tool()
-def list_figures_tool(status: str = "") -> str:
-    """List all figures across all papers — both captured and pending requests.
-
-    Args:
-        status: Filter by 'requested' or 'captured'. Empty = all.
-    """
-    data = _load_manifest()
-    figs = figures.list_figures(data, status=status or None)
-    return json.dumps({"count": len(figs), "figures": figs}, indent=2)
-
-
 # ---------------------------------------------------------------------------
 # Paper Request Tools
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool()
-def request_paper(
+def _paper_request(
     key: str,
     doi: str = "",
     reason: str = "",
@@ -2298,7 +2945,7 @@ def request_paper(
                 f"⚠ DOI {doi} was previously rejected: "
                 f"{rejected.get('reason', 'unknown')} "
                 f"(key: {rejected.get('key', '?')}, date: {rejected.get('date', '?')}). "
-                f"Request created anyway — remove with reject_doi if confirmed bad."
+                f"Request created anyway — remove with doi(doi='...', action='reject') if confirmed bad."
             )
 
     data = _load_manifest()
@@ -2317,8 +2964,7 @@ def request_paper(
     return json.dumps(result, indent=2)
 
 
-@mcp_server.tool()
-def list_requests() -> str:
+def _paper_list_requests() -> str:
     """Show all open paper requests (papers wanted but not yet obtained)."""
     data = _load_manifest()
     opens = manifest.list_open_requests(data)
@@ -2331,8 +2977,7 @@ def list_requests() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool()
-def reject_doi(
+def _doi_reject(
     doi: str,
     key: str = "",
     reason: str = "",
@@ -2378,11 +3023,56 @@ def reject_doi(
     )
 
 
-@mcp_server.tool()
-def list_rejected_dois() -> str:
+def _doi_list_rejected() -> str:
     """List all rejected DOIs from tome/rejected-dois.yaml."""
     entries = rejected_dois_mod.load(_tome_dir())
     return json.dumps({"count": len(entries), "rejected": entries}, indent=2)
+
+
+# check_doi, reject_doi, list_rejected_dois, fetch_oa have been folded into doi().
+
+
+@mcp_server.tool()
+def doi(
+    key: str = "",
+    doi: str = "",
+    action: str = "",
+    reason: str = "",
+) -> str:
+    """Unified DOI management. Verify, reject, list rejected, or fetch open-access PDF.
+
+    No args → batch check all unchecked DOIs.
+    key only → check that paper's DOI via CrossRef.
+    action='reject' → record a DOI as invalid (requires doi).
+    action='rejected' → list all rejected DOIs.
+    action='fetch' → fetch open-access PDF via Unpaywall (requires key).
+
+    Args:
+        key: Bib key for DOI check or OA fetch.
+        doi: DOI string (for reject action).
+        action: Explicit action — 'reject', 'rejected', 'fetch'.
+        reason: Why this DOI is invalid (for reject action).
+    """
+    # --- Explicit actions ---
+    if action == "rejected":
+        return _doi_list_rejected()
+
+    if action == "reject":
+        if not doi:
+            return json.dumps({"error": "doi is required for action='reject'."
+                               + _guide_hint("paper")})
+        return _doi_reject(doi=doi, key=key, reason=reason)
+
+    if action == "fetch":
+        if not key:
+            return json.dumps({"error": "key is required for action='fetch'."
+                               + _guide_hint("paper")})
+        return _doi_fetch(key)
+
+    # --- No action specified ---
+
+    # key or no args → check DOI(s) via CrossRef
+    return _doi_check(key=key)
 
 
 # ---------------------------------------------------------------------------
@@ -2390,14 +3080,14 @@ def list_rejected_dois() -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool()
-def rebuild(key: str = "") -> str:
-    """Re-derive .tome/ cache from tome/ source files. Extracts text, re-embeds,
-    and rebuilds ChromaDB index. With key: rebuilds one paper. Without: rebuilds all.
 
-    Args:
-        key: Bib key to rebuild. Empty = rebuild everything.
-    """
+# rebuild has been folded into reindex(scope="papers").
+# Use reindex(key="smith2024") to rebuild one paper.
+# Use reindex(scope="papers") to rebuild all papers.
+
+
+def _reindex_papers(key: str = "") -> dict[str, Any]:
+    """Re-derive .tome/ cache from tome/ source files for papers."""
     lib = _load_bib()
     results: dict[str, Any] = {"rebuilt": [], "errors": []}
 
@@ -2441,11 +3131,10 @@ def rebuild(key: str = "") -> str:
         except Exception as e:
             results["errors"].append({"key": k, "error": str(e)})
 
-    return json.dumps(results, indent=2)
+    return results
 
 
-@mcp_server.tool()
-def stats() -> str:
+def _paper_stats() -> str:
     """Library statistics: paper counts, DOI status summary, pending figures and requests."""
     lib = _load_bib()
     data = _load_manifest()
@@ -2476,7 +3165,7 @@ def stats() -> str:
     if not lib.entries:
         result["hint"] = (
             "Library is empty. Drop PDFs in tome/inbox/ and run ingest(), "
-            "or use set_paper() to create entries manually."
+            "or use paper(key='...', title='...') to create entries."
         )
     return json.dumps(result, indent=2)
 
@@ -2555,6 +3244,7 @@ def toc(
     figures: bool = True,
     part: str = "",
     page: int = 1,
+    notes: str = "",
 ) -> str:
     """Navigate document structure. Default shows the TOC; use locate to
     find citations, labels, index entries, or the file tree.
@@ -2573,6 +3263,8 @@ def toc(
         figures: Include figure and table entries.
         part: Restrict to a part by number or name substring.
         page: Result page (1-indexed). Each page shows up to 200 lines.
+        notes: Show file-meta fields under headings. '*' = all fields,
+            or comma-separated field names like 'status,open'. Empty = no notes.
     """
     if locate == "cite":
         return _toc_locate_cite(query, root)
@@ -2595,6 +3287,7 @@ def toc(
         pages=pages,
         figures=figures,
         part=part,
+        notes=notes,
     )
     return _paginate_toc(result, page)
 
@@ -2679,10 +3372,20 @@ def _toc_locate_label(prefix: str = "") -> str:
 
 
 def _toc_locate_index(query: str = "") -> str:
-    """Search or list the document index."""
+    """Search or list the document index. Auto-rebuilds from .idx if stale."""
+    # Auto-rebuild if .idx is newer than cached index
+    cfg = tome_config.load_config(_tome_dir())
+    root_tex = cfg.roots.get("default", "main.tex")
+    idx_path = _project_root() / f"{Path(root_tex).stem}.idx"
+    if index_mod.is_stale(idx_path, _dot_tome()):
+        try:
+            index_mod.rebuild_index(idx_path, _dot_tome())
+        except Exception:
+            pass  # fall through to load whatever we have
+
     index = index_mod.load_index(_dot_tome())
     if not index.get("terms"):
-        return "No index available. Run rebuild_doc_index() after compiling."
+        return "No index available. Compile with pdflatex first (needs .idx file)."
 
     if query:
         results = index_mod.search_index(index, query, fuzzy=True)
@@ -3042,180 +3745,26 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
-# Citation Tree — forward discovery of new papers
+# Exploration — unified LLM-guided citation beam search
 # ---------------------------------------------------------------------------
 
-
-@mcp_server.tool()
-def build_cite_tree(key: str = "") -> str:
-    """Build or refresh the citation tree for library papers.
-
-    Args:
-        key: Bib key to build tree for. Empty = batch refresh stale papers.
-    """
-    tree = cite_tree_mod.load_tree(_dot_tome())
-    lib = _load_bib()
-
-    if key:
-        # Single paper mode
-        entry = lib.entries_dict.get(key)
-        if not entry:
-            return json.dumps({"error": f"Key '{key}' not in library."})
-
-        doi_field = entry.fields_dict.get("doi")
-        doi = doi_field.value if doi_field else None
-        data = _load_manifest()
-        paper_meta = manifest.get_paper(data, key) or {}
-        s2_id = paper_meta.get("s2_id", "")
-
-        if not doi and not s2_id:
-            return json.dumps({
-                "error": f"Paper '{key}' has no DOI or S2 ID. Cannot fetch citation graph.",
-            })
-
-        try:
-            tree_entry = cite_tree_mod.build_entry(key, doi=doi, s2_id=s2_id)
-        except Exception as e:
-            return json.dumps({"error": f"S2 API error: {e}"})
-
-        if tree_entry is None:
-            return json.dumps({"error": f"Paper '{key}' not found on Semantic Scholar."})
-
-        cite_tree_mod.update_tree(tree, key, tree_entry)
-        cite_tree_mod.save_tree(_dot_tome(), tree)
-
-        return json.dumps({
-            "status": "built",
-            "key": key,
-            "cited_by": len(tree_entry.get("cited_by", [])),
-            "references": len(tree_entry.get("references", [])),
-        })
-
-    # Batch mode: refresh stale papers
-    library_keys = set()
-    library_dois: dict[str, str] = {}
-    data = _load_manifest()
-    for e in lib.entries:
-        library_keys.add(e.key)
-        doi_f = e.fields_dict.get("doi")
-        doi = doi_f.value if doi_f else None
-        if doi:
-            library_dois[e.key] = doi
-
-    stale = cite_tree_mod.find_stale(tree, library_keys, max_age_days=30)
-    if not stale:
-        return json.dumps({
-            "status": "all_fresh",
-            "message": "All citation trees are up to date (< 30 days old).",
-            "total_cached": len(tree["papers"]),
-        })
-
-    refreshed = []
-    errors = []
-    for k in stale[:10]:  # batch cap
-        doi = library_dois.get(k)
-        paper_meta = manifest.get_paper(data, k) or {}
-        s2_id = paper_meta.get("s2_id", "")
-        if not doi and not s2_id:
-            continue
-        try:
-            tree_entry = cite_tree_mod.build_entry(k, doi=doi, s2_id=s2_id)
-            if tree_entry:
-                cite_tree_mod.update_tree(tree, k, tree_entry)
-                refreshed.append(k)
-        except Exception as e:
-            errors.append({"key": k, "error": str(e)[:100]})
-
-    cite_tree_mod.save_tree(_dot_tome(), tree)
-
-    return json.dumps({
-        "status": "refreshed",
-        "refreshed": len(refreshed),
-        "stale_remaining": len(stale) - len(refreshed),
-        "errors": len(errors),
-        "total_cached": len(tree["papers"]),
-        "details": {"refreshed_keys": refreshed, "errors": errors} if errors else {"refreshed_keys": refreshed},
-    }, indent=2)
+# build_cite_tree, discover_citing, dismiss_citing, explore_citations,
+# mark_explored, list_explorations, clear_explorations have been folded
+# into discover() and explore().
+# Use discover(scope="refresh") for build_cite_tree behavior.
+# Use discover(scope="shared_citers") for discover_citing behavior.
 
 
-@mcp_server.tool()
-def discover_citing(min_shared: int = 2, min_year: int = 0, n: int = 20) -> str:
-    """Find non-library papers that cite multiple library papers.
-
-    Args:
-        min_shared: Minimum number of shared citations to surface.
-        min_year: Only include papers from this year onwards (0 = no filter).
-        n: Maximum results.
-    """
-    tree = cite_tree_mod.load_tree(_dot_tome())
-    if not tree["papers"]:
-        return json.dumps({
-            "error": "Citation tree is empty. Run build_cite_tree() first. "
-                     "See guide('exploration') for the full discovery workflow.",
-        })
-
-    lib = _load_bib()
-    library_keys = {e.key for e in lib.entries}
-
-    results = cite_tree_mod.discover_new(
-        tree, library_keys,
-        min_shared=min_shared,
-        min_year=min_year or None,
-        max_results=n,
-    )
-
-    if not results:
-        return json.dumps({
-            "status": "no_candidates",
-            "message": f"No non-library papers found citing ≥{min_shared} library references.",
-            "hint": "Try lowering min_shared or running build_cite_tree() to expand coverage.",
-        })
-
-    return json.dumps({
-        "status": "ok",
-        "count": len(results),
-        "candidates": results,
-    }, indent=2)
-
-
-@mcp_server.tool()
-def dismiss_citing(s2_id: str) -> str:
-    """Dismiss a discovery candidate so it doesn't resurface.
-
-    Args:
-        s2_id: Semantic Scholar paper ID to dismiss.
-    """
-    tree = cite_tree_mod.load_tree(_dot_tome())
-    cite_tree_mod.dismiss_paper(tree, s2_id)
-    cite_tree_mod.save_tree(_dot_tome(), tree)
-    return json.dumps({"status": "dismissed", "s2_id": s2_id})
-
-
-# ---------------------------------------------------------------------------
-# Exploration — LLM-guided iterative citation beam search
-# ---------------------------------------------------------------------------
-
-
-@mcp_server.tool()
-def explore_citations(
-    s2_id: str = "", key: str = "", limit: int = 20,
-    parent_s2_id: str = "", depth: int = 0,
-) -> str:
-    """Fetch citing papers with abstracts for LLM-guided exploration.
-
-    Args:
-        s2_id: Direct Semantic Scholar paper ID. Takes priority over key.
-        key: Library bib key (looks up DOI/S2 ID from library).
-        limit: Max citing papers to return (max 100).
-        parent_s2_id: S2 ID of the paper that led here (for tree tracking).
-        depth: Exploration depth from seed (0 = seed itself).
-    """
+def _explore_fetch(
+    key: str, s2_id: str, limit: int, parent_s2_id: str, depth: int,
+) -> dict[str, Any]:
+    """Fetch citing papers for LLM-guided exploration."""
     paper_id = s2_id
     if key and not paper_id:
         lib = _load_bib()
         entry = lib.entries_dict.get(key)
         if not entry:
-            return json.dumps({"error": f"Key '{key}' not in library."})
+            return {"error": f"Key '{key}' not in library."}
         data = _load_manifest()
         paper_meta = manifest.get_paper(data, key) or {}
         if paper_meta.get("s2_id"):
@@ -3226,9 +3775,7 @@ def explore_citations(
                 paper_id = f"DOI:{doi_f.value}"
 
     if not paper_id:
-        return json.dumps({
-            "error": "No S2 ID or DOI found. Provide s2_id or a key with a DOI.",
-        })
+        return {"error": "No S2 ID or DOI found. Provide s2_id or a key with a DOI."}
 
     tree = cite_tree_mod.load_tree(_dot_tome())
     try:
@@ -3239,20 +3786,15 @@ def explore_citations(
             depth=depth,
         )
     except Exception as e:
-        return json.dumps({"error": f"S2 API error: {e}"})
+        return {"error": f"S2 API error: {e}"}
 
     if result is None:
-        return json.dumps({"error": f"Paper not found on Semantic Scholar: {paper_id}"})
+        return {"error": f"Paper not found on Semantic Scholar: {paper_id}"}
 
     cite_tree_mod.save_tree(_dot_tome(), tree)
 
     # Flag library papers in the results
-    lib = _load_bib()
-    library_dois: set[str] = set()
-    for e in lib.entries:
-        doi_f = e.fields_dict.get("doi")
-        if doi_f and doi_f.value:
-            library_dois.add(doi_f.value.lower())
+    lib_dois, _ = _get_library_ids()
 
     cited_by = []
     for c in result.get("cited_by", []):
@@ -3267,11 +3809,12 @@ def explore_citations(
             entry_out["abstract"] = c["abstract"]
         if c.get("doi"):
             entry_out["doi"] = c["doi"]
-            if c["doi"].lower() in library_dois:
+            if c["doi"].lower() in lib_dois:
                 entry_out["in_library"] = True
         cited_by.append(entry_out)
 
-    return json.dumps({
+    return {
+        "action": "fetch",
         "status": "ok",
         "paper": {
             "s2_id": result.get("s2_id"),
@@ -3286,57 +3829,46 @@ def explore_citations(
             "Present these as a numbered table to the user: "
             "# | Year | Title (8 words) | Cites | Abstract gist | Verdict. "
             "Triage each as 'relevant' / 'irrelevant' / 'deferred'. "
-            "Batch mark_explored() calls, then immediately expand relevant branches via "
-            "explore_citations(s2_id=<relevant_id>, "
+            "Batch explore(s2_id=..., relevance=...) calls, then immediately "
+            "expand relevant branches via explore(s2_id=<relevant_id>, "
             f"parent_s2_id='{result.get('s2_id', '')}', "
             f"depth={result.get('depth', 0) + 1}). "
             "Be narrow (few relevant) for pointed searches, broader for survey-style."
         ),
-    }, indent=2)
+    }
 
 
-@mcp_server.tool()
-def mark_explored(s2_id: str, relevance: Literal["relevant", "irrelevant", "deferred", "unknown"], note: str = "") -> str:
-    """Mark an explored paper's relevance for beam-search pruning.
-
-    Args:
-        s2_id: Semantic Scholar paper ID.
-        relevance: Relevance judgment for this paper.
-        note: Your rationale for the decision (persisted for session continuity).
-    """
+def _explore_mark(
+    s2_id: str, relevance: str, note: str,
+) -> dict[str, Any]:
+    """Mark an explored paper's relevance for beam-search pruning."""
     if relevance not in cite_tree_mod.RELEVANCE_STATES:
-        return json.dumps({
+        return {
             "error": f"Invalid relevance '{relevance}'. "
             f"Must be one of: {', '.join(cite_tree_mod.RELEVANCE_STATES)}",
-        })
+        }
 
     tree = cite_tree_mod.load_tree(_dot_tome())
     ok = cite_tree_mod.mark_exploration(tree, s2_id, relevance, note)
     if not ok:
-        return json.dumps({
+        return {
             "error": f"Paper {s2_id} not found in explorations. "
-            "Call explore_citations() first to fetch and cache it.",
-        })
+            "Call explore(key=...) first to fetch and cache it.",
+        }
     cite_tree_mod.save_tree(_dot_tome(), tree)
-    return json.dumps({
+    return {
+        "action": "mark",
         "status": "marked",
         "s2_id": s2_id,
         "relevance": relevance,
         "note": note or "(none)",
-    })
+    }
 
 
-@mcp_server.tool()
-def list_explorations(
-    relevance: str = "", seed: str = "", expandable: bool = False,
-) -> str:
-    """Show exploration state for session continuity and beam-search planning.
-
-    Args:
-        relevance: Filter by relevance state (relevant/irrelevant/deferred/unknown).
-        seed: Only show nodes descended from this S2 ID.
-        expandable: Only show 'relevant' nodes not yet expanded (next to explore).
-    """
+def _explore_list(
+    relevance: str, seed: str, expandable: bool,
+) -> dict[str, Any]:
+    """Show exploration state for session continuity."""
     tree = cite_tree_mod.load_tree(_dot_tome())
     results = cite_tree_mod.list_explorations(
         tree,
@@ -3347,14 +3879,13 @@ def list_explorations(
 
     if not results:
         if not tree.get("explorations"):
-            msg = "No explorations yet. Start with explore_citations(key='<paper>')."
+            msg = "No explorations yet. Start with explore(key='<paper>')."
         elif expandable:
             msg = "No expandable nodes. Mark papers as 'relevant' to create expand targets."
         else:
             msg = f"No explorations match filters (relevance={relevance or 'any'}, seed={seed or 'any'})."
-        return json.dumps({"status": "empty", "message": msg})
+        return {"action": "list", "status": "empty", "message": msg}
 
-    # Summary counts
     all_exp = tree.get("explorations", {})
     counts = {"unknown": 0, "relevant": 0, "irrelevant": 0, "deferred": 0}
     for e in all_exp.values():
@@ -3362,25 +3893,101 @@ def list_explorations(
         if r in counts:
             counts[r] += 1
 
-    return json.dumps({
+    return {
+        "action": "list",
         "status": "ok",
         "total_explored": len(all_exp),
         "counts": counts,
         "filtered_count": len(results),
         "explorations": results,
-    }, indent=2)
+    }
 
 
-@mcp_server.tool()
-def clear_explorations() -> str:
-    """Remove all exploration data to start fresh.
-    """
+def _explore_dismiss(s2_id: str) -> dict[str, Any]:
+    """Dismiss a discovery candidate so it doesn't resurface."""
+    tree = cite_tree_mod.load_tree(_dot_tome())
+    cite_tree_mod.dismiss_paper(tree, s2_id)
+    cite_tree_mod.save_tree(_dot_tome(), tree)
+    return {"action": "dismiss", "status": "dismissed", "s2_id": s2_id}
+
+
+def _explore_clear() -> dict[str, Any]:
+    """Remove all exploration data to start fresh."""
     tree = cite_tree_mod.load_tree(_dot_tome())
     count = cite_tree_mod.clear_explorations(tree)
     cite_tree_mod.save_tree(_dot_tome(), tree)
+    return {"action": "clear", "status": "cleared", "removed": count}
+
+
+@mcp_server.tool()
+def explore(
+    key: str = "",
+    s2_id: str = "",
+    relevance: str = "",
+    note: str = "",
+    action: str = "",
+    seed: str = "",
+    limit: int = 20,
+    parent_s2_id: str = "",
+    depth: int = 0,
+    expandable: bool = False,
+) -> str:
+    """LLM-guided citation beam search — fetch, triage, expand.
+
+    key/s2_id (no action) → fetch citing papers for triage.
+    No args → list exploration state.
+    s2_id + relevance → mark a paper's relevance.
+    action='dismiss' + s2_id → dismiss a candidate.
+    action='clear' → reset all exploration data.
+    action='expandable' → show relevant nodes not yet expanded.
+
+    Args:
+        key: Library bib key (looks up DOI/S2 ID).
+        s2_id: Semantic Scholar paper ID.
+        relevance: Mark relevance — 'relevant', 'irrelevant', 'deferred', 'unknown'.
+        note: Rationale for relevance judgment (persisted).
+        action: Explicit action — 'dismiss', 'clear', 'expandable', 'list'.
+        seed: Filter explorations to descendants of this S2 ID.
+        limit: Max citing papers to fetch (max 100).
+        parent_s2_id: S2 ID of parent paper (for tree tracking).
+        depth: Exploration depth from seed (0 = seed itself).
+        expandable: Only show relevant nodes not yet expanded.
+    """
+    if key:
+        validate.validate_key_if_given(key)
+
+    # Route by intent
+    if action == "clear":
+        return json.dumps(_explore_clear(), indent=2)
+
+    if action == "dismiss" and s2_id:
+        return json.dumps(_explore_dismiss(s2_id), indent=2)
+
+    if action in ("expandable", "list") or (not key and not s2_id and not relevance):
+        return json.dumps(
+            _explore_list(
+                relevance=relevance if action != "expandable" else "",
+                seed=seed,
+                expandable=expandable or action == "expandable",
+            ),
+            indent=2,
+        )
+
+    if s2_id and relevance:
+        return json.dumps(_explore_mark(s2_id, relevance, note), indent=2)
+
+    if key or s2_id:
+        return json.dumps(
+            _explore_fetch(key, s2_id, limit, parent_s2_id, depth),
+            indent=2,
+        )
+
     return json.dumps({
-        "status": "cleared",
-        "removed": count,
+        "error": "Provide key/s2_id (fetch), s2_id+relevance (mark), or action.",
+        "hint": "explore(key='...') to fetch citers, explore() to list state, "
+                "explore(s2_id='...', relevance='relevant') to mark, "
+                "explore(action='clear') to reset."
+                + _guide_hint("explore"),
     })
 
 
@@ -3389,7 +3996,7 @@ def report_issue(tool: str, description: str, severity: Literal["minor", "major"
     """Report a tool issue for the project maintainer to review.
 
     Severity levels: minor (cosmetic/UX), major (wrong results), blocker
-    (tool unusable).
+    (tool unusable).  See guide('reporting-issues') for best practices.
 
     Args:
         tool: Name of the MCP tool (e.g. 'search', 'ingest', 'doc_lint').
@@ -3409,17 +4016,6 @@ def report_issue(tool: str, description: str, severity: Literal["minor", "major"
         "open_issues": open_count,
     }, indent=2)
 
-
-@mcp_server.tool()
-def report_issue_guide() -> str:
-    """Best-practices guide for reporting tool issues.
-
-    Equivalent to guide('reporting-issues'). Kept for backward compatibility.
-    """
-    try:
-        return guide_mod.get_topic(_project_root(), "reporting-issues")
-    except TomeError:
-        return issues_mod.report_issue_guide()
 
 
 _EMPTY_BIB = """\
@@ -3616,16 +4212,73 @@ def set_root(path: str) -> str:
 
 
 @mcp_server.tool()
-def needful(n: int = 10, file: str = "") -> str:
-    """List the N most needful things to do, ranked by urgency.
+def needful(n: int = 10, file: str = "", task: str = "", note: str = "") -> str:
+    """List the N most needful things, or mark a task as done.
+
+    No task → list mode (ranked by urgency).
+    task + file → mark-done mode (record completion).
+
+    Important: commit your changes BEFORE marking done so that the
+    stored git SHA is a clean baseline for future diffs.
 
     Args:
-        n: Maximum items to return.
-        file: Substring filter on file path (e.g. 'logic-mechanisms.tex').
-            Only items whose file path contains this string are returned.
-            Useful for parallel workflows — one Cascade window per file.
+        n: Maximum items to return (list mode).
+        file: Substring filter on file path (list mode), or exact
+            relative path (mark-done mode, e.g. 'sections/logic-mechanisms.tex').
+        task: Task name to mark done (must match config.yaml needful section).
+            When set, switches to mark-done mode.
+        note: Optional note about what was done or found (mark-done mode).
     """
     cfg = tome_config.load_config(_tome_dir())
+
+    # ── Mark-done mode ──
+    if task:
+        if not file:
+            return json.dumps({"error": "Provide file path to mark done.",
+                               "hint": "See guide('needful') for usage."})
+
+        if not cfg.needful_tasks:
+            return json.dumps({"error": "No needful tasks configured.",
+                               "hint": "See guide('needful') for setup."})
+
+        task_names = {t.name for t in cfg.needful_tasks}
+        if task not in task_names:
+            return json.dumps({
+                "error": f"Unknown task '{task}'. Known tasks: {sorted(task_names)}",
+            })
+
+        abs_path = _project_root() / file
+        if not abs_path.exists():
+            return json.dumps({"error": f"File not found: {file}"})
+
+        file_sha = checksum.sha256_file(abs_path)
+        git_sha = needful_mod._git_head_sha(_project_root())
+        state = needful_mod.load_state(_dot_tome())
+        record = needful_mod.mark_done(state, task, file, file_sha, note, git_sha=git_sha)
+        needful_mod.save_state(_dot_tome(), state)
+
+        result: dict[str, Any] = {
+            "status": "marked_done",
+            "task": task,
+            "file": file,
+            "completed_at": record["completed_at"],
+            "file_sha256": file_sha[:12] + "...",
+            "note": note or "(none)",
+        }
+        if git_sha:
+            result["git_sha"] = git_sha
+            result["hint"] = (
+                "Stored git ref. Next review can target changes with: "
+                f"git diff {git_sha} -- {file}"
+            )
+        else:
+            result["hint"] = (
+                "No git repo detected. Commit changes regularly so that "
+                "future reviews can use git diff to target changed regions."
+            )
+        return json.dumps(result, indent=2)
+
+    # ── List mode ──
     if not cfg.needful_tasks:
         return json.dumps({
             "status": "no_tasks",
@@ -3670,57 +4323,6 @@ def needful(n: int = 10, file: str = "") -> str:
         "count": len(results),
         "items": results,
     }, indent=2)
-
-
-@mcp_server.tool()
-def mark_done(task: str, file: str, note: str = "") -> str:
-    """Record that a task was completed on a file.
-
-    Important: commit your changes BEFORE calling mark_done so that the
-    stored git SHA is a clean baseline for future diffs.
-
-    Args:
-        task: Task name (must match a name in config.yaml needful section).
-        file: Relative path to the file (e.g. 'sections/logic-mechanisms.tex').
-        note: Optional note about what was done or found.
-    """
-    cfg = tome_config.load_config(_tome_dir())
-    task_names = {t.name for t in cfg.needful_tasks}
-    if task not in task_names:
-        return json.dumps({
-            "error": f"Unknown task '{task}'. Known tasks: {sorted(task_names)}",
-        })
-
-    abs_path = _project_root() / file
-    if not abs_path.exists():
-        return json.dumps({"error": f"File not found: {file}"})
-
-    file_sha = checksum.sha256_file(abs_path)
-    git_sha = needful_mod._git_head_sha(_project_root())
-    state = needful_mod.load_state(_dot_tome())
-    record = needful_mod.mark_done(state, task, file, file_sha, note, git_sha=git_sha)
-    needful_mod.save_state(_dot_tome(), state)
-
-    result: dict[str, Any] = {
-        "status": "marked_done",
-        "task": task,
-        "file": file,
-        "completed_at": record["completed_at"],
-        "file_sha256": file_sha[:12] + "...",
-        "note": note or "(none)",
-    }
-    if git_sha:
-        result["git_sha"] = git_sha
-        result["hint"] = (
-            "Stored git ref. Next review can target changes with: "
-            f"git diff {git_sha} -- {file}"
-        )
-    else:
-        result["hint"] = (
-            "No git repo detected. Commit changes regularly so that "
-            "future reviews can use git diff to target changed regions."
-        )
-    return json.dumps(result, indent=2)
 
 
 @mcp_server.tool()
@@ -3781,164 +4383,12 @@ def main():
         raise
 
 
-@mcp_server.tool()
-def s2ag_stats() -> str:
-    """Show local S2AG database statistics (paper count, citation count, DB size).
-
-    The S2AG database at ~/.tome/s2ag/s2ag.db is a shared read-only cache
-    of the Semantic Scholar Academic Graph, used for instant offline
-    citation lookups.
-    """
-    try:
-        from tome.s2ag import S2AGLocal, DB_PATH
-        if not DB_PATH.exists():
-            return json.dumps({"error": "S2AG database not found at ~/.tome/s2ag/s2ag.db",
-                               "hint": "Run: python -m tome.s2ag_cli sync-library <bib_file>"})
-        db = S2AGLocal()
-        return json.dumps(db.stats(), indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@mcp_server.tool()
-def s2ag_lookup(doi: str = "", s2_id: str = "", corpus_id: int = 0) -> str:
-    """Look up a paper in the local S2AG database. Returns metadata and
-    citation/reference counts.  No API calls — purely local.
-
-    Args:
-        doi: DOI to look up (e.g. '10.1038/nature08016').
-        s2_id: Semantic Scholar paper ID (sha hash).
-        corpus_id: Semantic Scholar corpus ID (integer).
-    """
-    try:
-        from tome.s2ag import S2AGLocal, DB_PATH
-        if not DB_PATH.exists():
-            return json.dumps({"error": "S2AG database not found"})
-        db = S2AGLocal()
-
-        rec = None
-        if doi:
-            rec = db.lookup_doi(doi)
-        elif s2_id:
-            rec = db.lookup_s2id(s2_id)
-        elif corpus_id:
-            rec = db.get_paper(corpus_id)
-
-        if rec is None:
-            return json.dumps({"found": False})
-
-        citers = db.get_citers(rec.corpus_id)
-        refs = db.get_references(rec.corpus_id)
-
-        return json.dumps({
-            "found": True,
-            "corpus_id": rec.corpus_id,
-            "paper_id": rec.paper_id,
-            "doi": rec.doi,
-            "title": rec.title,
-            "year": rec.year,
-            "citation_count": rec.citation_count,
-            "local_citers": len(citers),
-            "local_references": len(refs),
-        }, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@mcp_server.tool()
-def s2ag_shared_citers(dois: str, min_shared: int = 2) -> str:
-    """Find non-library papers that cite multiple given papers (co-citation discovery).
-    Purely local — uses the S2AG database, no API calls.
-
-    Args:
-        dois: Comma-separated DOIs to check.
-        min_shared: Minimum number of shared citations to surface.
-    """
-    try:
-        from tome.s2ag import S2AGLocal, DB_PATH
-        if not DB_PATH.exists():
-            return json.dumps({"error": "S2AG database not found"})
-        db = S2AGLocal()
-
-        doi_list = [d.strip() for d in dois.split(",") if d.strip()]
-        corpus_ids = []
-        resolved = []
-        for d in doi_list:
-            rec = db.lookup_doi(d)
-            if rec:
-                corpus_ids.append(rec.corpus_id)
-                resolved.append(d)
-
-        if len(corpus_ids) < min_shared:
-            return json.dumps({
-                "error": f"Only {len(corpus_ids)} DOIs resolved locally, need at least {min_shared}",
-                "resolved": resolved,
-            })
-
-        results = db.find_shared_citers(corpus_ids, min_shared=min_shared, limit=50)
-
-        candidates = []
-        for cid, count in results:
-            p = db.get_paper(cid)
-            if p:
-                candidates.append({
-                    "corpus_id": cid,
-                    "title": p.title,
-                    "year": p.year,
-                    "doi": p.doi,
-                    "citation_count": p.citation_count,
-                    "shared_count": count,
-                })
-
-        return json.dumps({
-            "query_dois": resolved,
-            "min_shared": min_shared,
-            "candidates": candidates,
-        }, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@mcp_server.tool()
-def s2ag_incremental(min_year: int = 0) -> str:
-    """Sweep library papers for new citers via Graph API. Adds new
-    citation edges and paper records to the local S2AG database.
-    Fast: ~437 API calls for the whole library (~5s with API key).
-
-    Args:
-        min_year: Only record citers from this year onwards (0 = all).
-    """
-    try:
-        from tome.s2ag import S2AGLocal, DB_PATH
-        from tome import bib
-        if not DB_PATH.exists():
-            return json.dumps({"error": "S2AG database not found"})
-        db = S2AGLocal()
-
-        # Get library paper DOIs → corpus_ids
-        lib = _load_bib()
-        corpus_ids = []
-        for entry in lib.entries:
-            doi = bib.get_field(entry, "doi")
-            if doi:
-                p = db.lookup_doi(doi.lower())
-                if p:
-                    corpus_ids.append(p.corpus_id)
-
-        if not corpus_ids:
-            return json.dumps({"error": "No library papers resolved in S2AG DB"})
-
-        lines: list[str] = []
-        result = db.incremental_update(
-            corpus_ids,
-            min_year=min_year,
-            progress_fn=lambda msg: lines.append(msg),
-        )
-        result["library_papers_checked"] = len(corpus_ids)
-        result["log"] = lines[-5:] if len(lines) > 5 else lines
-        return json.dumps(result, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
+# s2ag_stats, s2ag_lookup, s2ag_shared_citers, s2ag_incremental have been
+# folded into discover().
+# Use discover(scope="stats") for s2ag_stats behavior.
+# Use discover(scope="lookup", doi="...") for s2ag_lookup behavior.
+# Use discover(scope="shared_citers") for s2ag_shared_citers behavior.
+# Use discover(scope="refresh") for s2ag_incremental behavior.
 
 
 if __name__ == "__main__":

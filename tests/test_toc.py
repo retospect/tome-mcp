@@ -603,3 +603,62 @@ class TestAttachLabels:
         assert "[sec:architecture]" in output
         # No label → no brackets
         assert "Executive Overview  main" in output  # no [] before location
+
+
+# ── TOC notes (file meta under headings) ──────────────────────────────
+
+
+class TestTocNotes:
+    """Test notes= parameter showing file meta under TOC headings."""
+
+    def _setup_meta(self, project: Path):
+        """Write FILE META blocks into fake .tex files."""
+        from tome.file_meta import META_HEADER
+
+        sections = project / "sections"
+        sections.mkdir(exist_ok=True)
+        (sections / "bg.tex").write_text(
+            f"\\section{{Background}}\nContent.\n\n{META_HEADER}\n"
+            "% status: solid\n% intent: Establish MOF background\n"
+            "% open: Which MOF family?\n",
+            encoding="utf-8",
+        )
+        (sections / "arch.tex").write_text(
+            f"\\section{{Architecture}}\nContent.\n\n{META_HEADER}\n"
+            "% status: draft\n% intent: Define boxel structure\n",
+            encoding="utf-8",
+        )
+
+    def test_notes_star_shows_all(self, toc_project: Path):
+        self._setup_meta(toc_project)
+        result = get_toc(toc_project, notes="*", figures=False)
+        assert "# status: solid" in result
+        assert "# intent: Establish MOF background" in result
+        assert "# status: draft" in result
+
+    def test_notes_specific_field(self, toc_project: Path):
+        self._setup_meta(toc_project)
+        result = get_toc(toc_project, notes="status", figures=False)
+        assert "# status: solid" in result
+        assert "# status: draft" in result
+        # intent should NOT appear (only requested 'status')
+        assert "# intent:" not in result
+
+    def test_notes_multiple_fields(self, toc_project: Path):
+        self._setup_meta(toc_project)
+        result = get_toc(toc_project, notes="status,open", figures=False)
+        assert "# status: solid" in result
+        assert "# open: Which MOF family?" in result
+        # intent not requested
+        assert "# intent:" not in result
+
+    def test_no_notes_by_default(self, toc_project: Path):
+        self._setup_meta(toc_project)
+        result = get_toc(toc_project, figures=False)
+        assert "# status:" not in result
+        assert "# intent:" not in result
+
+    def test_notes_missing_file_no_crash(self, toc_project: Path):
+        # Don't create .tex files — should not crash
+        result = get_toc(toc_project, notes="status", figures=False)
+        assert "Background" in result  # TOC still renders

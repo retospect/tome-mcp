@@ -185,6 +185,16 @@ def _index_path(dot_tome: Path) -> Path:
     return dot_tome / "doc_index.json"
 
 
+def is_stale(idx_path: Path, dot_tome: Path) -> bool:
+    """Check if the cached index is stale (missing or older than .idx file)."""
+    cache = _index_path(dot_tome)
+    if not idx_path.exists():
+        return False  # no .idx — nothing to rebuild from
+    if not cache.exists():
+        return True  # no cache yet
+    return idx_path.stat().st_mtime > cache.stat().st_mtime
+
+
 def load_index(dot_tome: Path) -> dict[str, Any]:
     """Load cached index. Returns empty structure if missing."""
     path = _index_path(dot_tome)

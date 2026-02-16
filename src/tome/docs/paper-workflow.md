@@ -7,11 +7,10 @@ description: "Request \u2192 ingest \u2192 search \u2192 cite pipeline"
 
 Find papers relevant to your research:
 
-- **`discover(query)`** — Search Semantic Scholar.
-- **`discover_openalex(query)`** — Search OpenAlex (broader coverage).
-- **`discover_citing(min_shared=2)`** — Find papers citing multiple
-  library entries (requires `build_cite_tree` first).
-- **`explore_citations(key)`** — Iterative beam search over citation
+- **`discover(query="...")`** — Federated search (S2 + OpenAlex, merged).
+- **`discover(scope="shared_citers", min_shared=2)`** — Find papers citing
+  multiple library entries (merges cite_tree + S2AG).
+- **`explore(key="...")`** — Iterative beam search over citation
   graph for deep exploration.
 
 ## 2. Request
@@ -19,18 +18,18 @@ Find papers relevant to your research:
 Track papers you want but don't have:
 
 ```
-request_paper(key="smith2024", doi="10.1234/example",
-              tentative_title="Smith et al. on MOF conductivity",
-              reason="Need for signal-domains section")
+paper(action="request", key="smith2024", doi="10.1234/example",
+     tentative_title="Smith et al. on MOF conductivity",
+     reason="Need for signal-domains section")
 ```
 
-View open requests: `list_requests()`.
+View open requests: `paper(action="requests")`.
 
 ## 3. Obtain & Ingest
 
 **Never edit `tome/references.bib` directly.** Tome manages it with
-roundtrip-safe writes and lock files. Use `set_paper` to update
-metadata, `ingest` to add entries, `remove_paper` to delete.
+roundtrip-safe writes and lock files. Use `paper(key=..., title=...)` to update
+metadata, `ingest` to add entries, `paper(key=..., action="remove")` to delete.
 
 Drop PDFs into `tome/inbox/`, then:
 
@@ -46,23 +45,23 @@ and creates a bib entry in `tome/references.bib`.
 
 After ingesting, **always verify**:
 
-- **`check_doi(key)`** — Verify the DOI via CrossRef. Run after
+- **`doi(key="...")`** — Verify the DOI via CrossRef. Run after
   **every** ingest. AI-discovered DOIs are frequently wrong
   (~10% hallucination rate from LLM-based search tools).
-- **`get_paper(key, page=1)`** — Read page 1 and confirm title/authors
+- **`paper(key="...", page=1)`** — Read page 1 and confirm title/authors
   match the bib entry. Zotero and DOI lookups sometimes deliver
   the wrong PDF entirely.
 
 Then enrich:
 
-- **`set_notes(key, summary=..., claims=...)`** — Add research notes.
-- **`fetch_oa(key)`** — Try to fetch open-access PDF via Unpaywall.
-- **`build_cite_tree(key)`** — Cache citation graph from S2.
+- **`notes(key, summary=..., claims=...)`** — Add research notes.
+- **`doi(key="...", action="fetch")`** — Try to fetch open-access PDF via Unpaywall.
+- **`discover(scope="refresh", key="...")`** — Cache citation graph from S2.
 
 ## 5. Search & Use
 
 - **`search(query, key="")`** — Semantic search across papers.
-- **`get_paper(key, page=N)`** — Read raw extracted text of a page.
+- **`paper(key="...", page=N)`** — Read raw extracted text of a page.
 - **`search(query, key="", mode="exact")`** — Normalized text search across PDFs.
 
 ## 6. Cite in LaTeX
@@ -72,9 +71,9 @@ Use `search(query, scope='corpus')` to find where to add new citations.
 
 ## Building institutional memory
 
-After reading any paper (via `search`, `get_paper`, or quote
-verification), call `set_notes(key, ...)` with summary, relevance,
-claims, and quality. Check `get_paper(key)` first (notes always
+After reading any paper (via `search`, `paper`, or quote
+verification), call `notes(key, ...)` with summary, relevance,
+claims, and quality. Check `paper(key="...")` first (notes always
 included) to avoid duplicates. This prevents future sessions from
 re-reading and re-verifying the same papers.
 

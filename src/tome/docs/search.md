@@ -41,7 +41,7 @@ All content search and structural navigation is handled by two tools:
 1. **`search(query)`** — searches everything (scope='all'). **Always first.**
 2. Narrow with `scope='papers'` or `scope='corpus'` if needed.
 3. Switch to `mode='exact'` for quote verification.
-4. **Semantic Scholar** (`discover`, `cite_graph`) — citation expansion.
+4. **Semantic Scholar** (`discover(query=...)`, `discover(key=...)`) — citation expansion.
 5. **Perplexity** (`perplexity_ask`) — broad discovery.
 
 ## Examples
@@ -119,14 +119,14 @@ toc(locate="index")
 toc(locate="tree")
 ```
 
-### get_paper — retrieve metadata + content
+### paper — retrieve metadata + content
 
 ```python
 # Metadata + notes (notes always included)
-get_paper("xu2022")
+paper(key="xu2022")
 
 # Include raw text of page 3
-get_paper("xu2022", page=3)
+paper(key="xu2022", page=3)
 ```
 
 ## Tips
@@ -136,4 +136,4 @@ get_paper("xu2022", page=3)
   ideal for verifying copy-pasted quotes from compiled PDFs.
 - `paragraphs=N` requires a single `key` and `mode='exact'`.
 - `toc(locate='cite')` requires `query` (the bib key to find).
-- `get_paper` always includes notes — no separate `get_notes` needed.
+- `paper(key=...)` always includes notes — no separate `get_notes` needed.

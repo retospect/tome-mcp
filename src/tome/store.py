@@ -309,6 +309,8 @@ def search_corpus(
     col = get_collection(client, CORPUS_CHUNKS, embed_fn)
 
     where_clauses: list[dict] = []
+    # Exclude comment-heavy chunks (>70% comment lines) by default
+    where_clauses.append({"is_comment_heavy": {"$ne": True}})
     if source_file:
         where_clauses.append({"source_file": source_file})
     if labels_only:

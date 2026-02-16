@@ -6,7 +6,7 @@ All fields are plain strings, all overwrite.  No merge/remove logic.
 import pytest
 
 from tome.notes import (
-    PAPER_FIELDS,
+    DEFAULT_PAPER_FIELDS,
     delete_note,
     flatten_for_search,
     list_notes,
@@ -64,8 +64,18 @@ class TestLoadNote:
             "summary: test\nbogus: should not appear\n",
             encoding="utf-8",
         )
-        data = load_note(tmp_path, "xu2022")
+        data = load_note(tmp_path, "xu2022", allowed_fields=DEFAULT_PAPER_FIELDS)
         assert "bogus" not in data
+
+    def test_no_filter_returns_all(self, tmp_path):
+        d = tmp_path / "notes"
+        d.mkdir()
+        (d / "xu2022.yaml").write_text(
+            "summary: test\ncustom_field: hello\n",
+            encoding="utf-8",
+        )
+        data = load_note(tmp_path, "xu2022")
+        assert data["custom_field"] == "hello"
 
     def test_non_dict_returns_empty(self, tmp_path):
         d = tmp_path / "notes"
@@ -97,10 +107,16 @@ class TestSaveNote:
         save_note(tmp_path, "xu2022", {"summary": "", "claims": ""})
         assert not (tmp_path / "notes" / "xu2022.yaml").exists()
 
-    def test_ignores_unknown_fields(self, tmp_path):
-        save_note(tmp_path, "xu2022", {"summary": "test", "bogus": "ignored"})
+    def test_ignores_unknown_fields_with_filter(self, tmp_path):
+        save_note(tmp_path, "xu2022", {"summary": "test", "bogus": "ignored"},
+                  allowed_fields=DEFAULT_PAPER_FIELDS)
         loaded = load_note(tmp_path, "xu2022")
         assert "bogus" not in loaded
+
+    def test_saves_custom_fields_without_filter(self, tmp_path):
+        save_note(tmp_path, "xu2022", {"summary": "test", "custom": "kept"})
+        loaded = load_note(tmp_path, "xu2022")
+        assert loaded["custom"] == "kept"
 
 
 class TestFlattenForSearch:

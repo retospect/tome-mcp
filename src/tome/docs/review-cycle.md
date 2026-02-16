@@ -11,15 +11,15 @@ findings, commit, then track what changed since the last review.
 1. **Review** the file (read, check claims, verify citations).
 2. **Edit** — fix issues or add `\mrev{id}{severity}{text}` markers.
 3. **Commit** your changes to git.
-4. **`mark_done(task, file)`** — snapshots the current git SHA.
+4. **`needful(task=task, file=file)`** — snapshots the current git SHA.
 
-The commit-before-mark_done order is critical: it ensures the stored
+The commit-before-mark-done order is critical: it ensures the stored
 SHA is a clean baseline for future diffs.
 
 ## Diff targeting
 
 On subsequent reviews, the needful system provides the `git_sha`
-from the last `mark_done`. Use:
+from the last mark-done. Use:
 
 ```
 file_diff(file="sections/connectivity.tex", task="review_pass_a")
@@ -45,7 +45,7 @@ Configure the pattern in `tome/config.yaml` under `track:`.
 ## Related tools
 
 - **`needful()`** — What needs review next?
-- **`mark_done(task, file)`** — Record completion.
+- **`needful(task=task, file=file)`** — Record completion.
 - **`file_diff(file, task)`** — See what changed since last review.
 - **`review_status()`** — Count tracked markers by file.
 - **`doc_lint()`** — Structural issues (undefined refs, orphan labels).

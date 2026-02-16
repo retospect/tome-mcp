@@ -42,6 +42,11 @@ class TrackedPattern:
         return self._compiled
 
 
+# Default note field sets — used when config.yaml omits note_fields.
+DEFAULT_PAPER_FIELDS: list[str] = ["summary", "claims", "relevance", "limitations", "quality", "tags"]
+DEFAULT_FILE_FIELDS: list[str] = ["intent", "status", "depends", "claims", "open"]
+
+
 @dataclass
 class TomeConfig:
     """Parsed tome/config.yaml."""
@@ -52,6 +57,8 @@ class TomeConfig:
     )
     track: list[TrackedPattern] = field(default_factory=list)
     needful_tasks: list[NeedfulTask] = field(default_factory=list)
+    paper_note_fields: list[str] = field(default_factory=lambda: list(DEFAULT_PAPER_FIELDS))
+    file_note_fields: list[str] = field(default_factory=lambda: list(DEFAULT_FILE_FIELDS))
     sha256: str = ""  # checksum of the raw config file
 
 
@@ -59,6 +66,7 @@ _DEFAULT_CONFIG = """\
 # Tome project configuration
 # This file tells Tome which .tex files to index and what macros to track.
 # Edit freely — Tome checksums this file and re-indexes when it changes.
+# Full example with all options: see examples/config.yaml in the Tome source.
 
 # Document entry points — named roots for \\input{}/\\include{} tree walking.
 # Use any name; tools accept root="name" to target a specific document.
@@ -217,10 +225,21 @@ def load_config(tome_dir: Path) -> TomeConfig:
             cadence_hours=float(entry.get("cadence_hours", 168)),
         ))
 
+    # Parse note_fields
+    nf = data.get("note_fields", {})
+    if isinstance(nf, dict):
+        paper_nf = [str(f) for f in nf.get("paper", DEFAULT_PAPER_FIELDS)]
+        file_nf = [str(f) for f in nf.get("file", DEFAULT_FILE_FIELDS)]
+    else:
+        paper_nf = list(DEFAULT_PAPER_FIELDS)
+        file_nf = list(DEFAULT_FILE_FIELDS)
+
     return TomeConfig(
         roots=roots,
         tex_globs=[str(g) for g in data.get("tex_globs", ["sections/*.tex", "appendix/*.tex", "main.tex"])],
         track=tracked,
         needful_tasks=needful_tasks,
+        paper_note_fields=paper_nf,
+        file_note_fields=file_nf,
         sha256=sha,
     )

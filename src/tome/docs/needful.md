@@ -1,5 +1,5 @@
 ---
-description: Task tracking, scoring, mark_done cycle
+description: Task tracking, scoring, mark-done cycle
 ---
 # Needful System
 
@@ -16,7 +16,7 @@ needful:
     - name: review_pass_a
       globs: ["sections/*.tex"]
       cadence: 168h          # weekly
-    - name: sync_corpus
+    - name: reindex_corpus
       globs: ["sections/*.tex", "appendix/*.tex"]
       cadence: 0             # hash-only (re-do when file changes)
 ```
@@ -27,7 +27,7 @@ needful:
 ## Tools
 
 - **`needful(n=10)`** — List the N most urgent items, ranked by score.
-- **`mark_done(task, file, note="")`** — Record that a task was completed.
+- **`needful(task, file, note="")`** — Mark a task as done on a file.
 
 ## Scoring (higher = more needful)
 
@@ -43,12 +43,12 @@ needful:
 1. Call `needful()` to see what's most urgent.
 2. Do the work (review, sync, summarize, etc.).
 3. **Commit your changes** to git.
-4. Call `mark_done(task, file)` — this snapshots the git SHA.
+4. Call `needful(task=task, file=file)` — this snapshots the git SHA.
 5. Future `needful()` calls use the SHA for diff targeting.
 
 ## Diff targeting
 
-Each `mark_done` stores the git HEAD SHA. On subsequent reviews,
+Each mark-done stores the git HEAD SHA. On subsequent reviews,
 use `file_diff(file, task=task_name)` to see only what changed
 since the last review — focus on modified paragraphs instead of
 re-reading the entire file.

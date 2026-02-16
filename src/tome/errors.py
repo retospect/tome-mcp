@@ -62,7 +62,8 @@ class DOIResolutionFailed(TomeError):
         else:
             msg = (
                 f"CrossRef returned HTTP {status_code} for DOI '{doi}'. "
-                f"This may be a transient error. Try again later."
+                f"This may be a transient error. Try again later. "
+                f"If this persists, use report_issue to log it — see guide('reporting-issues')."
             )
         super().__init__(msg)
         self.doi = doi
@@ -77,7 +78,9 @@ class IngestFailed(TomeError):
             f"Could not ingest '{path}': {reason}. "
             f"The file remains in inbox/. "
             f"Try: ingest path='{path}' key='authorYYYY' to assign a key manually, "
-            f"or use set_paper to create the bib entry first."
+            f"or use set_paper to create the bib entry first. "
+            f"See guide('paper-workflow') for the full pipeline. "
+            f"If the PDF looks valid, use report_issue to log a bug — see guide('reporting-issues')."
         )
         self.path = path
         self.reason = reason
@@ -90,7 +93,8 @@ class BibParseError(TomeError):
         super().__init__(
             f"Failed to parse '{path}': {detail}. "
             f"Check the file for syntax errors (unmatched braces, missing commas). "
-            f"The file was not modified."
+            f"The file was not modified. "
+            f"If the file looks correct, use report_issue to log a bug — see guide('reporting-issues')."
         )
         self.path = path
         self.detail = detail
@@ -103,7 +107,8 @@ class BibWriteError(TomeError):
         super().__init__(
             f"Bib write aborted for '{path}': {detail}. "
             f"A roundtrip parse-serialize-parse test detected unexpected changes. "
-            f"The file was not modified. A backup exists at .tome/tome.json.bak."
+            f"The file was not modified. A backup exists at .tome/tome.json.bak. "
+            f"If this recurs, use report_issue to log a bug — see guide('reporting-issues')."
         )
         self.path = path
         self.detail = detail
@@ -146,7 +151,8 @@ class APIError(TomeError):
         elif status_code >= 500:
             msg = (
                 f"{service} server error (HTTP {status_code}) after retries. "
-                f"The service may be temporarily down. Try again later. {detail}"
+                f"The service may be temporarily down. Try again later. "
+                f"If this persists, use report_issue to log it — see guide('reporting-issues'). {detail}"
             )
         elif status_code == 0:
             msg = (
@@ -198,7 +204,8 @@ class ConfigMissing(ConfigError):
                 "Run set_root(path='...') to auto-create a starter config, "
                 "or create tome/config.yaml manually. "
                 "The config file defines document roots, tex_globs for search indexing, "
-                "tracked LaTeX macros, and recurring tasks."
+                "tracked LaTeX macros, and recurring tasks. "
+                "See guide('configuration') for details."
             ),
         )
 
@@ -213,7 +220,8 @@ class RootNotFound(ConfigError):
             hint=(
                 "Add this root to the 'roots:' section of tome/config.yaml, e.g.:\n"
                 f"  roots:\n    {root}: path/to/{root}.tex\n"
-                "Or use an existing root name."
+                "Or use an existing root name. "
+                "See guide('configuration') for details."
             ),
         )
 
@@ -227,7 +235,8 @@ class RootFileNotFound(ConfigError):
             f"under project root {project_root}",
             hint=(
                 "Check that the path in tome/config.yaml is correct and relative "
-                "to the project root. Create the file or update the config."
+                "to the project root. Create the file or update the config. "
+                "See guide('configuration') for details."
             ),
         )
 
@@ -240,7 +249,8 @@ class NoBibFile(ConfigError):
             f"Bibliography file not found at {bib_path}",
             hint=(
                 "The library is empty. Use set_paper(key='...', title='...') to create "
-                "the first entry, or place a PDF in tome/inbox/ and run ingest."
+                "the first entry, or place a PDF in tome/inbox/ and run ingest. "
+                "See guide('paper-workflow') for the full pipeline."
             ),
         )
 
@@ -255,7 +265,8 @@ class NoTexFiles(ConfigError):
             hint=(
                 "Check that tex_globs in tome/config.yaml match your project structure. "
                 "Common patterns: 'sections/*.tex', 'chapters/*.tex', '**/*.tex'. "
-                "Directories .tome/, .git/, .venv/ are always excluded."
+                "Directories .tome/, .git/, .venv/ are always excluded. "
+                "See guide('configuration') for details."
             ),
         )
 
@@ -268,7 +279,8 @@ class ChromaDBError(TomeError):
             f"ChromaDB error: {detail}. "
             f"The .tome/chroma/ directory may be corrupted. "
             f"Try: rebuild (re-extracts text and re-indexes all papers). "
-            f"If that fails, delete .tome/chroma/ and rebuild again."
+            f"If that fails, delete .tome/chroma/ and rebuild again. "
+            f"If this persists after rebuild, use report_issue to log it — see guide('reporting-issues')."
         )
         self.detail = detail
 
@@ -282,6 +294,7 @@ class UnpaywallNotConfigured(ConfigError):
             hint=(
                 "Set the UNPAYWALL_EMAIL environment variable, or add "
                 "'unpaywall_email: you@example.com' to tome/config.yaml. "
-                "Unpaywall requires an email for API access (they don't spam)."
+                "Unpaywall requires an email for API access (they don't spam). "
+                "See guide('configuration') for details."
             ),
         )

@@ -14,8 +14,8 @@ LaTeX documents, and tracking research workflows.
    `.tome/` cache under this root.  If `tome/config.yaml` doesn't
    exist, Tome creates a default one.
 
-2. **`stats()`** — See library size, DOI status, pending figures
-   and paper requests.
+2. **`paper()`** — See library size, DOI status, pending figures
+   and paper requests (no args = stats overview).
 
 3. **`toc(locate='tree')`** — See the ordered file list for your
    LaTeX document (follows `\input{}`/`\include{}` tree).
@@ -24,18 +24,18 @@ LaTeX documents, and tracking research workflows.
 
 | Group | Key tools |
 |-------|-----------|
-| **Paper management** | `ingest`, `get_paper`, `set_paper`, `remove_paper`, `list_papers` |
-| **Notes** | `set_notes`, `edit_notes` (read via `get_paper`) |
+| **Paper management** | `paper` (get/set/list/rename/remove/request/stats), `ingest` |
+| **Notes** | `notes` (read via `paper(key=...)`) |
 | **Search** | `search` (scope: all/papers/corpus/notes; mode: semantic/exact) |
-| **Document navigation** | `toc` (locate: heading/cite/label/index/tree), `sync_corpus` |
+| **Document navigation** | `toc` (locate: heading/cite/label/index/tree) |
 | **Document analysis** | `doc_lint`, `dep_graph`, `review_status` |
-| **Discovery** | `discover`, `discover_openalex`, `discover_citing`, `cite_graph` |
-| **Citation exploration** | `explore_citations`, `mark_explored`, `list_explorations` |
-| **Figures** | `request_figure`, `add_figure`, `list_figures_tool` |
-| **Paper requests** | `request_paper`, `list_requests` |
-| **Task tracking** | `needful`, `mark_done` |
-| **Maintenance** | `rebuild`, `check_doi`, `build_cite_tree`, `fetch_oa` |
-| **Navigation** | `guide` (this system), `report_issue`, `stats` |
+| **Discovery** | `discover` (search, graph, shared_citers, refresh, stats, lookup) |
+| **Citation exploration** | `explore` (fetch, mark, list, dismiss, clear) |
+| **Figures** | `figure` (request, register, or list) |
+| **DOI management** | `doi` (check/reject/list rejected/fetch OA PDF) |
+| **Task tracking** | `needful` (list or mark done) |
+| **Maintenance** | `reindex` (papers/corpus/all) |
+| **Navigation** | `guide` (this system), `report_issue` |
 
 ## Typical session flow
 
@@ -46,13 +46,13 @@ LaTeX documents, and tracking research workflows.
 
 ## Good habits
 
-- **`check_doi` after every ingest**: AI tools hallucinate ~10%
+- **`doi(key=...)` after every ingest**: AI tools hallucinate ~10%
   of DOIs. Always verify.
-- **Verify PDF content**: `get_paper(key, page=1)` — confirm
+- **Verify PDF content**: `paper(key="...", page=1)` — confirm
   title/authors match the bib entry before citing.
-- **`set_notes` after reading a paper**: Build institutional
+- **`notes` after reading a paper**: Build institutional
   memory so future sessions don't re-verify the same sources.
-- **Commit before `mark_done`**: The stored git SHA is your
+- **Commit before marking done**: The stored git SHA is your
   baseline for future diff-targeted reviews.
 
 ## Bootstrapping a new project
@@ -68,7 +68,7 @@ that codify these practices for your specific LaTeX document:
    citation workflow, how to upgrade shallow cites to verbatim quotes.
    See `guide('search')`.
 
-3. **Git workflow** — commit-before-mark_done rule, review cycle
+3. **Git workflow** — commit-before-needful(task=...) rule, review cycle
    with `\mrev{}` findings. See `guide('review-cycle')`.
 
 4. **Document analysis** — which tools to run and when (`doc_lint`,

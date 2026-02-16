@@ -54,7 +54,7 @@ BibTeX ignores unknown fields — Tome uses them for tracking:
 - `x-tags = {tag1, tag2}` — Comma-separated tags
 
 ### Rebuilding `.tome/`
-If cache becomes corrupt: `rebuild()` re-extracts text, re-embeds,
+If cache becomes corrupt: `reindex(scope="papers")` re-extracts text, re-embeds,
 and rebuilds ChromaDB from `tome/pdf/` and `tome/references.bib`.
 
 **Never edit files in `.tome/` directly.** Everything under `.tome/`

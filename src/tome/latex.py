@@ -38,6 +38,7 @@ class ChunkMarkers:
     refs: list[str] = field(default_factory=list)
     cites: list[str] = field(default_factory=list)
     sections: list[str] = field(default_factory=list)
+    comment_ratio: float = 0.0
 
     @property
     def has_label(self) -> bool:
@@ -79,7 +80,22 @@ class ChunkMarkers:
         if self.sections:
             meta["sections"] = ",".join(self.sections)
 
+        meta["comment_ratio"] = round(self.comment_ratio, 2)
+        meta["is_comment_heavy"] = self.comment_ratio > 0.7
+
         return meta
+
+
+def _comment_ratio(text: str) -> float:
+    """Fraction of non-empty lines that are LaTeX comments (start with %).
+
+    Returns 0.0 for empty text. Lines that are purely whitespace are ignored.
+    """
+    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    if not lines:
+        return 0.0
+    comment_lines = sum(1 for l in lines if l.startswith("%"))
+    return comment_lines / len(lines)
 
 
 def extract_markers(text: str) -> ChunkMarkers:
@@ -117,6 +133,7 @@ def extract_markers(text: str) -> ChunkMarkers:
         refs=refs,
         cites=cites,
         sections=sections,
+        comment_ratio=_comment_ratio(text),
     )
 
 

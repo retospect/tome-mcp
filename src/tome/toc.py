@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from tome import file_meta as file_meta_mod
+
 # ── Level ordering ──────────────────────────────────────────────────────
 
 LEVEL_DEPTH: dict[str, int] = {
@@ -463,8 +465,17 @@ def render_toc(
     show_figures: bool = True,
     part_filter: str = "",
     matched: set[int] | None = None,
+    note_fields: list[str] | None = None,
+    project_root: Path | None = None,
 ) -> str:
-    """Render a TOC tree as indented plain text."""
+    """Render a TOC tree as indented plain text.
+
+    Args:
+        note_fields: If given, show these file-meta fields under headings
+            that introduce a new source file.  ``["*"]`` = all fields.
+        project_root: Required when *note_fields* is set — used to locate
+            the ``.tex`` files on disk.
+    """
     lines: list[str] = []
     effective_roots = roots
     if part_filter:
@@ -482,9 +493,32 @@ def render_toc(
                 r for r in roots
                 if r.level == "part" and pf in r.title.lower()
             ]
+    # Cache file meta to avoid re-reading the same file
+    meta_cache: dict[str, dict[str, str]] = {}
     _render(effective_roots, lines, max_depth=max_depth, indent=0,
-            parent_file="", show_figures=show_figures, matched=matched)
+            parent_file="", show_figures=show_figures, matched=matched,
+            note_fields=note_fields, project_root=project_root,
+            meta_cache=meta_cache)
     return "\n".join(lines)
+
+
+def _get_file_meta(
+    file: str,
+    note_fields: list[str],
+    project_root: Path,
+    meta_cache: dict[str, dict[str, str]],
+) -> dict[str, str]:
+    """Look up file meta, with caching."""
+    if file in meta_cache:
+        return meta_cache[file]
+    path = project_root / file
+    if not path.exists():
+        meta_cache[file] = {}
+        return {}
+    allowed = None if "*" in note_fields else set(note_fields)
+    meta = file_meta_mod.parse_meta_from_file(path, allowed)
+    meta_cache[file] = meta
+    return meta
 
 
 def _render(
@@ -496,6 +530,9 @@ def _render(
     parent_file: str,
     show_figures: bool,
     matched: set[int] | None,
+    note_fields: list[str] | None = None,
+    project_root: Path | None = None,
+    meta_cache: dict[str, dict[str, str]] | None = None,
 ) -> None:
     for entry in entries:
         if matched is not None and id(entry) not in matched:
@@ -508,6 +545,14 @@ def _render(
         lbl = f"  [{entry.label}]" if entry.label else ""
         pg = f"  p.{entry.page}" if entry.page else ""
         lines.append(f"{pad}{title}{lbl}{loc}{pg}")
+
+        # File meta notes (only when heading introduces a new source file)
+        if (note_fields and project_root and meta_cache is not None
+                and entry.file and entry.file != parent_file):
+            meta = _get_file_meta(entry.file, note_fields, project_root, meta_cache)
+            if meta:
+                for mk, mv in meta.items():
+                    lines.append(f"{pad}  # {mk}: {mv}")
 
         # Floats
         if show_figures:
@@ -537,6 +582,9 @@ def _render(
                 parent_file=cur_file,
                 show_figures=show_figures,
                 matched=matched,
+                note_fields=note_fields,
+                project_root=project_root,
+                meta_cache=meta_cache,
             )
         else:
             # Collapsed summary
@@ -567,6 +615,7 @@ def get_toc(
     pages: str = "",
     figures: bool = True,
     part: str = "",
+    notes: str = "",
 ) -> str:
     """Parse and render the document TOC as indented plain text.
 
@@ -581,6 +630,9 @@ def get_toc(
         pages: Page range, e.g. ``"31-70"``.
         figures: Include figure/table entries (default *True*).
         part: Restrict to a part by number or name substring.
+        notes: Show file-meta fields under headings.  ``"*"`` = all fields,
+            or comma-separated field names like ``"status,open"``.
+            Empty string = no notes.
 
     Returns:
         Compact indented-text TOC, or an error/status message.
@@ -657,12 +709,19 @@ def get_toc(
         hdr.append("(no source attribution)")
     header = ", ".join(hdr)
 
+    # Parse notes fields
+    note_fields: list[str] | None = None
+    if notes:
+        note_fields = [f.strip() for f in notes.split(",") if f.strip()]
+
     body = render_toc(
         roots,
         max_depth=max_depth,
         show_figures=figures,
         part_filter=part,
         matched=matched,
+        note_fields=note_fields,
+        project_root=project_root,
     )
 
     hint_block = ""

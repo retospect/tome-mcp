@@ -55,7 +55,7 @@ needful:
     - name: review_pass_a
       globs: ["sections/*.tex"]
       cadence: 168h
-    - name: sync_corpus
+    - name: reindex_corpus
       globs: ["sections/*.tex", "appendix/*.tex"]
       cadence: 0
 ```

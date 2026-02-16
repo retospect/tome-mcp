@@ -6,8 +6,10 @@ from pathlib import Path
 import pytest
 
 from tome.summaries import (
-    check_staleness,
+    check_staleness_git,
     get_summary,
+    git_changes_since,
+    git_file_is_dirty,
     load_summaries,
     save_summaries,
     set_summary,
@@ -56,13 +58,11 @@ class TestSetGet:
                 {"lines": "1-23", "description": "flubber basics"},
                 {"lines": "24-90", "description": "flubber number data"},
             ],
-            file_sha256="sha_abc",
         )
         assert entry["summary"] == "Describes flubber properties"
         assert entry["short"] == "Flubber props"
         assert len(entry["sections"]) == 2
-        assert entry["file_sha256"] == "sha_abc"
-        assert "updated" in entry
+        assert "last_summarized" in entry
 
         got = get_summary(data, "sections/foo.tex")
         assert got is not None
@@ -73,33 +73,35 @@ class TestSetGet:
 
     def test_overwrite(self):
         data = {}
-        set_summary(data, "a.tex", "old", "o", [], "sha1")
-        set_summary(data, "a.tex", "new", "n", [], "sha2")
+        set_summary(data, "a.tex", "old", "o", [])
+        set_summary(data, "a.tex", "new", "n", [])
         assert data["a.tex"]["summary"] == "new"
-        assert data["a.tex"]["file_sha256"] == "sha2"
 
-
-class TestStaleness:
-    def test_missing_summary(self):
+    def test_partial_update_preserves_existing(self):
         data = {}
-        result = check_staleness(data, {"a.tex": "sha1"})
-        assert result == {"a.tex": "missing"}
+        set_summary(data, "a.tex", "full summary", "short", [{"lines": "1-10", "description": "intro"}])
+        # Update only summary, keep short and sections
+        set_summary(data, "a.tex", "updated summary", "", None)
+        assert data["a.tex"]["summary"] == "updated summary"
+        assert data["a.tex"]["short"] == "short"  # preserved
 
-    def test_stale_summary(self):
-        data = {"a.tex": {"file_sha256": "old_sha"}}
-        result = check_staleness(data, {"a.tex": "new_sha"})
-        assert result == {"a.tex": "stale"}
 
-    def test_fresh_summary(self):
-        data = {"a.tex": {"file_sha256": "sha1"}}
-        result = check_staleness(data, {"a.tex": "sha1"})
-        assert result == {}
+class TestGitStaleness:
+    def test_missing_summary(self, tmp_path):
+        data = {}
+        results = check_staleness_git(data, tmp_path, ["a.tex"])
+        assert len(results) == 1
+        assert results[0]["status"] == "missing"
 
-    def test_mixed(self):
-        data = {
-            "a.tex": {"file_sha256": "sha_a"},
-            "b.tex": {"file_sha256": "old_sha"},
-        }
-        checksums = {"a.tex": "sha_a", "b.tex": "new_sha", "c.tex": "sha_c"}
-        result = check_staleness(data, checksums)
-        assert result == {"b.tex": "stale", "c.tex": "missing"}
+    def test_no_date_is_unknown(self, tmp_path):
+        data = {"a.tex": {"short": "test"}}
+        results = check_staleness_git(data, tmp_path, ["a.tex"])
+        assert results[0]["status"] == "unknown"
+
+    def test_git_dirty_check_non_repo(self, tmp_path):
+        # Not a git repo — benefit of the doubt (not dirty)
+        assert git_file_is_dirty(tmp_path, "a.tex") is False
+
+    def test_git_changes_since_non_repo(self, tmp_path):
+        # Not a git repo
+        assert git_changes_since(tmp_path, "a.tex", "2020-01-01") == -1

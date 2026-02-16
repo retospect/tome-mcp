@@ -14,21 +14,22 @@ Format:
             {"lines": "46-120", "description": "Quantum interference data"},
             ...
         ],
-        "file_sha256": "abc123...",
-        "updated": "2026-02-13T20:50:00+00:00"
+        "last_summarized": "2026-02-13T20:50:00+00:00"
     }
 }
+
+Staleness is determined by git history — counting commits that touch
+the file since last_summarized, rather than comparing file checksums.
 """
 
 from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
-from tome.checksum import sha256_file
 
 
 def _summaries_path(dot_tome: Path) -> Path:
@@ -67,7 +68,6 @@ def set_summary(
     summary: str,
     short: str,
     sections: list[dict[str, str]],
-    file_sha256: str,
 ) -> dict[str, Any]:
     """Store a summary for a file.
 
@@ -77,17 +77,17 @@ def set_summary(
         summary: Full summary text.
         short: One-line short summary.
         sections: List of {"lines": "1-45", "description": "..."} dicts.
-        file_sha256: Current SHA256 of the file.
 
     Returns:
         The stored summary entry.
     """
+    now = datetime.now(timezone.utc).isoformat()
+    existing = data.get(file_path, {})
     entry = {
-        "summary": summary,
-        "short": short,
-        "sections": sections,
-        "file_sha256": file_sha256,
-        "updated": datetime.now(timezone.utc).isoformat(),
+        "summary": summary or existing.get("summary", ""),
+        "short": short or existing.get("short", ""),
+        "sections": sections if sections is not None else existing.get("sections", []),
+        "last_summarized": now,
     }
     data[file_path] = entry
     return entry
@@ -98,24 +98,80 @@ def get_summary(data: dict[str, Any], file_path: str) -> dict[str, Any] | None:
     return data.get(file_path)
 
 
-def check_staleness(
+def git_file_is_dirty(project_root: Path, file_path: str) -> bool:
+    """Check if a file has uncommitted changes (staged or unstaged).
+
+    Returns True if the file is dirty, False if clean.
+    Returns False if not in a git repo (benefit of the doubt).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain", "--", file_path],
+            capture_output=True, text=True, cwd=str(project_root),
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return False  # not a git repo — allow
+        return bool(result.stdout.strip())
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def git_changes_since(
+    project_root: Path,
+    file_path: str,
+    since_iso: str,
+) -> int:
+    """Count git commits touching a file since a given ISO date.
+
+    Returns 0 if fresh, >0 if stale (number of commits since summary).
+    Returns -1 if not in a git repo.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "log", "--oneline", f"--after={since_iso}", "--", file_path],
+            capture_output=True, text=True, cwd=str(project_root),
+            timeout=5,
+        )
+        if result.returncode != 0:
+            return -1
+        lines = [l for l in result.stdout.strip().split("\n") if l]
+        return len(lines)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return -1
+
+
+def check_staleness_git(
     data: dict[str, Any],
-    current_checksums: dict[str, str],
-) -> dict[str, str]:
-    """Check which files have stale or missing summaries.
+    project_root: Path,
+    file_paths: list[str],
+) -> list[dict[str, Any]]:
+    """Check staleness of summaries using git history.
 
     Args:
         data: The summaries dict.
-        current_checksums: Map of file_path -> current SHA256.
+        project_root: Project root for git commands.
+        file_paths: Files to check.
 
     Returns:
-        Dict of file_path -> status ("stale" or "missing").
+        List of {file, short, status, last_summarized, commits_since} dicts.
     """
-    result: dict[str, str] = {}
-    for file_path, sha in current_checksums.items():
-        entry = data.get(file_path)
+    results: list[dict[str, Any]] = []
+    for fp in file_paths:
+        entry = data.get(fp)
         if entry is None:
-            result[file_path] = "missing"
-        elif entry.get("file_sha256") != sha:
-            result[file_path] = "stale"
-    return result
+            results.append({"file": fp, "short": "", "status": "missing",
+                           "last_summarized": None, "commits_since": None})
+            continue
+        last = entry.get("last_summarized") or entry.get("updated", "")
+        if not last:
+            results.append({"file": fp, "short": entry.get("short", ""),
+                           "status": "unknown", "last_summarized": last,
+                           "commits_since": None})
+            continue
+        commits = git_changes_since(project_root, fp, last)
+        status = "fresh" if commits == 0 else ("stale" if commits > 0 else "unknown")
+        results.append({"file": fp, "short": entry.get("short", ""),
+                       "status": status, "last_summarized": last,
+                       "commits_since": commits if commits >= 0 else None})
+    return results

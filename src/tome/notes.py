@@ -4,7 +4,8 @@ Each paper can have a notes file at tome/notes/{key}.yaml containing
 structured observations.  All fields are plain strings; every write
 overwrites the field.  The LLM reads, edits, and writes back.
 
-Fields: summary, claims, relevance, limitations, quality, tags.
+Field names are configurable via note_fields.paper in tome/config.yaml.
+Default fields: summary, claims, relevance, limitations, quality, tags.
 """
 
 from __future__ import annotations
@@ -14,8 +15,8 @@ from typing import Any
 
 import yaml
 
-# Paper note fields — all strings, all overwrite.
-PAPER_FIELDS = {"summary", "claims", "relevance", "limitations", "quality", "tags"}
+# Legacy default — kept for backward compat; use config for the real set.
+DEFAULT_PAPER_FIELDS = frozenset({"summary", "claims", "relevance", "limitations", "quality", "tags"})
 
 
 def notes_dir(tome_dir: Path) -> Path:
@@ -28,8 +29,17 @@ def note_path(tome_dir: Path, key: str) -> Path:
     return notes_dir(tome_dir) / f"{key}.yaml"
 
 
-def load_note(tome_dir: Path, key: str) -> dict[str, str]:
-    """Load a paper's notes from YAML. Returns empty dict if no notes exist."""
+def load_note(
+    tome_dir: Path,
+    key: str,
+    allowed_fields: set[str] | None = None,
+) -> dict[str, str]:
+    """Load a paper's notes from YAML. Returns empty dict if no notes exist.
+
+    Args:
+        allowed_fields: If given, only these fields are returned.
+            If None, all fields in the file are returned.
+    """
     p = note_path(tome_dir, key)
     if not p.exists():
         return {}
@@ -39,20 +49,35 @@ def load_note(tome_dir: Path, key: str) -> dict[str, str]:
     data = yaml.safe_load(text)
     if not isinstance(data, dict):
         return {}
-    # Coerce all values to strings for the new interface
-    return {k: str(v) if v is not None else "" for k, v in data.items() if k in PAPER_FIELDS}
+    # Coerce all values to strings
+    result = {k: str(v) if v is not None else "" for k, v in data.items()}
+    if allowed_fields is not None:
+        result = {k: v for k, v in result.items() if k in allowed_fields}
+    return result
 
 
-def save_note(tome_dir: Path, key: str, data: dict[str, str]) -> Path:
+def save_note(
+    tome_dir: Path,
+    key: str,
+    data: dict[str, str],
+    allowed_fields: set[str] | None = None,
+) -> Path:
     """Save a paper's notes to YAML. Creates tome/notes/ if needed.
 
     Only writes non-empty fields.  Returns the path written.
+
+    Args:
+        allowed_fields: If given, only these fields are persisted.
+            If None, all fields in *data* are written.
     """
     d = notes_dir(tome_dir)
     d.mkdir(parents=True, exist_ok=True)
     p = d / f"{key}.yaml"
-    # Filter out empty strings
-    clean = {k: v for k, v in data.items() if k in PAPER_FIELDS and v}
+    # Filter out empty strings (and invalid fields if allowed_fields given)
+    if allowed_fields is not None:
+        clean = {k: v for k, v in data.items() if k in allowed_fields and v}
+    else:
+        clean = {k: v for k, v in data.items() if v}
     if clean:
         p.write_text(
             yaml.dump(clean, default_flow_style=False, allow_unicode=True, sort_keys=False),
@@ -63,13 +88,23 @@ def save_note(tome_dir: Path, key: str, data: dict[str, str]) -> Path:
     return p
 
 
-def flatten_for_search(key: str, data: dict[str, str]) -> str:
-    """Flatten a note into a single text string for ChromaDB indexing."""
+def flatten_for_search(
+    key: str,
+    data: dict[str, str],
+    field_order: list[str] | None = None,
+) -> str:
+    """Flatten a note into a single text string for ChromaDB indexing.
+
+    Args:
+        field_order: Ordered list of fields to include.  If None, all
+            fields in *data* are included in sorted order.
+    """
     parts = [f"Paper: {key}"]
-    for field in ("summary", "claims", "relevance", "limitations", "quality", "tags"):
-        val = data.get(field, "")
+    fields = field_order if field_order is not None else sorted(data.keys())
+    for f in fields:
+        val = data.get(f, "")
         if val:
-            parts.append(f"{field.title()}: {val}")
+            parts.append(f"{f.title()}: {val}")
     return "\n".join(parts)
 
 

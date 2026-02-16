@@ -359,14 +359,14 @@ class TestPaginateToc:
 
 
 # ===========================================================================
-# get_paper — call underlying sync function directly
+# paper(key=...) — call underlying _paper_get directly
 # ===========================================================================
 
 
 class TestGetPaper:
     def _call(self, key, page=0):
-        """Call the unwrapped sync get_paper."""
-        return json.loads(server.get_paper.__wrapped__(key, page))
+        """Call the internal _paper_get helper."""
+        return json.loads(server._paper_get(key, page))
 
     def test_basic_metadata(self):
         result = self._call("xu2022")
@@ -400,3 +400,497 @@ class TestGetPaper:
     def test_page_zero_no_text(self):
         result = self._call("xu2022", page=0)
         assert "page_text" not in result
+
+
+# ===========================================================================
+# reindex — scope routing
+# ===========================================================================
+
+
+class TestReindexRouting:
+    def _call(self, **kwargs):
+        return json.loads(server.reindex.__wrapped__(**kwargs))
+
+    def test_default_scope_is_all(self, mock_store):
+        mock_store["get_indexed_files"] = MagicMock(return_value={})
+        monkeypatch_attr = None  # mock_store handles chromadb
+        result = self._call()
+        assert result["scope"] == "all"
+        assert "corpus" in result
+        assert "papers" in result
+
+    def test_scope_corpus_only(self, mock_store):
+        mock_store["get_indexed_files"] = MagicMock(return_value={})
+        result = self._call(scope="corpus")
+        assert result["scope"] == "corpus"
+        assert "corpus" in result
+        assert "papers" not in result
+
+    def test_scope_papers_only(self, mock_store):
+        result = self._call(scope="papers")
+        assert result["scope"] == "papers"
+        assert "papers" in result
+        assert "corpus" not in result
+
+    def test_key_implies_papers_scope(self, mock_store):
+        result = self._call(key="xu2022")
+        assert result["scope"] == "papers"
+        assert "papers" in result
+        assert "corpus" not in result
+
+    def test_explicit_corpus_scope_ignores_key(self, mock_store):
+        mock_store["get_indexed_files"] = MagicMock(return_value={})
+        result = self._call(scope="corpus")
+        assert result["scope"] == "corpus"
+        assert "papers" not in result
+
+
+# ===========================================================================
+# notes — file summary fields (write, read, clear)
+# ===========================================================================
+
+
+class TestNotesFileSummary:
+    def _call(self, **kwargs):
+        return json.loads(server.notes.__wrapped__(**kwargs))
+
+    def test_write_summary_fields(self, fake_project, monkeypatch):
+        sections = fake_project / "sections"
+        sections.mkdir(exist_ok=True)
+        tex = sections / "test.tex"
+        tex.write_text("\\section{Test}\nContent here.\n")
+        # Pretend file is committed (not dirty)
+        monkeypatch.setattr(server.summaries, "git_file_is_dirty", lambda *a: False)
+
+        result = self._call(
+            file="sections/test.tex",
+            summary="Test section about testing",
+            short="Test section",
+            sections='[{"lines": "1-2", "description": "intro"}]',
+        )
+        assert result["status"] == "updated"
+        assert "summary" in result
+        assert result["summary"]["summary"] == "Test section about testing"
+        assert result["summary"]["short"] == "Test section"
+        assert len(result["summary"]["sections"]) == 1
+        assert "last_summarized" in result["summary"]
+
+    def test_read_returns_summary(self, fake_project, monkeypatch):
+        from tome import summaries
+        sections = fake_project / "sections"
+        sections.mkdir(exist_ok=True)
+        tex = sections / "test.tex"
+        tex.write_text("\\section{Test}\n")
+        monkeypatch.setattr(server.summaries, "git_file_is_dirty", lambda *a: False)
+
+        # Write first
+        self._call(
+            file="sections/test.tex",
+            summary="A summary",
+            short="Short",
+            sections='[]',
+        )
+        # Read back
+        result = self._call(file="sections/test.tex")
+        assert result["summary"] == "A summary"
+        assert result["short"] == "Short"
+        assert "summary_status" in result
+
+    def test_clear_star_removes_summary(self, fake_project, monkeypatch):
+        from tome import summaries
+        sections = fake_project / "sections"
+        sections.mkdir(exist_ok=True)
+        tex = sections / "test.tex"
+        tex.write_text("\\section{Test}\n")
+        monkeypatch.setattr(server.summaries, "git_file_is_dirty", lambda *a: False)
+
+        # Write summary
+        self._call(file="sections/test.tex", summary="A summary", short="Short", sections='[]')
+        # Clear all
+        result = self._call(file="sections/test.tex", clear="*")
+        assert result["status"] == "cleared"
+        assert result.get("summary_cleared") is True
+
+        # Verify it's gone
+        result = self._call(file="sections/test.tex")
+        assert result["summary"] is None
+
+    def test_clear_summary_field_only(self, fake_project, monkeypatch):
+        sections = fake_project / "sections"
+        sections.mkdir(exist_ok=True)
+        tex = sections / "test.tex"
+        tex.write_text("\\section{Test}\n")
+        monkeypatch.setattr(server.summaries, "git_file_is_dirty", lambda *a: False)
+
+        self._call(file="sections/test.tex", summary="A summary", short="Short", sections='[]')
+        result = self._call(file="sections/test.tex", clear="summary")
+        assert result["status"] == "cleared"
+        assert "summary" in result["cleared"]
+
+    def test_invalid_sections_json(self, fake_project):
+        sections = fake_project / "sections"
+        sections.mkdir(exist_ok=True)
+        (sections / "test.tex").write_text("test\n")
+
+        result = self._call(file="sections/test.tex", sections="not json")
+        assert "error" in result
+
+    def test_sections_must_be_array(self, fake_project):
+        sections = fake_project / "sections"
+        sections.mkdir(exist_ok=True)
+        (sections / "test.tex").write_text("test\n")
+
+        result = self._call(file="sections/test.tex", sections='{"not": "array"}')
+        assert "error" in result
+
+    def test_dirty_git_blocks_summary_write(self, fake_project, monkeypatch):
+        sections = fake_project / "sections"
+        sections.mkdir(exist_ok=True)
+        (sections / "test.tex").write_text("test\n")
+        monkeypatch.setattr(server.summaries, "git_file_is_dirty", lambda *a: True)
+
+        result = self._call(
+            file="sections/test.tex",
+            summary="Should fail",
+            short="fail",
+            sections='[]',
+        )
+        assert "error" in result
+        assert "uncommitted" in result["error"].lower()
+
+    def test_meta_fields_still_work_alongside_summary(self, fake_project, monkeypatch):
+        sections = fake_project / "sections"
+        sections.mkdir(exist_ok=True)
+        (sections / "test.tex").write_text("\\section{Test}\n")
+        monkeypatch.setattr(server.summaries, "git_file_is_dirty", lambda *a: False)
+
+        result = self._call(
+            file="sections/test.tex",
+            intent="Establish context",
+            summary="A summary",
+            short="Short",
+            sections='[]',
+        )
+        assert result["status"] == "updated"
+        assert result["meta"]["intent"] == "Establish context"
+        assert result["summary"]["summary"] == "A summary"
+
+    def test_message_field_on_summary_write(self, fake_project, monkeypatch):
+        sections = fake_project / "sections"
+        sections.mkdir(exist_ok=True)
+        (sections / "test.tex").write_text("test\n")
+        monkeypatch.setattr(server.summaries, "git_file_is_dirty", lambda *a: False)
+
+        result = self._call(
+            file="sections/test.tex",
+            summary="A summary",
+            short="Short",
+            sections='[]',
+        )
+        assert "message" in result
+        assert "Done:" in result["message"]
+        assert "summary stored" in result["message"]
+
+    def test_no_file_returns_error(self):
+        result = self._call()
+        assert "error" in result
+
+    def test_key_and_file_returns_error(self):
+        result = self._call(key="xu2022", file="sections/test.tex")
+        assert "error" in result
+
+
+# ===========================================================================
+# discover — unified routing
+# ===========================================================================
+
+
+class TestDiscoverRouting:
+    def _call(self, **kwargs):
+        return json.loads(server.discover.__wrapped__(**kwargs))
+
+    def test_no_args_returns_error(self):
+        result = self._call()
+        assert "error" in result
+
+    def test_query_routes_to_search(self, mock_store, monkeypatch):
+        # Mock the S2 and OpenAlex search functions
+        monkeypatch.setattr(server.s2, "search", lambda *a, **kw: [])
+        monkeypatch.setattr(server.openalex, "search", lambda *a, **kw: [])
+        result = self._call(query="MOF conductivity")
+        assert result["scope"] == "search"
+        assert "count" in result
+
+    def test_scope_stats(self, monkeypatch):
+        # Mock S2AG
+        monkeypatch.setattr(
+            server, "_discover_stats",
+            lambda: {"scope": "stats", "papers": 100, "citations": 500},
+        )
+        result = self._call(scope="stats")
+        assert result["scope"] == "stats"
+
+    def test_scope_refresh(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_discover_refresh",
+            lambda key, min_year: {"scope": "refresh", "cite_tree": {"status": "all_fresh"}},
+        )
+        result = self._call(scope="refresh")
+        assert result["scope"] == "refresh"
+
+    def test_scope_shared_citers(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_discover_shared_citers",
+            lambda min_shared, min_year, n: {
+                "scope": "shared_citers", "count": 0, "candidates": [],
+            },
+        )
+        result = self._call(scope="shared_citers")
+        assert result["scope"] == "shared_citers"
+
+    def test_doi_routes_to_lookup(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_discover_lookup",
+            lambda doi, s2_id: {"scope": "lookup", "found": True, "doi": doi},
+        )
+        result = self._call(doi="10.1038/nature08016")
+        assert result["scope"] == "lookup"
+        assert result["doi"] == "10.1038/nature08016"
+
+    def test_key_routes_to_graph(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_discover_graph",
+            lambda key, doi, s2_id: {
+                "scope": "graph", "citations_count": 5, "references_count": 10,
+            },
+        )
+        result = self._call(key="xu2022")
+        assert result["scope"] == "graph"
+
+    def test_scope_lookup_explicit(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_discover_lookup",
+            lambda doi, s2_id: {"scope": "lookup", "found": False},
+        )
+        result = self._call(scope="lookup", doi="10.1234/fake")
+        assert result["scope"] == "lookup"
+
+
+# ===========================================================================
+# explore — unified routing
+# ===========================================================================
+
+
+class TestExploreRouting:
+    def _call(self, **kwargs):
+        return json.loads(server.explore.__wrapped__(**kwargs))
+
+    def test_no_args_routes_to_list(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_explore_list",
+            lambda relevance, seed, expandable: {
+                "action": "list", "status": "empty",
+                "message": "No explorations yet.",
+            },
+        )
+        result = self._call()
+        assert result["action"] == "list"
+
+    def test_action_clear(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_explore_clear",
+            lambda: {"action": "clear", "status": "cleared", "removed": 0},
+        )
+        result = self._call(action="clear")
+        assert result["action"] == "clear"
+        assert result["status"] == "cleared"
+
+    def test_action_dismiss(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_explore_dismiss",
+            lambda s2_id: {"action": "dismiss", "status": "dismissed", "s2_id": s2_id},
+        )
+        result = self._call(action="dismiss", s2_id="abc123")
+        assert result["action"] == "dismiss"
+        assert result["s2_id"] == "abc123"
+
+    def test_s2_id_with_relevance_routes_to_mark(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_explore_mark",
+            lambda s2_id, relevance, note: {
+                "action": "mark", "status": "marked",
+                "s2_id": s2_id, "relevance": relevance,
+            },
+        )
+        result = self._call(s2_id="abc123", relevance="relevant", note="good paper")
+        assert result["action"] == "mark"
+        assert result["relevance"] == "relevant"
+
+    def test_key_routes_to_fetch(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_explore_fetch",
+            lambda key, s2_id, limit, parent_s2_id, depth: {
+                "action": "fetch", "status": "ok",
+                "citing_count": 5, "cited_by": [],
+            },
+        )
+        result = self._call(key="xu2022")
+        assert result["action"] == "fetch"
+
+    def test_action_expandable(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_explore_list",
+            lambda relevance, seed, expandable: {
+                "action": "list", "status": "empty",
+                "message": "No expandable nodes.",
+            },
+        )
+        result = self._call(action="expandable")
+        assert result["action"] == "list"
+
+    def test_action_list_explicit(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_explore_list",
+            lambda relevance, seed, expandable: {
+                "action": "list", "status": "ok",
+                "total_explored": 3, "counts": {"relevant": 1, "irrelevant": 2},
+            },
+        )
+        result = self._call(action="list")
+        assert result["action"] == "list"
+        assert result["status"] == "ok"
+
+
+# ===========================================================================
+# paper — unified routing
+# ===========================================================================
+
+
+class TestPaperRouting:
+    def _call(self, **kwargs):
+        return json.loads(server.paper.__wrapped__(**kwargs))
+
+    def test_no_args_routes_to_stats(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_paper_stats",
+            lambda: json.dumps({"total_papers": 42, "with_pdf": 30}),
+        )
+        result = self._call()
+        assert result["total_papers"] == 42
+
+    def test_key_only_routes_to_get(self):
+        result = self._call(key="xu2022")
+        assert result["key"] == "xu2022"
+        assert result["title"] == "Test Paper"
+
+    def test_key_with_page_routes_to_get(self, fake_project):
+        raw_dir = fake_project / ".tome" / "raw" / "xu2022"
+        raw_dir.mkdir(parents=True)
+        (raw_dir / "xu2022.p1.txt").write_text("Page 1 text.")
+        result = self._call(key="xu2022", page=1)
+        assert result["page_text"] == "Page 1 text."
+
+    def test_key_with_title_routes_to_set(self):
+        result = self._call(key="xu2022", title="Updated Title")
+        assert result["status"] == "updated"
+
+    def test_action_list(self):
+        result = self._call(action="list")
+        assert "total" in result
+        assert "papers" in result
+
+    def test_action_remove(self):
+        result = self._call(key="xu2022", action="remove")
+        assert result["status"] == "removed"
+
+    def test_action_remove_no_key(self):
+        result = self._call(action="remove")
+        assert "error" in result
+
+    def test_action_rename_no_new_key(self):
+        result = self._call(key="xu2022", action="rename")
+        assert "error" in result
+
+    def test_action_request(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_paper_request",
+            lambda key, doi, reason, tentative_title: json.dumps(
+                {"status": "requested", "key": key}
+            ),
+        )
+        result = self._call(action="request", key="smith2024",
+                            reason="need it")
+        assert result["status"] == "requested"
+
+    def test_action_request_no_key(self):
+        result = self._call(action="request")
+        assert "error" in result
+
+    def test_action_requests(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_paper_list_requests",
+            lambda: json.dumps({"count": 0, "requests": []}),
+        )
+        result = self._call(action="requests")
+        assert result["count"] == 0
+
+
+# ===========================================================================
+# doi — unified routing
+# ===========================================================================
+
+
+class TestDoiRouting:
+    def _call(self, **kwargs):
+        return json.loads(server.doi.__wrapped__(**kwargs))
+
+    def test_no_args_routes_to_batch_check(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_doi_check",
+            lambda key: json.dumps({"checked": 0, "results": []}),
+        )
+        result = self._call()
+        assert result["checked"] == 0
+
+    def test_key_routes_to_check(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_doi_check",
+            lambda key: json.dumps({"checked": 1, "results": [{"key": key}]}),
+        )
+        result = self._call(key="xu2022")
+        assert result["checked"] == 1
+
+    def test_action_rejected(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_doi_list_rejected",
+            lambda: json.dumps({"count": 0, "rejected": []}),
+        )
+        result = self._call(action="rejected")
+        assert result["count"] == 0
+
+    def test_action_reject(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_doi_reject",
+            lambda doi, key, reason: json.dumps(
+                {"status": "rejected", "entry": {"doi": doi}}
+            ),
+        )
+        result = self._call(action="reject", doi="10.1234/fake",
+                            reason="hallucinated")
+        assert result["status"] == "rejected"
+
+    def test_action_reject_no_doi(self):
+        result = self._call(action="reject")
+        assert "error" in result
+
+    def test_action_fetch(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_doi_fetch",
+            lambda key: json.dumps({"status": "fetched", "key": key}),
+        )
+        result = self._call(action="fetch", key="xu2022")
+        assert result["status"] == "fetched"
+
+    def test_action_fetch_no_key(self):
+        result = self._call(action="fetch")
+        assert "error" in result

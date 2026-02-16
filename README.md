@@ -6,20 +6,23 @@ semantic search, figure tracking, and Semantic Scholar integration.
 No LLM inside — pure deterministic code. The AI client provides the intelligence;
 Tome provides the tools.
 
+Developed and tested with **Windsurf** + **Claude Opus 4.6 (thinking)**.
+Should work with any MCP-capable client and sufficiently capable model,
+but this combination is where the magic happens.
+
 ## Installation
 
-Recommended: use a virtual environment to keep dependencies self-contained.
-
 ```bash
-cd ~/repos/tome
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+pip install tome-mcp
 ```
 
 For development (tests, linting):
 
 ```bash
+git clone https://github.com/retostamm/tome-mcp.git
+cd tome-mcp
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
@@ -34,7 +37,24 @@ pip install -e ".[dev]"
 
 ### MCP configuration
 
-Point your MCP client at the venv's Python interpreter:
+Quickest setup — uses `uvx` to run without a manual venv:
+
+```jsonc
+{
+  "mcpServers": {
+    "tome": {
+      "command": "uvx",
+      "args": ["tome-mcp"],
+      "env": {
+        "TOME_ROOT": "/path/to/your/project",
+        "SEMANTIC_SCHOLAR_API_KEY": "optional"
+      }
+    }
+  }
+}
+```
+
+Or point your MCP client at a local install:
 
 ```jsonc
 {
@@ -247,7 +267,7 @@ Separate from papers. Living documents that change frequently.
 
 ChromaDB collections: `paper_pages`, `paper_chunks`, `corpus_chunks` (separate).
 
-## MCP tools (49)
+## MCP tools
 
 ### Paper management
 
@@ -266,6 +286,7 @@ ChromaDB collections: `paper_pages`, `paper_chunks`, `corpus_chunks` (separate).
 |------|-----------|-------------|
 | `get_notes` | `key` | Read LLM-curated notes (summary, claims, relevance, limitations). |
 | `set_notes` | `key`, `summary?`, `claims?`, `relevance?`, `limitations?`, `quality?`, `tags?` | Add/update notes. Append-only lists. Indexed into ChromaDB. |
+| `edit_notes` | `key`, `action`, `field?`, `value?` | Remove an item from a note field, or delete the entire note. |
 
 ### Content access
 
@@ -287,6 +308,7 @@ ChromaDB collections: `paper_pages`, `paper_chunks`, `corpus_chunks` (separate).
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
+| `toc` | `root?`, `depth?`, `query?`, `file?`, `pages?`, `figures?`, `part?` | Parse compiled TOC into hierarchical document map |
 | `doc_tree` | `root?` | Ordered file list from \input{} tree |
 | `doc_lint` | `root?`, `file?` | Structural issues: undefined refs, orphan labels, shallow cites |
 | `review_status` | `root?`, `file?` | Tracked marker counts (TODOs, findings, etc.) |
@@ -367,6 +389,17 @@ ChromaDB collections: `paper_pages`, `paper_chunks`, `corpus_chunks` (separate).
 | `stats` | — | Counts, DOI status, pending figures/requests, notes, open issues. |
 | `set_root` | `path` | Switch project root. Scaffolds directories. Surfaces open issues. |
 | `report_issue` | `tool`, `description`, `severity?` | Log a tool issue to tome/issues.md (git-tracked). |
+| `report_issue_guide` | — | Best-practices guide for reporting tool issues. |
+| `guide` | `topic?` | On-demand usage guides. Call without args for topic index. |
+
+### S2AG (local citation database)
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `s2ag_incremental` | `min_year?` | Sweep library papers for new citers via S2 Graph API. Adds edges to local DB. |
+| `s2ag_stats` | — | Local S2AG database statistics (paper count, citation count, DB size). |
+| `s2ag_lookup` | `doi?`, `s2_id?`, `corpus_id?` | Look up a paper in local S2AG database. No API calls. |
+| `s2ag_shared_citers` | `dois`, `min_shared?` | Find non-library papers citing multiple given papers. Purely local. |
 
 ## Tool descriptions
 
@@ -428,39 +461,80 @@ Every error message includes: what happened, why, and what to do next.
 ~/repos/tome/
 ├── pyproject.toml
 ├── README.md
+├── LICENSE                      # AGPL-3.0
 ├── .gitignore
 ├── examples/
 │   └── config.yaml              # Full config example (all features)
 ├── src/
 │   └── tome/
 │       ├── __init__.py
-│       ├── server.py           # MCP server entry + tool handlers
-│       ├── bib.py              # BibTeX parser + writer (bibtexparser)
-│       ├── extract.py          # PDF text extraction (PyMuPDF)
-│       ├── chunk.py            # Sentence-boundary overlapping chunker
-│       ├── store.py            # ChromaDB management (built-in embeddings)
-│       ├── checksum.py         # SHA256 file checksumming
-│       ├── identify.py         # PDF identification + key generation
-│       ├── crossref.py         # CrossRef API client
-│       ├── semantic_scholar.py # S2 API client
-│       ├── figures.py          # Figure request/registration + caption extraction
-│       ├── manifest.py         # tome.json read/write (atomic, backup)
-│       ├── notes.py            # Paper notes (YAML + ChromaDB indexing)
-│       ├── issues.py           # Issue tracking (tome/issues.md)
-│       └── errors.py           # Exception hierarchy
+│       ├── __main__.py          # python -m tome.server entry point
+│       ├── py.typed             # PEP 561 type marker
+│       ├── server.py            # MCP server + tool handlers
+│       ├── errors.py            # Exception hierarchy
+│       ├── config.py            # Project config (config.yaml parsing)
+│       ├── manifest.py          # tome.json read/write (atomic, backup)
+│       ├── bib.py               # BibTeX parser + writer (bibtexparser)
+│       ├── extract.py           # PDF text extraction (PyMuPDF)
+│       ├── chunk.py             # Sentence-boundary overlapping chunker
+│       ├── store.py             # ChromaDB management (built-in embeddings)
+│       ├── checksum.py          # SHA256 file checksumming
+│       ├── identify.py          # PDF identification + key generation
+│       ├── crossref.py          # CrossRef API client
+│       ├── semantic_scholar.py  # Semantic Scholar API client
+│       ├── openalex.py          # OpenAlex API client
+│       ├── unpaywall.py         # Unpaywall open-access PDF lookup
+│       ├── http.py              # Shared HTTP client utilities
+│       ├── figures.py           # Figure request/registration + caption extraction
+│       ├── notes.py             # Paper notes (YAML + ChromaDB indexing)
+│       ├── issues.py            # Issue tracking (tome/issues.md)
+│       ├── analysis.py          # LaTeX document analysis (labels, refs, cites)
+│       ├── latex.py             # LaTeX parsing utilities
+│       ├── toc.py               # Table of contents parsing
+│       ├── index.py             # Back-of-book index (.idx parsing)
+│       ├── find_text.py         # Normalized .tex source search
+│       ├── grep_raw.py          # Normalized PDF raw text grep
+│       ├── validate.py          # Path traversal + input validation
+│       ├── git_diff.py          # Git diff with LaTeX section annotations
+│       ├── cite_tree.py         # Citation tree (S2 graph caching)
+│       ├── s2ag.py              # Local S2AG database (offline citations)
+│       ├── s2ag_cli.py          # S2AG CLI utilities
+│       ├── needful.py           # Recurring task tracking
+│       ├── summaries.py         # File content summaries
+│       ├── guide.py             # On-demand usage guide loader
+│       ├── filelock.py          # Cross-process file locking
+│       └── docs/                # Built-in guide markdown files (11)
 └── tests/
-    ├── conftest.py             # Shared fixtures
+    ├── conftest.py              # Shared fixtures
+    ├── test_analysis.py
     ├── test_bib.py
-    ├── test_extract.py
-    ├── test_chunk.py
     ├── test_checksum.py
-    ├── test_store.py
-    ├── test_identify.py
+    ├── test_chunk.py
+    ├── test_cite_tree.py
+    ├── test_concurrent_bib.py
+    ├── test_config.py
     ├── test_crossref.py
-    ├── test_semantic_scholar.py
+    ├── test_discovery.py
+    ├── test_errors.py
+    ├── test_extract.py
     ├── test_figures.py
-    ├── test_manifest.py
-    ├── test_notes.py
+    ├── test_filelock.py
+    ├── test_git_diff.py
+    ├── test_grep_raw.py
+    ├── test_guide.py
+    ├── test_http.py
+    ├── test_identify.py
+    ├── test_index.py
     ├── test_issues.py
-    └── test_server.py
+    ├── test_latex.py
+    ├── test_manifest.py
+    ├── test_needful.py
+    ├── test_notes.py
+    ├── test_openalex.py
+    ├── test_semantic_scholar.py
+    ├── test_store.py
+    ├── test_summaries.py
+    ├── test_toc.py
+    ├── test_unpaywall.py
+    └── test_validate.py
 ```

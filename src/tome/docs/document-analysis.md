@@ -13,7 +13,7 @@ Start a session by understanding the document structure:
   and page numbers still work but file attribution is omitted.
 - **`toc(locate='tree')`** — Ordered file list from the `\input{}`/`\include{}`
   tree. Use at session start to see which files belong to a root.
-- **`get_summary()`** — Stored content summaries with staleness tracking.
+- **`notes(file="...")`** — Stored content summaries with git-based staleness tracking.
 
 ## Structural checks
 
@@ -79,11 +79,13 @@ papers to be rebuilt first.
 
 ## File summaries
 
-**`summarize_file(file, summary, short, sections)`** — Stores content-level
-descriptions that structural tools cannot provide. You MUST read the file
-before calling this. Section headings and labels are already available
-from `doc_lint` / `dep_graph`.
+**`notes(file, summary="...", short="...", sections="[...]")`** — Stores
+content-level descriptions. You MUST read the file before calling this,
+and the file must be committed (summaries use git history for staleness).
 
 Each section description should summarize *content* (key claims, quantities,
 methods), not just repeat the heading. Bad: "Signal domains". Good:
 "Analyzes five physical signal domains; ranks electronic+optical as primary".
+
+Read back with `notes(file)` — includes summary, meta, and staleness
+(fresh/stale + commits since last summary).

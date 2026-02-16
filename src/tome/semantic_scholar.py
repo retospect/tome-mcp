@@ -291,6 +291,8 @@ _s2ag_db = None  # lazy singleton
 
 def _get_s2ag():
     """Return the shared S2AGLocal instance, or None if DB doesn't exist."""
+    # LOCAL DB DISABLED — always use API for now
+    return None
     global _s2ag_db
     if _s2ag_db is not None:
         return _s2ag_db

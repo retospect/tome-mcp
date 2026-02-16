@@ -48,14 +48,24 @@ Some content.
         result = file_meta.parse_meta(text)
         assert result["intent"] == "second"
 
-    def test_ignores_unknown_keys(self):
+    def test_ignores_unknown_keys_with_filter(self):
         text = f"""{file_meta.META_HEADER}
 % intent: good
 % garbage: ignored
 % status: ok
 """
-        result = file_meta.parse_meta(text)
+        result = file_meta.parse_meta(text, allowed_fields=file_meta.DEFAULT_FILE_FIELDS)
         assert "garbage" not in result
+        assert result["intent"] == "good"
+
+    def test_accepts_all_keys_without_filter(self):
+        text = f"""{file_meta.META_HEADER}
+% intent: good
+% custom: hello
+% status: ok
+"""
+        result = file_meta.parse_meta(text)
+        assert result["custom"] == "hello"
         assert result["intent"] == "good"
 
     def test_stops_at_non_comment(self):
@@ -89,7 +99,7 @@ class TestRenderMeta:
     def test_empty(self):
         assert file_meta.render_meta({}) == ""
 
-    def test_field_order(self):
+    def test_field_order_with_explicit_order(self):
         data = {
             "open": "question?",
             "intent": "test",
@@ -97,11 +107,18 @@ class TestRenderMeta:
             "status": "draft",
             "depends": "other.tex",
         }
-        rendered = file_meta.render_meta(data)
+        rendered = file_meta.render_meta(data, field_order=file_meta.DEFAULT_FIELD_ORDER)
         lines = rendered.strip().split("\n")
         assert lines[0] == file_meta.META_HEADER
         keys = [l.split(":")[0].replace("% ", "") for l in lines[1:]]
         assert keys == ["intent", "status", "depends", "claims", "open"]
+
+    def test_field_order_sorted_without_order(self):
+        data = {"open": "q?", "intent": "t"}
+        rendered = file_meta.render_meta(data)
+        lines = rendered.strip().split("\n")
+        keys = [l.split(":")[0].replace("% ", "") for l in lines[1:]]
+        assert keys == sorted(keys)  # alphabetical without explicit order
 
     def test_skips_empty_values(self):
         data = {"intent": "yes", "status": "", "claims": ""}
@@ -118,7 +135,13 @@ class TestRenderMeta:
             "depends": "foo.tex",
             "open": "question?",
         }
-        rendered = file_meta.render_meta(data)
+        rendered = file_meta.render_meta(data, field_order=file_meta.DEFAULT_FIELD_ORDER)
+        parsed = file_meta.parse_meta(rendered)
+        assert parsed == data
+
+    def test_custom_fields_roundtrip(self):
+        data = {"devstate": "alpha", "experimental": "planned"}
+        rendered = file_meta.render_meta(data, field_order=["devstate", "experimental"])
         parsed = file_meta.parse_meta(rendered)
         assert parsed == data
 

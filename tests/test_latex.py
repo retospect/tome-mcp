@@ -1,6 +1,6 @@
 """Tests for tome.latex."""
 
-from tome.latex import ChunkMarkers, extract_markers, find_cite_locations
+from tome.latex import ChunkMarkers, _comment_ratio, extract_markers, find_cite_locations
 
 
 class TestExtractMarkers:
@@ -144,6 +144,88 @@ class TestChunkMarkersToMetadata:
         assert meta["refs"] == "fig:one"
         assert meta["has_section"] is True
         assert meta["sections"] == "Introduction"
+
+
+class TestCommentRatio:
+    def test_empty_text(self):
+        assert _comment_ratio("") == 0.0
+
+    def test_all_comments(self):
+        text = "% comment 1\n% comment 2\n% comment 3"
+        assert _comment_ratio(text) == 1.0
+
+    def test_no_comments(self):
+        text = "\\section{Intro}\nSome text here.\nMore text."
+        assert _comment_ratio(text) == 0.0
+
+    def test_mixed(self):
+        text = "% comment\nreal content\n% another comment\nmore content"
+        assert _comment_ratio(text) == 0.5
+
+    def test_blank_lines_ignored(self):
+        text = "% comment\n\n\nreal content\n\n"
+        # 2 non-empty lines: 1 comment, 1 content → 0.5
+        assert _comment_ratio(text) == 0.5
+
+    def test_file_meta_block(self):
+        text = (
+            "% === FILE META ===\n"
+            "% intent: test section purpose\n"
+            "% status: draft\n"
+            "% === END FILE META ===\n"
+        )
+        assert _comment_ratio(text) == 1.0
+
+    def test_extract_markers_includes_ratio(self):
+        text = "% comment\n\\section{Intro}\nSome text."
+        m = extract_markers(text)
+        assert 0.0 < m.comment_ratio < 1.0
+
+    def test_all_comment_chunk_is_heavy(self):
+        text = "% line 1\n% line 2\n% line 3\n% line 4"
+        m = extract_markers(text)
+        assert m.comment_ratio == 1.0
+        meta = m.to_metadata()
+        assert meta["is_comment_heavy"] is True
+
+    def test_normal_chunk_not_heavy(self):
+        text = "\\section{Intro}\nSome real content here.\n\\cite{xu2022}"
+        m = extract_markers(text)
+        meta = m.to_metadata()
+        assert meta["is_comment_heavy"] is False
+        assert meta["comment_ratio"] == 0.0
+
+    def test_threshold_boundary(self):
+        # 7 comments, 3 content → 0.7 → is_comment_heavy = False (> not >=)
+        lines = ["% c"] * 7 + ["real"] * 3
+        text = "\n".join(lines)
+        assert _comment_ratio(text) == 0.7
+        m = ChunkMarkers(comment_ratio=0.7)
+        meta = m.to_metadata()
+        assert meta["is_comment_heavy"] is False
+
+    def test_above_threshold(self):
+        # 8 comments, 2 content → 0.8 → is_comment_heavy = True
+        lines = ["% c"] * 8 + ["real"] * 2
+        text = "\n".join(lines)
+        assert _comment_ratio(text) == 0.8
+        m = ChunkMarkers(comment_ratio=0.8)
+        meta = m.to_metadata()
+        assert meta["is_comment_heavy"] is True
+
+
+class TestChunkMarkersCommentMetadata:
+    def test_default_comment_ratio(self):
+        m = ChunkMarkers()
+        meta = m.to_metadata()
+        assert meta["comment_ratio"] == 0.0
+        assert meta["is_comment_heavy"] is False
+
+    def test_comment_ratio_in_metadata(self):
+        m = ChunkMarkers(comment_ratio=0.45)
+        meta = m.to_metadata()
+        assert meta["comment_ratio"] == 0.45
+        assert meta["is_comment_heavy"] is False
 
 
 class TestFindCiteLocations:
