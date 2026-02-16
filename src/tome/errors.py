@@ -41,12 +41,13 @@ class PageOutOfRange(TomeError):
 
 
 class DuplicateKey(TomeError):
-    """Bib key already exists in the library."""
+    """Bib key already exists in the library or vault."""
 
     def __init__(self, key: str):
         super().__init__(
-            f"Bib key '{key}' already exists in the library. "
+            f"Key '{key}' already exists. "
             f"Use paper(key='{key}', title='...') to update it, "
+            f"paper(action='rename', key='{key}', new_key='...') to rename it, "
             f"or choose a different key (e.g. '{key}a')."
         )
         self.key = key
@@ -330,10 +331,11 @@ class ChromaDBError(TomeError):
     def __init__(self, detail: str):
         super().__init__(
             f"ChromaDB error: {detail}. "
-            f"The .tome/chroma/ directory may be corrupted. "
-            f"Try: reindex(scope='all') (re-extracts text and re-indexes all papers). "
-            f"If that fails, delete .tome/chroma/ and reindex again. "
-            f"If this persists after reindex, use report_issue to log it — see guide('reporting-issues')."
+            f"Paper chunks live in ~/.tome/chroma/ (vault), "
+            f"corpus chunks in .tome/chroma/ (project). "
+            f"Try: reindex(scope='all') to rebuild. "
+            f"If that fails, delete the relevant chroma/ dir and reindex again. "
+            f"If this persists, use report_issue to log it — see guide('reporting-issues')."
         )
         self.detail = detail
 
