@@ -24,6 +24,7 @@ from mcp.server.fastmcp import FastMCP
 from tome import (
     analysis,
     bib,
+    slug as slug_mod,
     checksum,
     chunk,
     config as tome_config,
@@ -517,50 +518,56 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
         except Exception:
             pass  # best-effort: S2 down doesn't block proposal
 
-    # Determine suggested key
+    # Pull DOI from S2 if text extraction missed it (common in old PDFs)
+    if not result.doi and s2_result and s2_result.doi:
+        result.doi = s2_result.doi
+        result.doi_source = "s2"
+
+    # Determine suggested key using slug.make_key() when title is available
     suggested_key = None
     api_title = None
     api_authors: list[str] = []
+
+    lib = _load_bib()
+    existing = set(bib.list_keys(lib))
 
     if crossref_result:
         api_title = crossref_result.title
         api_authors = crossref_result.authors
         year = crossref_result.year or 2024
-        if api_authors:
-            surname = api_authors[0].split(",")[0].strip()
-        elif result.authors_from_pdf:
-            surname = identify.surname_from_author(result.authors_from_pdf)
-        else:
-            surname = "unknown"
-        lib = _load_bib()
-        existing = set(bib.list_keys(lib))
-        try:
-            suggested_key = bib.generate_key(surname, year, existing)
-        except ValueError:
-            suggested_key = f"{surname.lower()}{year}"  # collision fallback
+        surname = (
+            api_authors[0].split(",")[0].strip() if api_authors
+            else identify.surname_from_author(result.authors_from_pdf)
+            if result.authors_from_pdf else "unknown"
+        )
     elif s2_result:
         api_title = s2_result.title
         api_authors = s2_result.authors
         year = s2_result.year or 2024
-        if api_authors:
-            surname = api_authors[0].split()[-1]
-        else:
-            surname = "unknown"
-        lib = _load_bib()
-        existing = set(bib.list_keys(lib))
-        try:
-            suggested_key = bib.generate_key(surname, year, existing)
-        except ValueError:
-            suggested_key = f"{surname.lower()}{year}"  # collision fallback
+        surname = api_authors[0].split()[-1] if api_authors else "unknown"
     elif result.authors_from_pdf:
         surname = identify.surname_from_author(result.authors_from_pdf)
         year = 2024  # fallback
-        lib = _load_bib()
-        existing = set(bib.list_keys(lib))
-        try:
-            suggested_key = bib.generate_key(surname, year, existing)
-        except ValueError:
-            suggested_key = f"{surname.lower()}{year}"  # collision fallback
+    else:
+        surname = None
+
+    if surname:
+        title_for_slug = api_title or result.title_from_pdf or ""
+        if title_for_slug:
+            base = slug_mod.make_key(surname, year, title_for_slug)
+        else:
+            base = f"{surname.lower()}{year}"
+        # Deduplicate against existing keys
+        if base not in existing:
+            suggested_key = base
+        else:
+            for suffix in "abcdefghijklmnopqrstuvwxyz":
+                candidate = f"{base}{suffix}"
+                if candidate not in existing:
+                    suggested_key = candidate
+                    break
+            else:
+                suggested_key = base  # all 26 taken, let LLM pick
 
     # Check if DOI is known-bad
     doi_warning = None
@@ -573,6 +580,27 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
                 f"(key: {rejected.get('key', '?')}, date: {rejected.get('date', '?')}). "
                 f"This DOI may be wrong — verify before ingesting."
             )
+
+    # Detect probable datasheet / non-academic PDF
+    doc_type_hint = None
+    pdf_title = result.title_from_pdf or ""
+    _title_lower = pdf_title.lower().strip()
+    if (
+        not result.doi
+        and not crossref_result
+        and (
+            _title_lower.startswith("www.")
+            or _title_lower.startswith("http")
+            or _title_lower.endswith(".com")
+            or _title_lower.endswith(".pdf")
+            or len(_title_lower) < 5
+        )
+    ):
+        doc_type_hint = (
+            "This looks like a datasheet or vendor document (no DOI, no academic "
+            "metadata). Provide key and metadata manually: "
+            "ingest(path='...', key='vendor_partnum', doc_type='datasheet')."
+        )
 
     proposal: dict[str, Any] = {
         "source_file": str(pdf_path.name),
@@ -592,11 +620,13 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
         "next_steps": (
             f"Review the match. To confirm, call: "
             f"ingest(path='{pdf_path.name}', key='<key>', confirm=true). "
-            f"Suggested key: '{suggested_key or 'authorYYYY'}'. "
+            f"Suggested key: '{suggested_key or 'authorYYYYslug'}'. "
             f"Prefer authorYYYYslug format — pick 1-2 distinctive words "
             f"from the title as a slug (e.g. 'smith2024ndr')."
         ),
     }
+    if doc_type_hint:
+        proposal["doc_type_hint"] = doc_type_hint
     if doi_warning:
         proposal["warning"] = doi_warning
     return proposal
