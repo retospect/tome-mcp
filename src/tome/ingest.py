@@ -143,6 +143,7 @@ def ingest_pdf(
         doi=effective_doi,
         first_page_text=first_page_text,
         catalog_db=catalog_db,
+        doc_type=metrics.paper_type,
     )
 
     # Check for duplicate (early exit)
