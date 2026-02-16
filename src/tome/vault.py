@@ -1,11 +1,12 @@
-"""Vault — shared cross-project paper repository.
+"""Vault — shared cross-project document repository.
 
-Papers live in ~/.tome/vault/ as parallel pairs:
+Documents (papers, patents, datasheets, books, theses, standards, reports)
+live in ~/.tome/vault/ as parallel pairs:
   key.pdf       (source PDF)
   key.tome      (ZIP archive: meta.json + pages/*.txt + chunks.npz)
 
 catalog.db (SQLite) provides fast structured queries without opening ZIPs.
-Vault ChromaDB (~/.tome/chroma/) holds all paper chunks for semantic search.
+Vault ChromaDB (~/.tome/chroma/) holds all document chunks for semantic search.
 """
 
 from __future__ import annotations
@@ -75,24 +76,36 @@ def ensure_vault_dirs() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Paper metadata dataclass
+# Document metadata dataclass
 # ---------------------------------------------------------------------------
+
+# Valid doc_type values
+DOC_TYPES = frozenset({
+    "article", "review", "letter", "preprint",
+    "patent", "datasheet",
+    "book", "thesis", "standard", "report",
+})
 
 
 @dataclass
-class PaperMeta:
-    """Paper metadata stored in meta.json and catalog.db."""
+class DocumentMeta:
+    """Document metadata stored in meta.json and catalog.db.
+
+    Covers papers, patents, datasheets, books, theses, standards, reports.
+    """
 
     # Identity
     content_hash: str  # SHA256 of source PDF
     key: str
     doi: str | None = None
+    external_id: str | None = None  # patent number, ISBN, part number, standard number
+    external_id_type: str | None = None  # patent, isbn, part_number, arxiv, standard
     title: str = ""
     authors: list[str] = field(default_factory=list)
-    first_author: str = ""
+    first_author: str = ""  # author / inventor / manufacturer / committee
     year: int | None = None
-    journal: str | None = None
-    entry_type: str = "article"
+    journal: str | None = None  # journal / patent office / publisher / standards body
+    entry_type: str = "article"  # BibTeX: article, patent, book, phdthesis, techreport, misc
 
     # Verification
     status: str = "review"  # verified | manual | review
@@ -111,7 +124,10 @@ class PaperMeta:
     abstract: str | None = None
 
     # Classification
-    paper_type: str = "article"  # article | review | letter | preprint | patent | datasheet
+    doc_type: str = "article"  # see DOC_TYPES
+
+    # Type-specific metadata overflow
+    type_metadata: dict[str, Any] = field(default_factory=dict)
 
     # PDF metadata (raw)
     pdf_metadata: dict[str, Any] = field(default_factory=dict)
@@ -137,14 +153,23 @@ class PaperMeta:
         return json.dumps(asdict(self), indent=2, ensure_ascii=False)
 
     @classmethod
-    def from_json(cls, data: str | dict) -> PaperMeta:
+    def from_json(cls, data: str | dict) -> DocumentMeta:
         """Deserialize from JSON string or dict."""
         if isinstance(data, str):
             data = json.loads(data)
+        # Backward compat: paper_type → doc_type
+        if "paper_type" in data and "doc_type" not in data:
+            data["doc_type"] = data.pop("paper_type")
+        elif "paper_type" in data:
+            data.pop("paper_type")
         # Filter to known fields only
         known = {f.name for f in cls.__dataclass_fields__.values()}
         filtered = {k: v for k, v in data.items() if k in known}
         return cls(**filtered)
+
+
+# Backward compatibility alias
+PaperMeta = DocumentMeta
 
 
 # ---------------------------------------------------------------------------
@@ -257,12 +282,14 @@ def read_archive_chunks(archive_path: Path) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 _SCHEMA = """
-CREATE TABLE IF NOT EXISTS papers (
+CREATE TABLE IF NOT EXISTS documents (
     content_hash    TEXT PRIMARY KEY,
     key             TEXT,
     doi             TEXT,
+    external_id     TEXT,
+    external_id_type TEXT,
     title           TEXT NOT NULL CHECK(length(title) > 0),
-    first_author    TEXT NOT NULL CHECK(length(first_author) > 0),
+    first_author    TEXT NOT NULL DEFAULT '',
     year            INTEGER,
     journal         TEXT,
     entry_type      TEXT DEFAULT 'article',
@@ -283,10 +310,10 @@ CREATE TABLE IF NOT EXISTS papers (
     has_abstract    INTEGER DEFAULT 0,
 
     -- Classification
-    paper_type      TEXT DEFAULT 'article',
+    doc_type        TEXT DEFAULT 'article',
 
     -- Supplement linkage
-    parent_hash     TEXT REFERENCES papers(content_hash),
+    parent_hash     TEXT REFERENCES documents(content_hash),
     supplement_index INTEGER,
 
     -- File path
@@ -297,17 +324,18 @@ CREATE TABLE IF NOT EXISTS papers (
     verified_at     TEXT
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_key ON papers(key);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_doi ON papers(doi) WHERE doi IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_path ON papers(vault_path) WHERE vault_path IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_first_author ON papers(first_author);
-CREATE INDEX IF NOT EXISTS idx_year ON papers(year);
-CREATE INDEX IF NOT EXISTS idx_status ON papers(status);
-CREATE INDEX IF NOT EXISTS idx_paper_type ON papers(paper_type);
-CREATE INDEX IF NOT EXISTS idx_parent_hash ON papers(parent_hash);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_key ON documents(key);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_doi ON documents(doi) WHERE doi IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_external_id ON documents(external_id) WHERE external_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vault_path ON documents(vault_path) WHERE vault_path IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_first_author ON documents(first_author);
+CREATE INDEX IF NOT EXISTS idx_year ON documents(year);
+CREATE INDEX IF NOT EXISTS idx_status ON documents(status);
+CREATE INDEX IF NOT EXISTS idx_doc_type ON documents(doc_type);
+CREATE INDEX IF NOT EXISTS idx_parent_hash ON documents(parent_hash);
 
 CREATE TABLE IF NOT EXISTS title_sources (
-    content_hash    TEXT REFERENCES papers(content_hash) ON DELETE CASCADE,
+    content_hash    TEXT REFERENCES documents(content_hash) ON DELETE CASCADE,
     source          TEXT,
     title           TEXT,
     confidence      REAL
@@ -315,9 +343,9 @@ CREATE TABLE IF NOT EXISTS title_sources (
 
 CREATE INDEX IF NOT EXISTS idx_ts_hash ON title_sources(content_hash);
 
-CREATE TABLE IF NOT EXISTS project_papers (
+CREATE TABLE IF NOT EXISTS project_documents (
     project_id      TEXT,
-    content_hash    TEXT REFERENCES papers(content_hash) ON DELETE CASCADE,
+    content_hash    TEXT REFERENCES documents(content_hash) ON DELETE CASCADE,
     local_key       TEXT,
     added_at        TEXT,
     PRIMARY KEY (project_id, content_hash)
@@ -350,8 +378,8 @@ def init_catalog(path: Path | None = None) -> None:
         conn.executescript(_SCHEMA)
 
 
-def catalog_upsert(meta: PaperMeta, path: Path | None = None) -> None:
-    """Insert or update a paper in catalog.db from PaperMeta.
+def catalog_upsert(meta: DocumentMeta, path: Path | None = None) -> None:
+    """Insert or update a document in catalog.db.
 
     Raises:
         DuplicateKey: If key already belongs to a different content_hash.
@@ -364,7 +392,7 @@ def catalog_upsert(meta: PaperMeta, path: Path | None = None) -> None:
 
         # Pre-flight: check for key collision with different content_hash
         existing = conn.execute(
-            "SELECT content_hash, key FROM papers WHERE key = ? AND content_hash != ?",
+            "SELECT content_hash, key FROM documents WHERE key = ? AND content_hash != ?",
             (meta.key, meta.content_hash),
         ).fetchone()
         if existing:
@@ -373,7 +401,7 @@ def catalog_upsert(meta: PaperMeta, path: Path | None = None) -> None:
         # Pre-flight: check for DOI collision with different content_hash
         if meta.doi:
             existing = conn.execute(
-                "SELECT content_hash, key FROM papers WHERE doi = ? AND content_hash != ?",
+                "SELECT content_hash, key FROM documents WHERE doi = ? AND content_hash != ?",
                 (meta.doi, meta.content_hash),
             ).fetchone()
             if existing:
@@ -381,23 +409,28 @@ def catalog_upsert(meta: PaperMeta, path: Path | None = None) -> None:
 
         conn.execute(
             """
-            INSERT INTO papers (
-                content_hash, key, doi, title, first_author, year, journal,
+            INSERT INTO documents (
+                content_hash, key, doi, external_id, external_id_type,
+                title, first_author, year, journal,
                 entry_type, status, doi_verified, title_match_score,
                 page_count, word_count, ref_count, figure_count, table_count,
-                language, text_quality, has_abstract, paper_type,
+                language, text_quality, has_abstract, doc_type,
                 parent_hash, supplement_index, vault_path,
                 ingested_at, verified_at
             ) VALUES (
-                :content_hash, :key, :doi, :title, :first_author, :year, :journal,
+                :content_hash, :key, :doi, :external_id, :external_id_type,
+                :title, :first_author, :year, :journal,
                 :entry_type, :status, :doi_verified, :title_match_score,
                 :page_count, :word_count, :ref_count, :figure_count, :table_count,
-                :language, :text_quality, :has_abstract, :paper_type,
+                :language, :text_quality, :has_abstract, :doc_type,
                 :parent_hash, :supplement_index, :vault_path,
                 :ingested_at, :verified_at
             )
             ON CONFLICT(content_hash) DO UPDATE SET
-                key=excluded.key, doi=excluded.doi, title=excluded.title,
+                key=excluded.key, doi=excluded.doi,
+                external_id=excluded.external_id,
+                external_id_type=excluded.external_id_type,
+                title=excluded.title,
                 first_author=excluded.first_author, year=excluded.year,
                 journal=excluded.journal, entry_type=excluded.entry_type,
                 status=excluded.status, doi_verified=excluded.doi_verified,
@@ -406,7 +439,7 @@ def catalog_upsert(meta: PaperMeta, path: Path | None = None) -> None:
                 ref_count=excluded.ref_count, figure_count=excluded.figure_count,
                 table_count=excluded.table_count, language=excluded.language,
                 text_quality=excluded.text_quality, has_abstract=excluded.has_abstract,
-                paper_type=excluded.paper_type, parent_hash=excluded.parent_hash,
+                doc_type=excluded.doc_type, parent_hash=excluded.parent_hash,
                 supplement_index=excluded.supplement_index, vault_path=excluded.vault_path,
                 verified_at=excluded.verified_at
             """,
@@ -414,6 +447,8 @@ def catalog_upsert(meta: PaperMeta, path: Path | None = None) -> None:
                 "content_hash": meta.content_hash,
                 "key": meta.key,
                 "doi": meta.doi,
+                "external_id": meta.external_id,
+                "external_id_type": meta.external_id_type,
                 "title": meta.title,
                 "first_author": meta.first_author,
                 "year": meta.year,
@@ -430,7 +465,7 @@ def catalog_upsert(meta: PaperMeta, path: Path | None = None) -> None:
                 "language": meta.language,
                 "text_quality": meta.text_quality,
                 "has_abstract": 1 if meta.has_abstract else 0,
-                "paper_type": meta.paper_type,
+                "doc_type": meta.doc_type,
                 "parent_hash": meta.parent_hash,
                 "supplement_index": meta.supplement_index,
                 "vault_path": meta.key + ARCHIVE_EXTENSION,
@@ -454,11 +489,11 @@ def catalog_upsert(meta: PaperMeta, path: Path | None = None) -> None:
 
 
 def catalog_get(content_hash: str, path: Path | None = None) -> dict[str, Any] | None:
-    """Look up a paper by content hash."""
+    """Look up a document by content hash."""
     with _db(path) as conn:
         conn.executescript(_SCHEMA)
         row = conn.execute(
-            "SELECT * FROM papers WHERE content_hash = ?", (content_hash,)
+            "SELECT * FROM documents WHERE content_hash = ?", (content_hash,)
         ).fetchone()
         if row is None:
             return None
@@ -466,11 +501,11 @@ def catalog_get(content_hash: str, path: Path | None = None) -> dict[str, Any] |
 
 
 def catalog_get_by_key(key: str, path: Path | None = None) -> dict[str, Any] | None:
-    """Look up a paper by bib key."""
+    """Look up a document by bib key."""
     with _db(path) as conn:
         conn.executescript(_SCHEMA)
         row = conn.execute(
-            "SELECT * FROM papers WHERE key = ?", (key,)
+            "SELECT * FROM documents WHERE key = ?", (key,)
         ).fetchone()
         if row is None:
             return None
@@ -478,11 +513,11 @@ def catalog_get_by_key(key: str, path: Path | None = None) -> dict[str, Any] | N
 
 
 def catalog_get_by_doi(doi: str, path: Path | None = None) -> dict[str, Any] | None:
-    """Look up a paper by DOI."""
+    """Look up a document by DOI."""
     with _db(path) as conn:
         conn.executescript(_SCHEMA)
         row = conn.execute(
-            "SELECT * FROM papers WHERE doi = ?", (doi,)
+            "SELECT * FROM documents WHERE doi = ?", (doi,)
         ).fetchone()
         if row is None:
             return None
@@ -491,20 +526,20 @@ def catalog_get_by_doi(doi: str, path: Path | None = None) -> dict[str, Any] | N
 
 def catalog_list(
     status: str | None = None,
-    paper_type: str | None = None,
+    doc_type: str | None = None,
     path: Path | None = None,
 ) -> list[dict[str, Any]]:
-    """List papers in catalog, optionally filtered."""
+    """List documents in catalog, optionally filtered."""
     with _db(path) as conn:
         conn.executescript(_SCHEMA)
-        query = "SELECT * FROM papers WHERE 1=1"
+        query = "SELECT * FROM documents WHERE 1=1"
         params: list[Any] = []
         if status:
             query += " AND status = ?"
             params.append(status)
-        if paper_type:
-            query += " AND paper_type = ?"
-            params.append(paper_type)
+        if doc_type:
+            query += " AND doc_type = ?"
+            params.append(doc_type)
         query += " ORDER BY key"
         rows = conn.execute(query, params).fetchall()
         return [dict(r) for r in rows]
@@ -514,18 +549,18 @@ def catalog_stats(path: Path | None = None) -> dict[str, Any]:
     """Return summary statistics for the vault catalog."""
     with _db(path) as conn:
         conn.executescript(_SCHEMA)
-        total = conn.execute("SELECT COUNT(*) FROM papers").fetchone()[0]
+        total = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
         verified = conn.execute(
-            "SELECT COUNT(*) FROM papers WHERE status = 'verified'"
+            "SELECT COUNT(*) FROM documents WHERE status = 'verified'"
         ).fetchone()[0]
         manual = conn.execute(
-            "SELECT COUNT(*) FROM papers WHERE status = 'manual'"
+            "SELECT COUNT(*) FROM documents WHERE status = 'manual'"
         ).fetchone()[0]
         review = conn.execute(
-            "SELECT COUNT(*) FROM papers WHERE status = 'review'"
+            "SELECT COUNT(*) FROM documents WHERE status = 'review'"
         ).fetchone()[0]
         with_doi = conn.execute(
-            "SELECT COUNT(*) FROM papers WHERE doi IS NOT NULL"
+            "SELECT COUNT(*) FROM documents WHERE doi IS NOT NULL"
         ).fetchone()[0]
         return {
             "total": total,
@@ -537,11 +572,11 @@ def catalog_stats(path: Path | None = None) -> dict[str, Any]:
 
 
 def catalog_delete(content_hash: str, path: Path | None = None) -> bool:
-    """Remove a paper from catalog.db. Returns True if found and deleted."""
+    """Remove a document from catalog.db. Returns True if found and deleted."""
     with _db(path) as conn:
         conn.executescript(_SCHEMA)
         cursor = conn.execute(
-            "DELETE FROM papers WHERE content_hash = ?", (content_hash,)
+            "DELETE FROM documents WHERE content_hash = ?", (content_hash,)
         )
         return cursor.rowcount > 0
 
@@ -550,7 +585,7 @@ def catalog_rebuild(path: Path | None = None) -> int:
     """Rebuild catalog.db by scanning all .tome archives in vault.
 
     Returns:
-        Number of papers indexed.
+        Number of documents indexed.
     """
     v_dir = vault_dir()
     if not v_dir.exists():
@@ -561,8 +596,8 @@ def catalog_rebuild(path: Path | None = None) -> int:
     # Drop and recreate
     with _db(db_path) as conn:
         conn.execute("DROP TABLE IF EXISTS title_sources")
-        conn.execute("DROP TABLE IF EXISTS project_papers")
-        conn.execute("DROP TABLE IF EXISTS papers")
+        conn.execute("DROP TABLE IF EXISTS project_documents")
+        conn.execute("DROP TABLE IF EXISTS documents")
         conn.executescript(_SCHEMA)
 
     count = 0
@@ -588,12 +623,12 @@ def link_paper(
     local_key: str,
     path: Path | None = None,
 ) -> None:
-    """Link a vault paper to a project."""
+    """Link a vault document to a project."""
     with _db(path) as conn:
         conn.executescript(_SCHEMA)
         conn.execute(
             """
-            INSERT OR REPLACE INTO project_papers (project_id, content_hash, local_key, added_at)
+            INSERT OR REPLACE INTO project_documents (project_id, content_hash, local_key, added_at)
             VALUES (?, ?, ?, ?)
             """,
             (project_id, content_hash, local_key, datetime.now(timezone.utc).isoformat()),
@@ -605,27 +640,27 @@ def unlink_paper(
     content_hash: str,
     path: Path | None = None,
 ) -> bool:
-    """Unlink a vault paper from a project. Returns True if found."""
+    """Unlink a vault document from a project. Returns True if found."""
     with _db(path) as conn:
         conn.executescript(_SCHEMA)
         cursor = conn.execute(
-            "DELETE FROM project_papers WHERE project_id = ? AND content_hash = ?",
+            "DELETE FROM project_documents WHERE project_id = ? AND content_hash = ?",
             (project_id, content_hash),
         )
         return cursor.rowcount > 0
 
 
 def project_papers(project_id: str, path: Path | None = None) -> list[dict[str, Any]]:
-    """List all papers linked to a project."""
+    """List all documents linked to a project."""
     with _db(path) as conn:
         conn.executescript(_SCHEMA)
         rows = conn.execute(
             """
-            SELECT p.*, pp.local_key, pp.added_at as linked_at
-            FROM papers p
-            JOIN project_papers pp ON p.content_hash = pp.content_hash
-            WHERE pp.project_id = ?
-            ORDER BY p.key
+            SELECT d.*, pd.local_key, pd.added_at as linked_at
+            FROM documents d
+            JOIN project_documents pd ON d.content_hash = pd.content_hash
+            WHERE pd.project_id = ?
+            ORDER BY d.key
             """,
             (project_id,),
         ).fetchall()

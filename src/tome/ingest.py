@@ -180,7 +180,7 @@ def ingest_pdf(
         text_quality=metrics.text_quality,
         has_abstract=metrics.has_abstract,
         abstract=metrics.abstract_text,
-        paper_type=metrics.paper_type,
+        doc_type=metrics.paper_type,
         pdf_metadata={
             "title": pdf_meta.title,
             "author": pdf_meta.author,

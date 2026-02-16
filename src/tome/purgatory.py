@@ -82,7 +82,7 @@ class PurgatoryEntry:
             "page_count": self.meta.page_count,
             "word_count": self.meta.word_count,
             "text_quality": self.meta.text_quality,
-            "paper_type": self.meta.paper_type,
+            "doc_type": self.meta.doc_type,
             "summary": self.triage.summary,
             "relevance_hint": self.triage.relevance_hint,
         }
