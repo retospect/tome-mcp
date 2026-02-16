@@ -4371,7 +4371,7 @@ def _scaffold_tome(project_root: Path) -> list[str]:
 
 
 @mcp_server.tool()
-def set_root(path: str) -> str:
+def set_root(path: str, test_vault_root: str = "") -> str:
     """Switch Tome's project root directory at runtime."""
     global _runtime_root
     p = Path(path)
@@ -4379,6 +4379,14 @@ def set_root(path: str) -> str:
         return json.dumps({"error": "Path must be absolute."})
     if not p.is_dir():
         return json.dumps({"error": f"Directory not found: {path}"})
+
+    # Undocumented: redirect vault I/O to a temp dir for safe smoke testing
+    from tome.vault import clear_vault_root, set_vault_root as _set_vault_root
+    if test_vault_root:
+        _set_vault_root(test_vault_root)
+        logger.info("Vault root overridden to %s", test_vault_root)
+    else:
+        clear_vault_root()
 
     _runtime_root = p
     _attach_file_log(tome_paths.project_dir(p))

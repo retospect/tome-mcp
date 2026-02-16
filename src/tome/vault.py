@@ -51,8 +51,26 @@ SUPPLEMENT_PATTERN_RE = r"_sup\d+$"
 # ---------------------------------------------------------------------------
 
 
+_vault_root_override: Path | None = None
+
+
+def set_vault_root(path: Path | str) -> None:
+    """Override vault root for testing. Redirects all vault I/O to a temp dir."""
+    global _vault_root_override
+    _vault_root_override = Path(path)
+    _vault_root_override.mkdir(parents=True, exist_ok=True)
+
+
+def clear_vault_root() -> None:
+    """Clear vault root override — revert to ~/.tome-mcp/."""
+    global _vault_root_override
+    _vault_root_override = None
+
+
 def vault_root() -> Path:
-    """Return the vault root directory (~/.tome-mcp/)."""
+    """Return the vault root directory (~/.tome-mcp/ or override if set)."""
+    if _vault_root_override is not None:
+        return _vault_root_override
     return _home_dir()
 
 
