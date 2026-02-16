@@ -1,4 +1,4 @@
-"""Tests for server-level routing of unified search, toc, and get_paper.
+"""Tests for server-level routing of unified search, toc, paper, doi, discover, and explore.
 
 Calls the internal sync helpers directly (not the async-wrapped MCP tool
 entry points) to verify scope/mode/locate dispatch and data flow.

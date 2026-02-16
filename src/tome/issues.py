@@ -67,8 +67,8 @@ year='2023' in the bib entry. PDF title page clearly says 2024. \
 DOI 10.1234/example confirms 2024."
 
 ### Good blocker
-tool='rebuild', severity='blocker'
-"rebuild(key='jones2021') raises KeyError: 'pages'. Traceback ends at \
+tool='reindex', severity='blocker'
+"reindex(key='jones2021') raises KeyError: 'pages'. Traceback ends at \
 store.py line 142. Paper has 8 extracted pages in .tome/raw/jones2021/. \
 Happens on every retry."
 """
