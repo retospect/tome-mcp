@@ -12,6 +12,7 @@ Vault ChromaDB (~/.tome/chroma/) holds all document chunks for semantic search.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import zipfile
 from contextlib import contextmanager
@@ -19,6 +20,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
+
+logger = logging.getLogger(__name__)
 
 import numpy as np
 
@@ -147,6 +150,13 @@ class DocumentMeta:
     # Archive
     format_version: int = ARCHIVE_FORMAT_VERSION
     chunk_params: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.doc_type not in DOC_TYPES:
+            raise ValueError(
+                f"Invalid doc_type '{self.doc_type}'. "
+                f"Valid types: {sorted(DOC_TYPES)}"
+            )
 
     def to_json(self) -> str:
         """Serialize to JSON string."""
@@ -407,43 +417,44 @@ def catalog_upsert(meta: DocumentMeta, path: Path | None = None) -> None:
             if existing:
                 raise DuplicateDOI(meta.doi, existing_key=existing["key"])
 
-        conn.execute(
-            """
-            INSERT INTO documents (
-                content_hash, key, doi, external_id, external_id_type,
-                title, first_author, year, journal,
-                entry_type, status, doi_verified, title_match_score,
-                page_count, word_count, ref_count, figure_count, table_count,
-                language, text_quality, has_abstract, doc_type,
-                parent_hash, supplement_index, vault_path,
-                ingested_at, verified_at
-            ) VALUES (
-                :content_hash, :key, :doi, :external_id, :external_id_type,
-                :title, :first_author, :year, :journal,
-                :entry_type, :status, :doi_verified, :title_match_score,
-                :page_count, :word_count, :ref_count, :figure_count, :table_count,
-                :language, :text_quality, :has_abstract, :doc_type,
-                :parent_hash, :supplement_index, :vault_path,
-                :ingested_at, :verified_at
-            )
-            ON CONFLICT(content_hash) DO UPDATE SET
-                key=excluded.key, doi=excluded.doi,
-                external_id=excluded.external_id,
-                external_id_type=excluded.external_id_type,
-                title=excluded.title,
-                first_author=excluded.first_author, year=excluded.year,
-                journal=excluded.journal, entry_type=excluded.entry_type,
-                status=excluded.status, doi_verified=excluded.doi_verified,
-                title_match_score=excluded.title_match_score,
-                page_count=excluded.page_count, word_count=excluded.word_count,
-                ref_count=excluded.ref_count, figure_count=excluded.figure_count,
-                table_count=excluded.table_count, language=excluded.language,
-                text_quality=excluded.text_quality, has_abstract=excluded.has_abstract,
-                doc_type=excluded.doc_type, parent_hash=excluded.parent_hash,
-                supplement_index=excluded.supplement_index, vault_path=excluded.vault_path,
-                verified_at=excluded.verified_at
-            """,
-            {
+        try:
+            conn.execute(
+                """
+                INSERT INTO documents (
+                    content_hash, key, doi, external_id, external_id_type,
+                    title, first_author, year, journal,
+                    entry_type, status, doi_verified, title_match_score,
+                    page_count, word_count, ref_count, figure_count, table_count,
+                    language, text_quality, has_abstract, doc_type,
+                    parent_hash, supplement_index, vault_path,
+                    ingested_at, verified_at
+                ) VALUES (
+                    :content_hash, :key, :doi, :external_id, :external_id_type,
+                    :title, :first_author, :year, :journal,
+                    :entry_type, :status, :doi_verified, :title_match_score,
+                    :page_count, :word_count, :ref_count, :figure_count, :table_count,
+                    :language, :text_quality, :has_abstract, :doc_type,
+                    :parent_hash, :supplement_index, :vault_path,
+                    :ingested_at, :verified_at
+                )
+                ON CONFLICT(content_hash) DO UPDATE SET
+                    key=excluded.key, doi=excluded.doi,
+                    external_id=excluded.external_id,
+                    external_id_type=excluded.external_id_type,
+                    title=excluded.title,
+                    first_author=excluded.first_author, year=excluded.year,
+                    journal=excluded.journal, entry_type=excluded.entry_type,
+                    status=excluded.status, doi_verified=excluded.doi_verified,
+                    title_match_score=excluded.title_match_score,
+                    page_count=excluded.page_count, word_count=excluded.word_count,
+                    ref_count=excluded.ref_count, figure_count=excluded.figure_count,
+                    table_count=excluded.table_count, language=excluded.language,
+                    text_quality=excluded.text_quality, has_abstract=excluded.has_abstract,
+                    doc_type=excluded.doc_type, parent_hash=excluded.parent_hash,
+                    supplement_index=excluded.supplement_index, vault_path=excluded.vault_path,
+                    verified_at=excluded.verified_at
+                """,
+                {
                 "content_hash": meta.content_hash,
                 "key": meta.key,
                 "doi": meta.doi,
@@ -473,6 +484,14 @@ def catalog_upsert(meta: DocumentMeta, path: Path | None = None) -> None:
                 "verified_at": meta.verified_at,
             },
         )
+        except sqlite3.IntegrityError as exc:
+            # TOCTOU fallback: constraint violated despite pre-flight check
+            msg = str(exc).lower()
+            if "key" in msg:
+                raise DuplicateKey(meta.key) from exc
+            if "doi" in msg:
+                raise DuplicateDOI(meta.doi or "", existing_key="") from exc
+            raise  # unknown constraint — re-raise raw
 
         # Upsert title sources
         if meta.title_sources:
@@ -491,7 +510,6 @@ def catalog_upsert(meta: DocumentMeta, path: Path | None = None) -> None:
 def catalog_get(content_hash: str, path: Path | None = None) -> dict[str, Any] | None:
     """Look up a document by content hash."""
     with _db(path) as conn:
-        conn.executescript(_SCHEMA)
         row = conn.execute(
             "SELECT * FROM documents WHERE content_hash = ?", (content_hash,)
         ).fetchone()
@@ -503,7 +521,6 @@ def catalog_get(content_hash: str, path: Path | None = None) -> dict[str, Any] |
 def catalog_get_by_key(key: str, path: Path | None = None) -> dict[str, Any] | None:
     """Look up a document by bib key."""
     with _db(path) as conn:
-        conn.executescript(_SCHEMA)
         row = conn.execute(
             "SELECT * FROM documents WHERE key = ?", (key,)
         ).fetchone()
@@ -515,7 +532,6 @@ def catalog_get_by_key(key: str, path: Path | None = None) -> dict[str, Any] | N
 def catalog_get_by_doi(doi: str, path: Path | None = None) -> dict[str, Any] | None:
     """Look up a document by DOI."""
     with _db(path) as conn:
-        conn.executescript(_SCHEMA)
         row = conn.execute(
             "SELECT * FROM documents WHERE doi = ?", (doi,)
         ).fetchone()
@@ -531,7 +547,6 @@ def catalog_list(
 ) -> list[dict[str, Any]]:
     """List documents in catalog, optionally filtered."""
     with _db(path) as conn:
-        conn.executescript(_SCHEMA)
         query = "SELECT * FROM documents WHERE 1=1"
         params: list[Any] = []
         if status:
@@ -548,7 +563,6 @@ def catalog_list(
 def catalog_stats(path: Path | None = None) -> dict[str, Any]:
     """Return summary statistics for the vault catalog."""
     with _db(path) as conn:
-        conn.executescript(_SCHEMA)
         total = conn.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
         verified = conn.execute(
             "SELECT COUNT(*) FROM documents WHERE status = 'verified'"
@@ -574,9 +588,23 @@ def catalog_stats(path: Path | None = None) -> dict[str, Any]:
 def catalog_delete(content_hash: str, path: Path | None = None) -> bool:
     """Remove a document from catalog.db. Returns True if found and deleted."""
     with _db(path) as conn:
-        conn.executescript(_SCHEMA)
         cursor = conn.execute(
             "DELETE FROM documents WHERE content_hash = ?", (content_hash,)
+        )
+        return cursor.rowcount > 0
+
+
+def catalog_update_key(
+    old_key: str, new_key: str, path: Path | None = None
+) -> bool:
+    """Rename a document's key and vault_path in catalog.db.
+
+    Returns True if the document was found and updated.
+    """
+    with _db(path) as conn:
+        cursor = conn.execute(
+            "UPDATE documents SET key = ?, vault_path = ? WHERE key = ?",
+            (new_key, new_key + ARCHIVE_EXTENSION, old_key),
         )
         return cursor.rowcount > 0
 
@@ -606,8 +634,9 @@ def catalog_rebuild(path: Path | None = None) -> int:
             meta = read_archive_meta(archive)
             catalog_upsert(meta, db_path)
             count += 1
-        except Exception:
-            continue  # skip corrupt archives
+        except Exception as exc:
+            logger.warning("Skipping corrupt archive %s: %s", archive.name, exc)
+            continue
 
     return count
 
@@ -625,7 +654,6 @@ def link_paper(
 ) -> None:
     """Link a vault document to a project."""
     with _db(path) as conn:
-        conn.executescript(_SCHEMA)
         conn.execute(
             """
             INSERT OR REPLACE INTO project_documents (project_id, content_hash, local_key, added_at)
@@ -642,7 +670,6 @@ def unlink_paper(
 ) -> bool:
     """Unlink a vault document from a project. Returns True if found."""
     with _db(path) as conn:
-        conn.executescript(_SCHEMA)
         cursor = conn.execute(
             "DELETE FROM project_documents WHERE project_id = ? AND content_hash = ?",
             (project_id, content_hash),
@@ -653,7 +680,6 @@ def unlink_paper(
 def project_papers(project_id: str, path: Path | None = None) -> list[dict[str, Any]]:
     """List all documents linked to a project."""
     with _db(path) as conn:
-        conn.executescript(_SCHEMA)
         rows = conn.execute(
             """
             SELECT d.*, pd.local_key, pd.added_at as linked_at

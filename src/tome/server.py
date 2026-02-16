@@ -268,7 +268,14 @@ def _cache_dir() -> Path:
 
 
 def _chroma_dir() -> Path:
+    """Project-level ChromaDB (corpus chunks)."""
     return _dot_tome() / "chroma"
+
+
+def _vault_chroma() -> Path:
+    """Vault-level ChromaDB (paper chunks). Lives at ~/.tome/chroma/."""
+    from tome.vault import vault_chroma_dir
+    return vault_chroma_dir()
 
 
 def _staging_dir() -> Path:
@@ -639,7 +646,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     # Commit: ChromaDB upsert (embedding handled internally by ChromaDB)
     embedded = False
     try:
-        client = store.get_client(_chroma_dir())
+        client = store.get_client(_vault_chroma())
         embed_fn = store.get_embed_fn()
         chunks_col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
         sha = checksum.sha256_file(dest_pdf)
@@ -769,7 +776,6 @@ def _paper_remove(key: str) -> str:
         ARCHIVE_EXTENSION,
         catalog_delete,
         catalog_get_by_key,
-        vault_chroma_dir,
         vault_dir,
     )
 
@@ -791,12 +797,10 @@ def _paper_remove(key: str) -> str:
         cache.unlink()
 
     # Remove from vault: archive, PDF, catalog.db
-    content_hash = None
     try:
         doc = catalog_get_by_key(key)
         if doc:
-            content_hash = doc["content_hash"]
-            catalog_delete(content_hash)
+            catalog_delete(doc["content_hash"])
     except Exception:
         pass
 
@@ -809,7 +813,7 @@ def _paper_remove(key: str) -> str:
 
     # Remove from vault ChromaDB (paper_chunks)
     try:
-        client = store.get_client(vault_chroma_dir())
+        client = store.get_client(_vault_chroma())
         store.delete_paper(client, key, embed_fn=store.get_embed_fn())
     except Exception:
         pass
@@ -880,22 +884,10 @@ def _paper_rename(old_key: str, new_key: str) -> str:
             errors.append(f"raw rename: {e}")
 
     # 5. Update vault: rename archive + PDF, update catalog.db key
-    from tome.vault import (
-        ARCHIVE_EXTENSION,
-        catalog_get_by_key,
-        vault_chroma_dir,
-        vault_dir,
-    )
+    from tome.vault import ARCHIVE_EXTENSION, catalog_update_key, vault_dir
+
     try:
-        doc = catalog_get_by_key(old_key)
-        if doc:
-            from tome.vault import _db, _SCHEMA, catalog_path
-            with _db(catalog_path()) as conn:
-                conn.executescript(_SCHEMA)
-                conn.execute(
-                    "UPDATE documents SET key = ?, vault_path = ? WHERE content_hash = ?",
-                    (new_key, new_key + ARCHIVE_EXTENSION, doc["content_hash"]),
-                )
+        if catalog_update_key(old_key, new_key):
             renamed.append("catalog.db")
     except Exception as e:
         errors.append(f"catalog.db: {e}")
@@ -912,7 +904,7 @@ def _paper_rename(old_key: str, new_key: str) -> str:
 
     # 6. Update vault ChromaDB — delete old, rebuild new
     try:
-        client = store.get_client(vault_chroma_dir())
+        client = store.get_client(_vault_chroma())
         embed_fn = store.get_embed_fn()
         store.delete_paper(client, old_key, embed_fn=embed_fn)
         # Also delete old note entry
@@ -1215,7 +1207,7 @@ def _notes_paper(
         if clear.strip() == "*":
             notes_mod.delete_note(_tome_dir(), key)
             try:
-                client = store.get_client(_chroma_dir())
+                client = store.get_client(_vault_chroma())
                 embed_fn = store.get_embed_fn()
                 col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
                 col.delete(ids=[f"{key}::note"])
@@ -1227,7 +1219,7 @@ def _notes_paper(
         notes_mod.save_note(_tome_dir(), key, updated)
         flat_text = notes_mod.flatten_for_search(key, updated)
         try:
-            client = store.get_client(_chroma_dir())
+            client = store.get_client(_vault_chroma())
             embed_fn = store.get_embed_fn()
             col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
             if updated:
@@ -1257,7 +1249,7 @@ def _notes_paper(
     # Index into ChromaDB
     flat_text = notes_mod.flatten_for_search(key, updated, cfg.paper_note_fields)
     try:
-        client = store.get_client(_chroma_dir())
+        client = store.get_client(_vault_chroma())
         embed_fn = store.get_embed_fn()
         col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
         col.upsert(
@@ -1722,7 +1714,7 @@ def _search_papers(
 
     # Semantic mode
     try:
-        client = store.get_client(_chroma_dir())
+        client = store.get_client(_vault_chroma())
         embed_fn = store.get_embed_fn()
         if resolved and len(resolved) == 1:
             results = store.search_papers(
@@ -1911,7 +1903,7 @@ def _search_notes(
     resolved = _resolve_keys(key=key, keys=keys, tags=tags)
 
     try:
-        client = store.get_client(_chroma_dir())
+        client = store.get_client(_vault_chroma())
         embed_fn = store.get_embed_fn()
         col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
 
@@ -1968,29 +1960,30 @@ def _search_all(
     all_results: list[dict[str, Any]] = []
 
     try:
-        client = store.get_client(_chroma_dir())
         embed_fn = store.get_embed_fn()
 
-        # Papers
+        # Papers — vault ChromaDB
+        vault_client = store.get_client(_vault_chroma())
         if resolved and len(resolved) == 1:
             paper_hits = store.search_papers(
-                client, query, n=n, key=resolved[0], embed_fn=embed_fn,
+                vault_client, query, n=n, key=resolved[0], embed_fn=embed_fn,
             )
         elif resolved:
             paper_hits = store.search_papers(
-                client, query, n=n, keys=resolved, embed_fn=embed_fn,
+                vault_client, query, n=n, keys=resolved, embed_fn=embed_fn,
             )
         else:
             paper_hits = store.search_papers(
-                client, query, n=n, embed_fn=embed_fn,
+                vault_client, query, n=n, embed_fn=embed_fn,
             )
         for r in paper_hits:
             r["_source"] = "papers"
         all_results.extend(paper_hits)
 
-        # Corpus
+        # Corpus — project ChromaDB
+        corpus_client = store.get_client(_chroma_dir())
         corpus_hits = store.search_corpus(
-            client, query, n=n,
+            corpus_client, query, n=n,
             source_file=paths or None,
             labels_only=labels_only,
             cites_only=cites_only,
@@ -3043,7 +3036,7 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
     pdf_dir = _tome_dir() / "pdf"
 
     try:
-        client = store.get_client(_chroma_dir())
+        client = store.get_client(_vault_chroma())
         embed_fn = store.get_embed_fn()
     except Exception as e:
         raise ChromaDBError(str(e))
@@ -3596,7 +3589,7 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
 
     # Search ChromaDB for each quote
     try:
-        client = store.get_client(_chroma_dir())
+        client = store.get_client(_vault_chroma())
         embed_fn = store.get_embed_fn()
         col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
     except Exception as e:
