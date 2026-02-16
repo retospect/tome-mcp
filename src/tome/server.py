@@ -549,25 +549,25 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
         surname = identify.surname_from_author(result.authors_from_pdf)
         year = 2024  # fallback
     else:
-        surname = None
+        surname = "unknown"
+        year = 2024
 
-    if surname:
-        title_for_slug = api_title or result.title_from_pdf or ""
-        if title_for_slug:
-            base = slug_mod.make_key(surname, year, title_for_slug)
+    title_for_slug = api_title or result.title_from_pdf or ""
+    if title_for_slug:
+        base = slug_mod.make_key(surname, year, title_for_slug)
+    else:
+        base = f"{surname.lower()}{year}"
+    # Deduplicate against existing keys
+    if base not in existing:
+        suggested_key = base
+    else:
+        for suffix in "abcdefghijklmnopqrstuvwxyz":
+            candidate = f"{base}{suffix}"
+            if candidate not in existing:
+                suggested_key = candidate
+                break
         else:
-            base = f"{surname.lower()}{year}"
-        # Deduplicate against existing keys
-        if base not in existing:
-            suggested_key = base
-        else:
-            for suffix in "abcdefghijklmnopqrstuvwxyz":
-                candidate = f"{base}{suffix}"
-                if candidate not in existing:
-                    suggested_key = candidate
-                    break
-            else:
-                suggested_key = base  # all 26 taken, let LLM pick
+            suggested_key = base  # all 26 taken, let LLM pick
 
     # Check if DOI is known-bad
     doi_warning = None
