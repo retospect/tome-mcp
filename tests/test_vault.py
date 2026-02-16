@@ -327,27 +327,28 @@ class TestCatalog:
         assert sources["xmp"] == "Some Title (XMP)"
 
     def test_rebuild_from_archives(self, tmp_path):
-        # Create a mini vault with 2 archives
-        v = tmp_path / "vault"
-        v.mkdir()
+        # Create a mini vault with sharded layout
+        tome_dir = tmp_path / "tome"
+        (tome_dir / "a").mkdir(parents=True)
+        (tome_dir / "b").mkdir(parents=True)
 
         meta1 = self._meta(content_hash="h1", key="a2024x", title="Paper A", first_author="a")
         meta2 = self._meta(content_hash="h2", key="b2024y", title="Paper B", first_author="b")
 
-        write_archive(v / "a2024x.tome", meta1, page_texts=["p1"])
-        write_archive(v / "b2024y.tome", meta2, page_texts=["p1"])
+        write_archive(tome_dir / "a" / "a2024x.tome", meta1, page_texts=["p1"])
+        write_archive(tome_dir / "b" / "b2024y.tome", meta2, page_texts=["p1"])
 
-        # Monkey-patch vault_dir to point to tmp
+        # Monkey-patch vault_root to point to tmp
         import tome.vault as vault_mod
 
-        orig = vault_mod.vault_dir
-        vault_mod.vault_dir = lambda: v
+        orig = vault_mod.vault_root
+        vault_mod.vault_root = lambda: tmp_path
 
         db = tmp_path / "catalog.db"
         try:
             count = catalog_rebuild(db)
         finally:
-            vault_mod.vault_dir = orig
+            vault_mod.vault_root = orig
 
         assert count == 2
         assert catalog_get_by_key("a2024x", db) is not None

@@ -207,19 +207,15 @@ def ingest_pdf(
         meta.status = "verified"
         meta.verified_at = datetime.now(UTC).isoformat()
 
-        v_dir = _vault.vault_dir()
-        v_dir.mkdir(parents=True, exist_ok=True)
-
-        # Copy PDF to vault
-        pdf_dest = v_dir / f"{suggested_key}.pdf"
+        # Copy PDF to vault (sharded: pdf/<initial>/<key>.pdf)
+        pdf_dest = _vault.vault_pdf_path(suggested_key)
+        pdf_dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(str(pdf_path), str(pdf_dest))
 
-        # Write archive
-        write_archive(
-            v_dir / f"{suggested_key}.tome",
-            meta,
-            page_texts=page_texts,
-        )
+        # Write archive (sharded: tome/<initial>/<key>.tome)
+        tome_dest = _vault.vault_tome_path(suggested_key)
+        tome_dest.parent.mkdir(parents=True, exist_ok=True)
+        write_archive(tome_dest, meta, page_texts=page_texts)
 
         # Update catalog
         catalog_upsert(meta, catalog_db)

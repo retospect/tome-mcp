@@ -37,13 +37,10 @@ class TestIngestAutoAccept:
         pdf = _make_pdf(tmp_path / "test.pdf", title=title)
         db = tmp_path / "catalog.db"
         init_catalog(db)
-        v_dir = tmp_path / "vault"
-        v_dir.mkdir()
-
-        # Monkey-patch vault paths for isolation
+        # Monkey-patch vault_root for isolation
         import tome.vault as vault_mod
 
-        monkeypatch.setattr(vault_mod, "vault_dir", lambda: v_dir)
+        monkeypatch.setattr(vault_mod, "vault_root", lambda: tmp_path)
         monkeypatch.setattr(vault_mod, "catalog_path", lambda: db)
         monkeypatch.setattr(vault_mod, "ensure_vault_dirs", lambda: None)
 
@@ -61,9 +58,9 @@ class TestIngestAutoAccept:
         assert result.key != ""
         assert result.content_hash != ""
 
-        # PDF + archive in vault
-        assert (v_dir / f"{result.key}.pdf").exists()
-        assert (v_dir / f"{result.key}.tome").exists()
+        # PDF + archive in vault (sharded)
+        assert vault_mod.vault_pdf_path(result.key).exists()
+        assert vault_mod.vault_tome_path(result.key).exists()
 
         # In catalog
         row = catalog_get(result.content_hash, db)
@@ -78,12 +75,9 @@ class TestIngestReject:
         pdf = _make_pdf(tmp_path / "test.pdf", title="Some Paper About Chemistry")
         db = tmp_path / "catalog.db"
         init_catalog(db)
-        v_dir = tmp_path / "vault"
-        v_dir.mkdir()
-
         import tome.vault as vault_mod
 
-        monkeypatch.setattr(vault_mod, "vault_dir", lambda: v_dir)
+        monkeypatch.setattr(vault_mod, "vault_root", lambda: tmp_path)
         monkeypatch.setattr(vault_mod, "catalog_path", lambda: db)
         monkeypatch.setattr(vault_mod, "ensure_vault_dirs", lambda: None)
 
@@ -98,8 +92,9 @@ class TestIngestReject:
         assert result.validation is not None
         assert not result.validation.auto_accept
 
-        # Not in vault
-        assert not list(v_dir.glob("*.pdf"))
+        # Not in vault (no PDFs in sharded pdf/ tree)
+        pdf_dir = tmp_path / "pdf"
+        assert not pdf_dir.exists() or not list(pdf_dir.rglob("*.pdf"))
 
 
 class TestIngestDuplicate:
@@ -109,12 +104,9 @@ class TestIngestDuplicate:
         pdf = _make_pdf(tmp_path / "test.pdf", title="Duplicate Paper Title")
         db = tmp_path / "catalog.db"
         init_catalog(db)
-        v_dir = tmp_path / "vault"
-        v_dir.mkdir()
-
         import tome.vault as vault_mod
 
-        monkeypatch.setattr(vault_mod, "vault_dir", lambda: v_dir)
+        monkeypatch.setattr(vault_mod, "vault_root", lambda: tmp_path)
         monkeypatch.setattr(vault_mod, "catalog_path", lambda: db)
         monkeypatch.setattr(vault_mod, "ensure_vault_dirs", lambda: None)
 
@@ -148,12 +140,9 @@ class TestIngestMetadata:
         pdf = _make_pdf(tmp_path / "test.pdf", title="Research Paper", body=body, pages=3)
         db = tmp_path / "catalog.db"
         init_catalog(db)
-        v_dir = tmp_path / "vault"
-        v_dir.mkdir()
-
         import tome.vault as vault_mod
 
-        monkeypatch.setattr(vault_mod, "vault_dir", lambda: v_dir)
+        monkeypatch.setattr(vault_mod, "vault_root", lambda: tmp_path)
         monkeypatch.setattr(vault_mod, "catalog_path", lambda: db)
         monkeypatch.setattr(vault_mod, "ensure_vault_dirs", lambda: None)
 

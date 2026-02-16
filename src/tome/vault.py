@@ -33,7 +33,8 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-VAULT_DIR_NAME = "vault"
+VAULT_PDF_DIR = "pdf"
+VAULT_TOME_DIR = "tome"
 CATALOG_DB_NAME = "catalog.db"
 CHROMA_DIR_NAME = "chroma"
 CONFIG_NAME = "config.yaml"
@@ -55,8 +56,28 @@ def vault_root() -> Path:
 
 
 def vault_dir() -> Path:
-    """Return the vault papers directory (~/.tome-mcp/vault/)."""
-    return vault_root() / VAULT_DIR_NAME
+    """Deprecated — use vault_pdf_path(key) or vault_tome_path(key)."""
+    return vault_root() / "vault"
+
+
+def _shard(key: str) -> str:
+    """Return the single-char shard directory for a key."""
+    return key[0].lower() if key else "_"
+
+
+def vault_pdf_path(key: str) -> Path:
+    """Return path for a PDF in the vault: ~/.tome-mcp/pdf/<initial>/<key>.pdf"""
+    return vault_root() / VAULT_PDF_DIR / _shard(key) / f"{key}.pdf"
+
+
+def vault_tome_path(key: str) -> Path:
+    """Return path for a .tome archive: ~/.tome-mcp/tome/<initial>/<key>.tome"""
+    return vault_root() / VAULT_TOME_DIR / _shard(key) / f"{key}{ARCHIVE_EXTENSION}"
+
+
+def _vault_relative_tome(key: str) -> str:
+    """Relative path for catalog.db vault_path field: tome/<initial>/<key>.tome"""
+    return f"{VAULT_TOME_DIR}/{_shard(key)}/{key}{ARCHIVE_EXTENSION}"
 
 
 def catalog_path() -> Path:
@@ -71,7 +92,8 @@ def vault_chroma_dir() -> Path:
 
 def ensure_vault_dirs() -> None:
     """Create vault directory structure if it doesn't exist."""
-    vault_dir().mkdir(parents=True, exist_ok=True)
+    (vault_root() / VAULT_PDF_DIR).mkdir(parents=True, exist_ok=True)
+    (vault_root() / VAULT_TOME_DIR).mkdir(parents=True, exist_ok=True)
     vault_chroma_dir().mkdir(parents=True, exist_ok=True)
     init_catalog()
 
@@ -505,7 +527,7 @@ def catalog_upsert(meta: DocumentMeta, path: Path | None = None) -> None:
                     "doc_type": meta.doc_type,
                     "parent_hash": meta.parent_hash,
                     "supplement_index": meta.supplement_index,
-                    "vault_path": meta.key + ARCHIVE_EXTENSION,
+                    "vault_path": _vault_relative_tome(meta.key),
                     "ingested_at": meta.ingested_at or datetime.now(UTC).isoformat(),
                     "verified_at": meta.verified_at,
                 },
@@ -622,7 +644,7 @@ def catalog_update_key(old_key: str, new_key: str, path: Path | None = None) -> 
     with _db(path) as conn:
         cursor = conn.execute(
             "UPDATE documents SET key = ?, vault_path = ? WHERE key = ?",
-            (new_key, new_key + ARCHIVE_EXTENSION, old_key),
+            (new_key, _vault_relative_tome(new_key), old_key),
         )
         return cursor.rowcount > 0
 
@@ -633,8 +655,8 @@ def catalog_rebuild(path: Path | None = None) -> int:
     Returns:
         Number of documents indexed.
     """
-    v_dir = vault_dir()
-    if not v_dir.exists():
+    tome_dir = vault_root() / VAULT_TOME_DIR
+    if not tome_dir.exists():
         return 0
 
     db_path = path or catalog_path()
@@ -647,7 +669,7 @@ def catalog_rebuild(path: Path | None = None) -> int:
         conn.executescript(_SCHEMA)
 
     count = 0
-    for archive in sorted(v_dir.glob(f"*{ARCHIVE_EXTENSION}")):
+    for archive in sorted(tome_dir.rglob(f"*{ARCHIVE_EXTENSION}")):
         try:
             meta = read_archive_meta(archive)
             catalog_upsert(meta, db_path)

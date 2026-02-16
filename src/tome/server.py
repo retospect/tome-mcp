@@ -866,10 +866,10 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
 
     # Commit: write to vault — PDF + .tome archive + catalog.db
     from tome.vault import (
-        ARCHIVE_EXTENSION,
         DocumentMeta,
         catalog_upsert,
-        vault_dir,
+        vault_pdf_path,
+        vault_tome_path,
         write_archive,
     )
 
@@ -888,23 +888,20 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
         page_count=ext_result.pages,
     )
 
-    # Copy PDF to vault
-    v_dir = vault_dir()
-    v_dir.mkdir(parents=True, exist_ok=True)
-    vault_pdf = v_dir / f"{key}.pdf"
-    shutil.copy2(dest_pdf, vault_pdf)
+    # Copy PDF to vault (sharded: pdf/<initial>/<key>.pdf)
+    v_pdf = vault_pdf_path(key)
+    v_pdf.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(dest_pdf, v_pdf)
 
     # Read extracted page texts for the .tome archive
     page_texts: list[str] = []
     for page_num in range(1, ext_result.pages + 1):
         page_texts.append(extract.read_page(_raw_dir(), key, page_num))
 
-    # Write .tome archive (meta.json + pages/*.txt)
-    write_archive(
-        v_dir / f"{key}{ARCHIVE_EXTENSION}",
-        doc_meta,
-        page_texts=page_texts,
-    )
+    # Write .tome archive (sharded: tome/<initial>/<key>.tome)
+    v_tome = vault_tome_path(key)
+    v_tome.parent.mkdir(parents=True, exist_ok=True)
+    write_archive(v_tome, doc_meta, page_texts=page_texts)
 
     # Write to catalog.db (content hash, DOI, title for dedup)
     catalog_upsert(doc_meta)
@@ -1045,10 +1042,8 @@ def _paper_set(
 def _paper_remove(key: str) -> str:
     """Remove a paper from the library and vault. Deletes all associated data."""
     from tome.vault import (
-        ARCHIVE_EXTENSION,
         catalog_delete,
         catalog_get_by_key,
-        vault_dir,
     )
 
     lib = _load_bib()
@@ -1076,12 +1071,13 @@ def _paper_remove(key: str) -> str:
     except Exception:
         pass  # best-effort: vault may not exist yet
 
-    vault_archive = vault_dir() / (key + ARCHIVE_EXTENSION)
-    if vault_archive.exists():
-        vault_archive.unlink()
-    vault_pdf = vault_dir() / f"{key}.pdf"
-    if vault_pdf.exists():
-        vault_pdf.unlink()
+    from tome.vault import vault_pdf_path, vault_tome_path
+    v_tome = vault_tome_path(key)
+    if v_tome.exists():
+        v_tome.unlink()
+    v_pdf = vault_pdf_path(key)
+    if v_pdf.exists():
+        v_pdf.unlink()
 
     # Remove from vault ChromaDB (paper_chunks)
     try:
@@ -1156,7 +1152,7 @@ def _paper_rename(old_key: str, new_key: str) -> str:
             errors.append(f"raw rename: {e}")
 
     # 5. Update vault: rename archive + PDF, update catalog.db key
-    from tome.vault import ARCHIVE_EXTENSION, catalog_update_key, vault_dir
+    from tome.vault import catalog_update_key, vault_pdf_path, vault_tome_path
 
     try:
         if catalog_update_key(old_key, new_key):
@@ -1164,15 +1160,17 @@ def _paper_rename(old_key: str, new_key: str) -> str:
     except Exception as e:
         errors.append(f"catalog.db: {e}")
 
-    v_dir = vault_dir()
-    for suffix in [ARCHIVE_EXTENSION, ".pdf"]:
-        old_vault = v_dir / (old_key + suffix)
-        if old_vault.exists():
+    for old_path, new_path, label in [
+        (vault_tome_path(old_key), vault_tome_path(new_key), "vault/tome"),
+        (vault_pdf_path(old_key), vault_pdf_path(new_key), "vault/pdf"),
+    ]:
+        if old_path.exists():
             try:
-                old_vault.rename(v_dir / (new_key + suffix))
-                renamed.append(f"vault/{new_key}{suffix}")
+                new_path.parent.mkdir(parents=True, exist_ok=True)
+                old_path.rename(new_path)
+                renamed.append(f"{label}/{new_path.name}")
             except OSError as e:
-                errors.append(f"vault rename {suffix}: {e}")
+                errors.append(f"{label} rename: {e}")
 
     # 6. Update vault ChromaDB — delete old, rebuild new
     try:
