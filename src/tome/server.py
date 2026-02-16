@@ -826,6 +826,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
 
     from tome.slug import slug_from_title
 
+    staging_key = key  # preserve for staging dir references after enrichment
     if _re.fullmatch(r"[a-z]+\d{4}[a-c]?", key) and fields.get("title"):
         slug = slug_from_title(fields["title"])
         if slug:
@@ -851,10 +852,10 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
 
     raw_dest = _raw_dir() / key
     raw_dest.parent.mkdir(parents=True, exist_ok=True)
-    if (staging / "raw" / key).exists():
+    if (staging / "raw" / staging_key).exists():
         if raw_dest.exists():
             shutil.rmtree(raw_dest)
-        shutil.copytree(staging / "raw" / key, raw_dest)
+        shutil.copytree(staging / "raw" / staging_key, raw_dest)
 
     # Commit: ChromaDB upsert (embedding handled internally by ChromaDB)
     embedded = False
@@ -919,8 +920,9 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
 
     # Read extracted page texts for the .tome archive
     page_texts: list[str] = []
+    raw_source = raw_dest if raw_dest.exists() else staging / "raw" / staging_key
     for page_num in range(1, ext_result.pages + 1):
-        page_texts.append(extract.read_page(_raw_dir(), key, page_num))
+        page_texts.append(extract.read_page(raw_source.parent, raw_source.name, page_num))
 
     # Write .tome archive with pages + chunks + embeddings (self-contained)
     v_tome = vault_tome_path(key)
