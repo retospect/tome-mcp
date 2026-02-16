@@ -3464,47 +3464,6 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
         except Exception as e:
             results["errors"].append({"key": str(archive.stem), "error": _sanitize_exc(e)})
 
-    # Phase 4: Fall back to PDF re-extraction for papers without .tome archives
-    if not key:
-        lib = _load_bib()
-        pdf_dir = _tome_dir() / "pdf"
-        for entry in lib.entries:
-            k = entry.key
-            if k in rebuilt_keys:
-                continue
-            pdf = pdf_dir / f"{k}.pdf"
-            if not pdf.exists():
-                continue
-            try:
-                ext_result = extract.extract_pdf_pages(pdf, _raw_dir(), k, force=True)
-                pages = []
-                for page_num in range(1, ext_result.pages + 1):
-                    pages.append(extract.read_page(_raw_dir(), k, page_num))
-                sha = checksum.sha256_file(pdf)
-                chunks_list = chunk.chunk_text("\n".join(pages))
-                page_indices = list(range(len(chunks_list)))
-                store.upsert_paper_chunks(col, k, chunks_list, page_indices, sha)
-
-                doc_meta = DocumentMeta(
-                    content_hash=sha,
-                    key=k,
-                    doi=bib.get_field(entry, "doi"),
-                    title=bib.get_field(entry, "title") or k,
-                    first_author=(bib.get_field(entry, "author") or "").split(" and ")[0],
-                    authors=(bib.get_field(entry, "author") or "").split(" and "),
-                    year=int(bib.get_field(entry, "year")) if (bib.get_field(entry, "year") or "").isdigit() else None,
-                    journal=bib.get_field(entry, "journal"),
-                    page_count=ext_result.pages,
-                )
-                try:
-                    catalog_upsert(doc_meta)
-                except Exception:
-                    pass
-                results["rebuilt"].append({"key": k, "pages": ext_result.pages, "source": "pdf"})
-                results["from_pdf"] += 1
-            except Exception as e:
-                results["errors"].append({"key": k, "error": _sanitize_exc(e)})
-
     return results
 
 
