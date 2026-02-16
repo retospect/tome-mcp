@@ -32,11 +32,16 @@ class GateResult:
     data: dict[str, Any] = field(default_factory=dict)
 
 
+# Doc types that don't require DOI verification for auto-accept
+_DOI_EXEMPT_TYPES = frozenset({"patent", "datasheet", "book", "thesis", "standard", "report"})
+
+
 @dataclass
 class ValidationReport:
     """Aggregate validation report from all gates."""
 
     results: list[GateResult] = field(default_factory=list)
+    doc_type: str = "article"
 
     @property
     def all_passed(self) -> bool:
@@ -48,10 +53,17 @@ class ValidationReport:
 
     @property
     def auto_accept(self) -> bool:
-        """True if paper can be auto-accepted (all gates pass + DOI verified)."""
+        """True if document can be auto-accepted.
+
+        Papers (article/review/letter/preprint) require DOI title match.
+        Other types (patent/datasheet/book/thesis/standard/report) auto-accept
+        when all run gates pass, since DOI verification is not applicable.
+        """
         if not self.all_passed:
             return False
-        # Must have passed doi_title_match to auto-accept
+        if self.doc_type in _DOI_EXEMPT_TYPES:
+            return True
+        # Papers must have passed doi_title_match to auto-accept
         doi_gates = [r for r in self.results if r.gate == "doi_title_match"]
         return len(doi_gates) > 0 and all(r.passed for r in doi_gates)
 
@@ -288,6 +300,7 @@ def validate_for_vault(
     doi: str | None = None,
     first_page_text: str | None = None,
     catalog_db: Path | None = None,
+    doc_type: str = "article",
 ) -> ValidationReport:
     """Run all validation gates on a PDF for vault ingest.
 
@@ -298,11 +311,12 @@ def validate_for_vault(
         doi: DOI string if available.
         first_page_text: Text from first page (for quality check).
         catalog_db: Path to catalog.db (None = default location).
+        doc_type: Document type — affects which gates run and auto_accept logic.
 
     Returns:
         ValidationReport with all gate results.
     """
-    report = ValidationReport()
+    report = ValidationReport(doc_type=doc_type)
 
     # 1. PDF integrity
     report.results.append(check_pdf_integrity(pdf_path))

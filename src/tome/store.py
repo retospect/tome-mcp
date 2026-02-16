@@ -100,6 +100,7 @@ def upsert_paper_chunks(
     file_sha256: str,
     char_starts: list[int] | None = None,
     char_ends: list[int] | None = None,
+    doc_type: str = "",
 ) -> int:
     """Upsert semantic text chunks for a paper into vault ChromaDB.
 
@@ -111,6 +112,7 @@ def upsert_paper_chunks(
         file_sha256: SHA256 of the source PDF.
         char_starts: Start character offset per chunk (optional).
         char_ends: End character offset per chunk (optional).
+        doc_type: Document type (article, patent, datasheet, etc.).
 
     Returns:
         Number of chunks upserted.
@@ -128,6 +130,8 @@ def upsert_paper_chunks(
             "file_sha256": file_sha256,
             "source_type": "paper",
         }
+        if doc_type:
+            meta["doc_type"] = doc_type
         if char_starts and i < len(char_starts):
             meta["char_start"] = char_starts[i]
         if char_ends and i < len(char_ends):

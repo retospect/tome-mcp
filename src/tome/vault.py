@@ -11,6 +11,7 @@ Vault ChromaDB (~/.tome/chroma/) holds all document chunks for semantic search.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import sqlite3
@@ -76,6 +77,24 @@ def ensure_vault_dirs() -> None:
     vault_dir().mkdir(parents=True, exist_ok=True)
     purgatory_dir().mkdir(parents=True, exist_ok=True)
     vault_chroma_dir().mkdir(parents=True, exist_ok=True)
+
+
+@contextmanager
+def vault_write_lock() -> Iterator[None]:
+    """Exclusive file lock for vault write operations (ChromaDB, catalog.db).
+
+    Prevents corruption when multiple MCP server instances (one per project)
+    write to shared vault resources simultaneously.  Reads don't need locking.
+    """
+    lock_path = vault_root() / "vault.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    fd = lock_path.open("w")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        fd.close()
 
 
 # ---------------------------------------------------------------------------
