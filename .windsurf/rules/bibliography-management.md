@@ -12,9 +12,9 @@ All entries in one file, managed by the Tome MCP server. BibTeX ignores the `x-`
 
 ## Tome tool discipline
 
-- **`check_doi`**: Run after **every** ingest. Perplexity-sourced DOIs are frequently wrong (~10% hallucination rate). Verify PDF content against title/authors (first 2 pages) as a second check.
-- **`notes`**: After reading any paper, record summary, claims, and quality. Check `get_paper(key)` first. This builds institutional memory across sessions.
-- **`stats`**: Quick overview of library state.
+- **`doi(key=...)`**: Run after **every** ingest. Perplexity-sourced DOIs are frequently wrong (~10% hallucination rate). Verify PDF content against title/authors (first 2 pages) as a second check.
+- **`notes`**: After reading any paper, record summary, claims, and quality. Check `paper(key)` first. This builds institutional memory across sessions.
+- **`paper()`**: Quick overview of library state (no args = stats).
 
 ## Key format
 
@@ -30,7 +30,7 @@ All keys use first author surname (lowercase) + 4-digit year. Year in key **must
 
 **Wrong PDFs**: Rename to `<key>_wrong.pdf`, set `x-pdf = {false}`, add "WRONG PDF: ..." to `note` field.
 
-Before adding: `list_papers` or `get_paper(key)` to check for duplicates.
+Before adding: `paper(action="list")` or `paper(key)` to check for duplicates.
 
 ## File layout
 
@@ -43,4 +43,4 @@ Before adding: `list_papers` or `get_paper(key)` to check for duplicates.
 
 - **Ingest new PDF**: Place in `tome/inbox/`, then `ingest` tool
 - **Rebuild extractions**: `reindex(scope="papers")` (one key via `key=` or all)
-- **Read a page**: `get_paper(key, page=page)`
+- **Read a page**: `paper(key, page=page)`

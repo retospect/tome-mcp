@@ -4020,7 +4020,7 @@ def report_issue(tool: str, description: str, severity: Literal["minor", "major"
 
 _EMPTY_BIB = """\
 % Tome bibliography — managed by Tome MCP server.
-% Add entries via ingest(), set_paper(), or edit directly.
+% Add entries via ingest(), paper(key=..., title=...), or edit directly.
 
 """
 

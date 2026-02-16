@@ -5,7 +5,7 @@ description: Best practices for filing tool issues
 
 Use `report_issue(tool, description, severity)` when a Tome tool
 behaves unexpectedly. Issues are stored in `tome/issues.md`
-(git-tracked) and surfaced in `stats()` and `set_root()`.
+(git-tracked) and surfaced in `paper()` and `set_root()`.
 
 ## Before reporting
 

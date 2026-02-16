@@ -86,7 +86,7 @@ tex_globs:
   - "appendix/*.tex"
   - "main.tex"
 
-# Optional: email for Unpaywall open-access PDF lookup (fetch_oa tool).
+# Optional: email for Unpaywall open-access PDF lookup (doi action='fetch').
 # Can also be set via UNPAYWALL_EMAIL environment variable.
 # unpaywall_email: you@example.com
 
