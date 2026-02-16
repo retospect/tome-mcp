@@ -15,7 +15,7 @@ class PaperNotFound(TomeError):
     def __init__(self, key: str):
         super().__init__(
             f"No paper with key '{key}' in tome/references.bib. "
-            f"Use list_papers to see available keys, or set_paper to create one."
+            f"Use paper(action='list') to see available keys, or paper(key='...', title='...') to create one."
         )
         self.key = key
 
@@ -38,7 +38,7 @@ class DuplicateKey(TomeError):
     def __init__(self, key: str):
         super().__init__(
             f"Bib key '{key}' already exists in the library. "
-            f"Use set_paper key='{key}' to update it, "
+            f"Use paper(key='{key}', title='...') to update it, "
             f"or choose a different key (e.g. '{key}a')."
         )
         self.key = key
@@ -52,7 +52,7 @@ class DOIResolutionFailed(TomeError):
             msg = (
                 f"DOI '{doi}' does not exist (CrossRef 404). "
                 f"This DOI may be hallucinated. "
-                f"Use set_paper to remove it or provide a correct one."
+                f"Use paper(key='...', doi='...') to fix it, or doi(action='reject', doi='...') to reject it."
             )
         elif status_code == 429:
             msg = (
@@ -78,7 +78,7 @@ class IngestFailed(TomeError):
             f"Could not ingest '{path}': {reason}. "
             f"The file remains in inbox/. "
             f"Try: ingest path='{path}' key='authorYYYY' to assign a key manually, "
-            f"or use set_paper to create the bib entry first. "
+            f"or use paper(key='authorYYYY', title='...') to create the bib entry first. "
             f"See guide('paper-workflow') for the full pipeline. "
             f"If the PDF looks valid, use report_issue to log a bug — see guide('reporting-issues')."
         )
@@ -120,8 +120,8 @@ class FigureNotFound(TomeError):
     def __init__(self, key: str, figure: str):
         super().__init__(
             f"No figure '{figure}' registered for paper '{key}'. "
-            f"Use request_figure to create a figure request, "
-            f"or list_figures to see existing figures."
+            f"Use figure(key='{key}', figure='...', reason='...') to request it, "
+            f"or figure() to list existing figures."
         )
         self.key = key
         self.figure = figure
@@ -133,7 +133,7 @@ class TextNotExtracted(TomeError):
     def __init__(self, key: str):
         super().__init__(
             f"Text not yet extracted for paper '{key}'. "
-            f"Run rebuild key='{key}' to extract text from the PDF, "
+            f"Run reindex(key='{key}') to extract text from the PDF, "
             f"or check that the PDF exists in tome/pdf/."
         )
         self.key = key
@@ -248,7 +248,7 @@ class NoBibFile(ConfigError):
         super().__init__(
             f"Bibliography file not found at {bib_path}",
             hint=(
-                "The library is empty. Use set_paper(key='...', title='...') to create "
+                "The library is empty. Use paper(key='...', title='...') to create "
                 "the first entry, or place a PDF in tome/inbox/ and run ingest. "
                 "See guide('paper-workflow') for the full pipeline."
             ),
@@ -278,9 +278,9 @@ class ChromaDBError(TomeError):
         super().__init__(
             f"ChromaDB error: {detail}. "
             f"The .tome/chroma/ directory may be corrupted. "
-            f"Try: rebuild (re-extracts text and re-indexes all papers). "
-            f"If that fails, delete .tome/chroma/ and rebuild again. "
-            f"If this persists after rebuild, use report_issue to log it — see guide('reporting-issues')."
+            f"Try: reindex(scope='all') (re-extracts text and re-indexes all papers). "
+            f"If that fails, delete .tome/chroma/ and reindex again. "
+            f"If this persists after reindex, use report_issue to log it — see guide('reporting-issues')."
         )
         self.detail = detail
 

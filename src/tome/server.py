@@ -1780,7 +1780,7 @@ def _search_papers_exact(
         return json.dumps({
             "error": "No raw text directory (.tome/raw/) found. "
             "No papers have been ingested yet, or the cache was deleted. "
-            "Use ingest to add papers, or run rebuild to regenerate from tome/pdf/."
+            "Use ingest to add papers, or run reindex(scope='papers') to regenerate from tome/pdf/."
         })
 
     context_chars = context if context > 0 else 200

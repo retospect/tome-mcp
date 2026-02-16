@@ -75,8 +75,8 @@ class TestPaperNotFound:
         e = PaperNotFound("xu2022")
         msg = str(e)
         assert "xu2022" in msg
-        assert "list_papers" in msg
-        assert "set_paper" in msg
+        assert "paper(action='list')" in msg
+        assert "paper(key=" in msg
 
 
 class TestPageOutOfRange:
@@ -152,14 +152,14 @@ class TestFigureNotFound:
         e = FigureNotFound("xu2022", "fig3")
         assert e.key == "xu2022"
         assert e.figure == "fig3"
-        assert "request_figure" in str(e)
+        assert "figure(key=" in str(e)
 
 
 class TestTextNotExtracted:
-    def test_message_suggests_rebuild(self):
+    def test_message_suggests_reindex(self):
         e = TextNotExtracted("xu2022")
         assert e.key == "xu2022"
-        assert "rebuild" in str(e)
+        assert "reindex" in str(e)
 
 
 class TestAPIError:
@@ -250,12 +250,12 @@ class TestRootFileNotFound:
 
 
 class TestNoBibFile:
-    def test_message_suggests_set_paper(self):
+    def test_message_suggests_paper(self):
         e = NoBibFile("/project/tome/references.bib")
         assert isinstance(e, ConfigError)
         msg = str(e)
         assert "references.bib" in msg
-        assert "set_paper" in msg
+        assert "paper(key=" in msg
         assert "ingest" in msg
 
 
@@ -270,13 +270,13 @@ class TestNoTexFiles:
 
 
 class TestChromaDBError:
-    def test_message_suggests_rebuild(self):
+    def test_message_suggests_reindex(self):
         e = ChromaDBError("collection not found")
         assert isinstance(e, TomeError)
         assert e.detail == "collection not found"
         msg = str(e)
         assert "collection not found" in msg
-        assert "rebuild" in msg
+        assert "reindex" in msg
         assert ".tome/chroma/" in msg
 
 
