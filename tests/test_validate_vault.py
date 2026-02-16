@@ -7,13 +7,16 @@ import fitz
 from tome.validate_vault import (
     GateResult,
     ValidationReport,
+    _name_variants,
     check_dedup,
+    check_doi_author_match,
     check_doi_duplicate,
     check_doi_title_match,
     check_pdf_integrity,
     check_text_extractable,
     check_text_quality,
     check_title_fuzzy_dedup,
+    find_in_pages,
     validate_for_vault,
 )
 from tome.vault import PaperMeta, catalog_upsert, init_catalog
@@ -340,3 +343,165 @@ class TestValidationReport:
         report = validate_for_vault(pdf_path=bad, catalog_db=db)
         assert not report.all_passed
         assert len(report.results) == 1  # only integrity gate ran
+
+
+# ---------------------------------------------------------------------------
+# Name variants
+# ---------------------------------------------------------------------------
+
+
+class TestNameVariants:
+    def test_last_comma_first(self):
+        vs = _name_variants("Mehta, Girish")
+        assert "Mehta, Girish" in vs
+        assert "Girish Mehta" in vs
+
+    def test_first_last(self):
+        vs = _name_variants("Girish Mehta")
+        assert "Girish Mehta" in vs
+        assert "Mehta, Girish" in vs
+        assert "Mehta Girish" in vs
+
+    def test_single_token(self):
+        vs = _name_variants("Mehta")
+        assert vs == ["Mehta"]
+
+    def test_empty(self):
+        vs = _name_variants("")
+        assert vs == [""]
+
+    def test_three_parts(self):
+        vs = _name_variants("Jan van Berg")
+        assert "Jan van Berg" in vs
+        assert "Berg, Jan van" in vs
+
+
+# ---------------------------------------------------------------------------
+# find_in_pages
+# ---------------------------------------------------------------------------
+
+
+class TestFindInPages:
+    def test_exact_title_in_text(self):
+        pages = ["Copyright 2006 Publishers\nA Low-Energy Reconfigurable Fabric\nMore text"]
+        score, snippet = find_in_pages("A Low-Energy Reconfigurable Fabric", pages)
+        assert score > 0.8
+
+    def test_title_on_second_page(self):
+        pages = [
+            "Copyright 2006 American Scientific Publishers\nAll rights reserved.",
+            "A Low-Energy Reconfigurable Fabric for the SuperCISC Architecture\nAbstract...",
+        ]
+        score, snippet = find_in_pages(
+            "A Low-Energy Reconfigurable Fabric for the SuperCISC Architecture", pages
+        )
+        assert score > 0.8
+
+    def test_no_match(self):
+        pages = ["Completely unrelated text about cooking recipes and gardening tips."]
+        score, snippet = find_in_pages("Quantum Computing in Metal-Organic Frameworks", pages)
+        assert score < 0.5
+
+    def test_empty_pages(self):
+        score, snippet = find_in_pages("Some Title", [])
+        assert score == 0.0
+
+    def test_empty_needle(self):
+        score, snippet = find_in_pages("", ["Some text"])
+        assert score == 0.0
+
+    def test_transpose_names_last_first(self):
+        pages = ["Girish Mehta and John Smith\nDepartment of Computer Science"]
+        score, _ = find_in_pages("Mehta, Girish", pages, transpose_names=True)
+        assert score > 0.8
+
+    def test_transpose_names_first_last(self):
+        pages = ["Mehta, G. and Smith, J.\nDepartment of Computer Science"]
+        score, _ = find_in_pages("Girish Mehta", pages, transpose_names=True)
+        assert score > 0.6
+
+    def test_no_transpose_by_default(self):
+        pages = ["Girish Mehta and John Smith"]
+        score_with, _ = find_in_pages("Mehta, Girish", pages, transpose_names=True)
+        score_without, _ = find_in_pages("Mehta, Girish", pages, transpose_names=False)
+        assert score_with >= score_without
+
+
+# ---------------------------------------------------------------------------
+# DOI title match with page_texts
+# ---------------------------------------------------------------------------
+
+
+class TestDOITitleMatchPageTexts:
+    def test_title_found_in_pages_despite_bad_extraction(self):
+        """The original bug: extracted title is copyright junk, but CrossRef title is in the text."""
+        r = check_doi_title_match(
+            extracted_title="Copyright © 2006 American Scientific Publishers",
+            crossref_title="A Low-Energy Reconfigurable Fabric for the SuperCISC Architecture",
+            page_texts=[
+                "Copyright © 2006 American Scientific Publishers\nAll rights reserved.",
+                "A Low-Energy Reconfigurable Fabric for the SuperCISC Architecture\n"
+                "Girish Mehta et al.\nAbstract...",
+            ],
+        )
+        assert r.passed
+        assert "found in text" in r.message.lower()
+
+    def test_falls_back_to_extracted_title(self):
+        """When no page_texts, falls back to comparing extracted vs crossref."""
+        r = check_doi_title_match(
+            extracted_title="A Low-Energy Reconfigurable Fabric",
+            crossref_title="A Low-Energy Reconfigurable Fabric for the SuperCISC Architecture",
+        )
+        assert r.passed
+
+    def test_missing_crossref_title(self):
+        r = check_doi_title_match(
+            extracted_title="Some Title",
+            crossref_title=None,
+        )
+        assert not r.passed
+
+    def test_neither_page_text_nor_extracted_match(self):
+        r = check_doi_title_match(
+            extracted_title="Copyright © 2006 American Scientific Publishers",
+            crossref_title="A Low-Energy Reconfigurable Fabric for the SuperCISC Architecture",
+            page_texts=["Copyright © 2006 American Scientific Publishers\nAll rights reserved."],
+        )
+        assert not r.passed
+
+
+# ---------------------------------------------------------------------------
+# DOI author match
+# ---------------------------------------------------------------------------
+
+
+class TestDOIAuthorMatch:
+    def test_author_found(self):
+        r = check_doi_author_match(
+            crossref_authors=["Girish Mehta", "John Smith"],
+            page_texts=["A Low-Energy Fabric\nGirish Mehta and John Smith\nAbstract..."],
+        )
+        assert r.passed
+
+    def test_author_found_transposed(self):
+        r = check_doi_author_match(
+            crossref_authors=["Mehta, Girish"],
+            page_texts=["Girish Mehta and John Smith\nDepartment of CS"],
+        )
+        assert r.passed
+
+    def test_no_author_found(self):
+        r = check_doi_author_match(
+            crossref_authors=["Completely Unknown Person"],
+            page_texts=["Girish Mehta and John Smith\nDepartment of CS"],
+        )
+        assert not r.passed
+
+    def test_no_authors(self):
+        r = check_doi_author_match(crossref_authors=None, page_texts=["Some text"])
+        assert r.passed  # non-blocking
+
+    def test_no_page_texts(self):
+        r = check_doi_author_match(crossref_authors=["Mehta"], page_texts=None)
+        assert r.passed  # non-blocking

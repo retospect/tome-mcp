@@ -11,17 +11,19 @@ from tome.vault import catalog_get, init_catalog
 def _make_pdf(
     path: Path,
     title: str = "Sample Research Paper",
+    authors: str = "Smith, Jones, and Lee",
     body: str = "This paper presents new results in materials science.",
     pages: int = 1,
 ) -> Path:
-    """Create a minimal PDF with a large title and body text."""
+    """Create a minimal PDF with a large title, authors, and body text."""
     doc = fitz.open()
     for i in range(pages):
         page = doc.new_page()
         if i == 0:
-            # Title in large font, body in small font — mimics real papers
+            # Title in large font, authors + body in small font — mimics real papers
             page.insert_text((72, 72), title, fontsize=18)
-            page.insert_text((72, 120), body, fontsize=10)
+            page.insert_text((72, 100), authors, fontsize=11)
+            page.insert_text((72, 130), body, fontsize=10)
         else:
             page.insert_text((72, 72), f"Page {i + 1} content", fontsize=10)
     doc.save(str(path))

@@ -77,7 +77,7 @@ from tome.errors import (
     TomeError,
     UnpaywallNotConfigured,
 )
-from tome.validate_vault import validate_for_vault
+from tome.ingest import resolve_metadata
 
 mcp_server = FastMCP("Tome")
 
@@ -547,42 +547,10 @@ def ingest(
     return json.dumps(_commit_ingest(pdf_path, key, tags), indent=2)
 
 
-def _resolve_metadata(pdf_path: Path):
-    """Shared metadata resolution for propose and commit phases.
-
-    Returns (id_result, crossref_result, s2_result).
-    Tries CrossRef first (if DOI found), then S2 as fallback.
-    Pulls DOI from S2 when text extraction misses it.
-    """
-    id_result = identify.identify_pdf(pdf_path)
-
-    crossref_result = None
-    if id_result.doi:
-        try:
-            crossref_result = crossref.check_doi(id_result.doi)
-        except Exception:
-            pass  # best-effort: CrossRef down doesn't block
-
-    s2_result = None
-    if crossref_result is None and id_result.title_from_pdf:
-        try:
-            s2_results = s2.search(id_result.title_from_pdf, limit=3)
-            if s2_results:
-                s2_result = s2_results[0]
-        except Exception:
-            pass  # best-effort: S2 down doesn't block
-
-    if not id_result.doi and s2_result and s2_result.doi:
-        id_result.doi = s2_result.doi
-        id_result.doi_source = "s2"
-
-    return id_result, crossref_result, s2_result
-
-
 def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
     """Phase 1: Extract metadata, query APIs, propose key."""
     try:
-        result, crossref_result, s2_result = _resolve_metadata(pdf_path)
+        result, crossref_result, s2_result = resolve_metadata(pdf_path)
     except Exception as e:
         return {"source_file": str(pdf_path.name), "status": "failed", "reason": _sanitize_exc(e)}
 
@@ -599,7 +567,7 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
         api_authors = crossref_result.authors
         year = crossref_result.year or 2024
         surname = (
-            api_authors[0].split(",")[0].strip()
+            identify.surname_from_author(api_authors[0])
             if api_authors
             else identify.surname_from_author(result.authors_from_pdf)
             if result.authors_from_pdf
@@ -609,7 +577,7 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
         api_title = s2_result.title
         api_authors = s2_result.authors
         year = s2_result.year or 2024
-        surname = api_authors[0].split()[-1] if api_authors else "unknown"
+        surname = identify.surname_from_author(api_authors[0]) if api_authors else "unknown"
     elif result.authors_from_pdf:
         surname = identify.surname_from_author(result.authors_from_pdf)
         year = 2024  # fallback
@@ -710,9 +678,12 @@ def _disambiguate_key(key: str, existing_keys: set[str]) -> str:
 def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     """Phase 2: Commit — validate, extract, embed, write bib, move file.
 
-    Runs the full vault validation pipeline (PDF integrity, text quality,
-    DOI-title fuzzy match, DOI duplicate check) before committing.
+    Uses :func:`tome.ingest.prepare_ingest` for the shared analysis core
+    (metadata resolution, validation, best-title/author selection), then
+    layers on server-specific extras (bib, ChromaDB, manifest, staging).
     """
+    from tome.ingest import prepare_ingest
+
     if not key:
         return {
             "error": "Key is required for commit. Provide key='authorYYYYslug' (e.g. 'xu2022interference')."
@@ -723,110 +694,31 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     if key in existing_keys:
         key = _disambiguate_key(key, existing_keys)
 
-    # Stage: extract text
-    staging = _staging_dir() / key
-    staging.mkdir(parents=True, exist_ok=True)
-
+    # --- Shared core: extract, resolve, validate, pick best metadata ---
     try:
-        ext_result = extract.extract_pdf_pages(pdf_path, staging / "raw", key, force=True)
+        prep = prepare_ingest(pdf_path, resolve_apis=True)
     except Exception as e:
-        return {"error": f"Text extraction failed: {e}"}
+        return {"error": f"Ingest preparation failed: {_sanitize_exc(e)}"}
 
-    # Stage: chunk all pages (keep page_texts in memory for .tome archive)
-    all_chunks = []
-    page_map = []
-    page_texts: list[str] = []
-    first_page_text = ""
-    for page_num in range(1, ext_result.pages + 1):
-        page_text = extract.read_page(staging / "raw", key, page_num)
-        page_texts.append(page_text)
-        if page_num == 1:
-            first_page_text = page_text
-        page_chunks = chunk.chunk_text(page_text)
-        for c in page_chunks:
-            all_chunks.append(c)
-            page_map.append(page_num)
-
-    # Resolve metadata via shared helper (CrossRef/S2)
-    try:
-        id_result, crossref_result, s2_result = _resolve_metadata(pdf_path)
-    except Exception as e:
-        return {"error": f"Metadata extraction failed: {_sanitize_exc(e)}"}
-
-    # Run vault validation gates (PDF integrity, text quality, DOI-title match)
-    crossref_title = crossref_result.title if crossref_result else None
-    extracted_title = id_result.title_from_pdf
-    validation = validate_for_vault(
-        pdf_path=pdf_path,
-        extracted_title=extracted_title,
-        crossref_title=crossref_title,
-        doi=id_result.doi,
-        first_page_text=first_page_text,
-    )
-
-    # Collect validation warnings/blockers
-    warnings: list[str] = []
-    for gate in validation.results:
+    # Check for blockers
+    for gate in prep.validation.results:
         if not gate.passed:
             if gate.gate in ("pdf_integrity", "dedup"):
-                shutil.rmtree(staging, ignore_errors=True)
                 return {"error": f"Validation failed: {gate.message}"}
             elif gate.gate == "doi_duplicate":
-                shutil.rmtree(staging, ignore_errors=True)
                 return {"error": f"Duplicate DOI: {gate.message}"}
-            elif gate.gate == "title_dedup":
-                warnings.append(f"Possible duplicate: {gate.message}")
-            elif gate.gate == "doi_title_match":
-                warnings.append(
-                    f"DOI-title mismatch: {gate.message}. The DOI may belong to a different paper."
-                )
-            elif gate.gate == "text_quality":
-                warnings.append(f"Low text quality: {gate.message}")
-            elif gate.gate == "text_extractable":
-                warnings.append(f"Poor text extraction: {gate.message}")
 
-    # Determine DOI status from validation
-    doi_title_matched = False
-    if crossref_result and id_result.doi:
-        doi_title_matched = all(
-            g.passed for g in validation.results if g.gate == "doi_title_match"
-        )
-
-    # Build bib fields from best available source
+    # --- Server-specific: build bib fields from prep ---
     fields: dict[str, str] = {}
-    if crossref_result:
-        fields["title"] = crossref_result.title or id_result.title_from_pdf or ""
-        if crossref_result.authors:
-            fields["author"] = " and ".join(crossref_result.authors)
-        elif id_result.authors_from_pdf:
-            fields["author"] = id_result.authors_from_pdf
-        fields["year"] = str(crossref_result.year or "")
-        if crossref_result.journal:
-            fields["journal"] = crossref_result.journal
-    elif s2_result:
-        fields["title"] = s2_result.title or id_result.title_from_pdf or ""
-        if s2_result.authors:
-            fields["author"] = " and ".join(s2_result.authors)
-        elif id_result.authors_from_pdf:
-            fields["author"] = id_result.authors_from_pdf
-        fields["year"] = str(s2_result.year or "")
-    else:
-        if id_result.title_from_pdf:
-            fields["title"] = id_result.title_from_pdf
-        if id_result.authors_from_pdf:
-            fields["author"] = id_result.authors_from_pdf
-        fields["year"] = ""
-
-    if id_result.doi:
-        fields["doi"] = id_result.doi
-        if doi_title_matched:
-            fields["x-doi-status"] = "verified"
-        elif crossref_result:
-            fields["x-doi-status"] = "mismatch"
-        else:
-            fields["x-doi-status"] = "unchecked"
-    else:
-        fields["x-doi-status"] = "missing"
+    fields["title"] = prep.title or key
+    if prep.authors and prep.authors != ["Unknown"]:
+        fields["author"] = " and ".join(prep.authors)
+    fields["year"] = str(prep.year or "")
+    if prep.journal:
+        fields["journal"] = prep.journal
+    if prep.doi:
+        fields["doi"] = prep.doi
+    fields["x-doi-status"] = prep.doi_status
     fields["x-pdf"] = "true"
     if tags:
         fields["x-tags"] = tags
@@ -836,7 +728,6 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
 
     from tome.slug import slug_from_title
 
-    staging_key = key  # preserve for staging dir references after enrichment
     if _re.fullmatch(r"[a-z]+\d{4}[a-c]?", key) and fields.get("title"):
         slug = slug_from_title(fields["title"])
         if slug:
@@ -854,20 +745,36 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     bib.add_entry(lib, key, "article", fields)
     bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
 
-    # Commit: move files (skip if source == dest, e.g. ingesting from tome/pdf/)
+    # --- Server-specific: copy PDF + extract raw text ---
     dest_pdf = _tome_dir() / "pdf" / f"{key}.pdf"
     dest_pdf.parent.mkdir(parents=True, exist_ok=True)
     if pdf_path.resolve() != dest_pdf.resolve():
         shutil.copy2(pdf_path, dest_pdf)
 
+    # Write raw page text files for project use
+    staging = _staging_dir() / key
+    staging.mkdir(parents=True, exist_ok=True)
+    try:
+        ext_result = extract.extract_pdf_pages(pdf_path, staging / "raw", key, force=True)
+    except Exception as e:
+        return {"error": f"Text extraction failed: {e}"}
+
     raw_dest = _raw_dir() / key
     raw_dest.parent.mkdir(parents=True, exist_ok=True)
-    if (staging / "raw" / staging_key).exists():
+    if (staging / "raw" / key).exists():
         if raw_dest.exists():
             shutil.rmtree(raw_dest)
-        shutil.copytree(staging / "raw" / staging_key, raw_dest)
+        shutil.copytree(staging / "raw" / key, raw_dest)
 
-    # Commit: ChromaDB upsert (embedding handled internally by ChromaDB)
+    # --- Server-specific: chunk + ChromaDB ---
+    all_chunks: list[str] = []
+    page_map: list[int] = []
+    for page_num, page_text in enumerate(prep.page_texts, start=1):
+        page_chunks = chunk.chunk_text(page_text)
+        for c in page_chunks:
+            all_chunks.append(c)
+            page_map.append(page_num)
+
     embedded = False
     chunk_embeddings = None
     chunks_col = None
@@ -899,7 +806,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
         except Exception as exc:
             logger.warning("Failed to retrieve embeddings for %s: %s", key, exc)
 
-    # Commit: write to vault — PDF + .tome archive + catalog.db
+    # --- Shared: write to vault — PDF + .tome archive + catalog.db ---
     from tome.vault import (
         DocumentMeta,
         catalog_upsert,
@@ -909,53 +816,48 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     )
 
     content_hash = checksum.sha256_file(dest_pdf)
-    # Ensure title is never empty — catalog.db requires length(title) > 0
-    title = (fields.get("title") or "").strip() or key
     doc_meta = DocumentMeta(
         content_hash=content_hash,
         key=key,
-        doi=fields.get("doi"),
-        title=title,
-        first_author=fields.get("author", "").split(" and ")[0] if fields.get("author") else "",
-        authors=fields.get("author", "").split(" and ") if fields.get("author") else [],
-        year=int(fields.get("year")) if fields.get("year", "").isdigit() else None,
-        journal=fields.get("journal"),
-        page_count=ext_result.pages,
+        doi=prep.doi,
+        title=prep.title or key,
+        first_author=prep.first_author,
+        authors=prep.authors,
+        year=prep.year,
+        journal=prep.journal,
+        page_count=len(prep.page_texts),
     )
 
-    # Copy PDF to vault (sharded: pdf/<initial>/<key>.pdf)
     v_pdf = vault_pdf_path(key)
     v_pdf.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(dest_pdf, v_pdf)
 
-    # Write .tome archive with pages + chunks + embeddings (self-contained)
     v_tome = vault_tome_path(key)
     v_tome.parent.mkdir(parents=True, exist_ok=True)
     write_archive(
         v_tome,
         doc_meta,
-        page_texts=page_texts,
+        page_texts=prep.page_texts,
         chunk_texts=all_chunks if all_chunks else None,
         chunk_embeddings=chunk_embeddings,
         chunk_pages=page_map if all_chunks else None,
     )
 
-    # Write to catalog.db (content hash, DOI, title for dedup)
     catalog_upsert(doc_meta)
 
-    # Commit: update manifest
+    # --- Server-specific: manifest ---
     data = _load_manifest()
     manifest.set_paper(
         data,
         key,
         {
-            "title": fields.get("title", ""),
-            "authors": fields.get("author", "").split(" and "),
-            "year": int(fields.get("year", 0)) if fields.get("year", "").isdigit() else None,
-            "doi": fields.get("doi"),
-            "doi_status": fields.get("x-doi-status", "missing"),
-            "file_sha256": checksum.sha256_file(dest_pdf),
-            "pages_extracted": ext_result.pages,
+            "title": prep.title,
+            "authors": prep.authors,
+            "year": prep.year,
+            "doi": prep.doi,
+            "doi_status": prep.doi_status,
+            "file_sha256": content_hash,
+            "pages_extracted": len(prep.page_texts),
             "embedded": embedded,
             "doi_history": [],
             "figures": {},
@@ -970,26 +872,25 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     except Exception:
         pass  # best-effort: inbox cleanup; file may be locked/gone
 
-    doi_status = fields.get("x-doi-status", "missing")
     doi_hint = (
         "DOI verified (CrossRef + title match). "
-        if doi_status == "verified"
+        if prep.doi_status == "verified"
         else f"⚠ DOI-title mismatch — verify with doi(key='{key}'). "
-        if doi_status == "mismatch"
+        if prep.doi_status == "mismatch"
         else f"DOI unchecked (S2 only) — verify: doi(key='{key}'). "
-        if doi_status == "unchecked"
+        if prep.doi_status == "unchecked"
         else f"No DOI — add manually: paper(key='{key}', doi='...'). "
     )
     commit_result: dict[str, Any] = {
         "status": "ingested",
         "key": key,
-        "doi": fields.get("doi"),
-        "doi_status": doi_status,
-        "title": fields.get("title", ""),
-        "author": fields.get("author", ""),
-        "year": fields.get("year", ""),
-        "journal": fields.get("journal", ""),
-        "pages": ext_result.pages,
+        "doi": prep.doi,
+        "doi_status": prep.doi_status,
+        "title": prep.title,
+        "author": " and ".join(prep.authors),
+        "year": str(prep.year or ""),
+        "journal": prep.journal or "",
+        "pages": len(prep.page_texts),
         "chunks": len(all_chunks),
         "embedded": embedded,
         "next_steps": (
@@ -998,8 +899,8 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
             f"See guide('paper-workflow') for the full pipeline."
         ),
     }
-    if warnings:
-        commit_result["warnings"] = warnings
+    if prep.warnings:
+        commit_result["warnings"] = prep.warnings
     return commit_result
 
 

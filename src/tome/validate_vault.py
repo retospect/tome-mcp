@@ -34,6 +34,9 @@ class GateResult:
 # Doc types that don't require DOI verification for auto-accept
 _DOI_EXEMPT_TYPES = frozenset({"patent", "datasheet", "book", "thesis", "standard", "report"})
 
+# Gates that produce warnings but do not block auto-accept
+_ADVISORY_GATES = frozenset()
+
 
 @dataclass
 class ValidationReport:
@@ -57,8 +60,10 @@ class ValidationReport:
         Papers (article/review/letter/preprint) require DOI title match.
         Other types (patent/datasheet/book/thesis/standard/report) auto-accept
         when all run gates pass, since DOI verification is not applicable.
+        Advisory gates (e.g. author match) produce warnings but don't block.
         """
-        if not self.all_passed:
+        blocking = [r for r in self.results if r.gate not in _ADVISORY_GATES]
+        if not all(r.passed for r in blocking):
             return False
         if self.doc_type in _DOI_EXEMPT_TYPES:
             return True
@@ -179,35 +184,152 @@ def check_text_quality(page_text: str, min_quality: float = 0.5) -> GateResult:
     )
 
 
+def _name_variants(name: str) -> list[str]:
+    """Generate both name orderings: 'First Last' and 'Last, First'.
+
+    Given ``"Mehta, Girish"`` → ``["Mehta, Girish", "Girish Mehta"]``.
+    Given ``"Girish Mehta"``  → ``["Girish Mehta", "Mehta, Girish", "Mehta Girish"]``.
+    Single-token names return as-is.
+    """
+    name = name.strip()
+    if not name:
+        return [name]
+
+    variants: list[str] = [name]
+
+    if "," in name:
+        # "Last, First" → also try "First Last"
+        parts = [p.strip() for p in name.split(",", 1)]
+        if len(parts) == 2 and parts[0] and parts[1]:
+            variants.append(f"{parts[1]} {parts[0]}")
+    else:
+        # "First ... Last" → also try "Last, First" and "Last First"
+        parts = name.split()
+        if len(parts) >= 2:
+            variants.append(f"{parts[-1]}, {' '.join(parts[:-1])}")
+            variants.append(f"{parts[-1]} {' '.join(parts[:-1])}")
+
+    return variants
+
+
+def _search_one_needle(
+    needle_lower: str,
+    page_texts: list[str],
+    max_pages: int,
+) -> tuple[float, str]:
+    """Slide a fuzzy window for one needle variant. Returns (score, snippet)."""
+    needle_len = len(needle_lower)
+    # Window: pad by 50 % so we don't miss partial overlaps
+    win = max(needle_len + needle_len // 2, 60)
+    step = max(needle_len // 3, 20)
+
+    best_score = 0.0
+    best_snippet = ""
+
+    for page_text in page_texts[:max_pages]:
+        text_lower = page_text.lower()
+        for start in range(0, max(len(text_lower) - win + 1, 1), step):
+            chunk = text_lower[start : start + win]
+            score = fuzz.token_set_ratio(needle_lower, chunk) / 100.0
+            if score > best_score:
+                best_score = score
+                best_snippet = page_text[start : start + win].strip()
+                if score >= 0.95:
+                    return best_score, best_snippet
+
+    return best_score, best_snippet
+
+
+def find_in_pages(
+    needle: str,
+    page_texts: list[str],
+    threshold: float = 0.6,
+    max_pages: int = 2,
+    transpose_names: bool = False,
+) -> tuple[float, str]:
+    """Fuzzy-search *needle* in the first *max_pages* of PDF text.
+
+    Uses a sliding window of roughly ``len(needle)`` characters and
+    :func:`rapidfuzz.fuzz.token_set_ratio` to score each window.
+
+    When *transpose_names* is True, also tries reversed name orderings
+    (e.g. "Last, First" ↔ "First Last") and returns the best score.
+
+    Args:
+        needle: The string to search for (e.g. CrossRef title or author).
+        page_texts: Per-page text strings from the PDF.
+        threshold: Minimum score (0–1) to consider a match.
+        max_pages: How many pages to scan (default 2).
+        transpose_names: Try both "First Last" and "Last, First" orderings.
+
+    Returns:
+        ``(best_score, best_snippet)`` — score is 0–1, snippet is the
+        best-matching window from the text (empty string if below threshold).
+    """
+    if not needle or not page_texts:
+        return 0.0, ""
+
+    variants = _name_variants(needle) if transpose_names else [needle]
+
+    best_score = 0.0
+    best_snippet = ""
+
+    for variant in variants:
+        score, snippet = _search_one_needle(variant.lower(), page_texts, max_pages)
+        if score > best_score:
+            best_score = score
+            best_snippet = snippet
+            if score >= 0.95:
+                break
+
+    return best_score, best_snippet
+
+
 def check_doi_title_match(
     extracted_title: str | None,
     crossref_title: str | None,
     threshold: float = 0.6,
+    page_texts: list[str] | None = None,
 ) -> GateResult:
-    """Gate: Title from PDF matches title from CrossRef (via DOI).
+    """Gate: CrossRef title appears in the PDF text.
 
-    Uses rapidfuzz token_set_ratio for fuzzy matching.
-    This is the highest-value gate — catches wrong-PDF-for-DOI errors.
+    When *page_texts* are provided, fuzzy-searches the raw page text for
+    the CrossRef title (robust even when heuristic title extraction picks
+    up copyright lines).  Falls back to comparing *extracted_title* vs
+    *crossref_title* when page texts are unavailable.
     """
-    if not extracted_title or not crossref_title:
+    if not crossref_title:
         return GateResult(
             gate="doi_title_match",
             passed=False,
-            message="Missing title for comparison",
-            data={
-                "extracted_title": extracted_title,
-                "crossref_title": crossref_title,
-            },
+            message="Missing CrossRef title for comparison",
+            data={"extracted_title": extracted_title, "crossref_title": crossref_title},
         )
 
-    score = fuzz.token_set_ratio(extracted_title.lower(), crossref_title.lower()) / 100.0
+    # Primary path: search raw page text for the CrossRef title
+    if page_texts:
+        score, snippet = find_in_pages(crossref_title, page_texts, threshold=threshold)
+        if score >= threshold:
+            return GateResult(
+                gate="doi_title_match",
+                passed=True,
+                message=f"Title found in text (score {score:.2f})",
+                data={"score": round(score, 3), "snippet": snippet[:120]},
+            )
+        # Fall through — maybe extracted title still matches
+
+    # Fallback: compare extracted title vs CrossRef title directly
+    if extracted_title:
+        score = fuzz.token_set_ratio(extracted_title.lower(), crossref_title.lower()) / 100.0
+    else:
+        score = 0.0
 
     if score < threshold:
         return GateResult(
             gate="doi_title_match",
             passed=False,
             message=f"Title mismatch (score {score:.2f}): "
-            f"PDF='{extracted_title[:80]}' vs CrossRef='{crossref_title[:80]}'",
+            f"PDF='{(extracted_title or '')[:80]}' vs CrossRef='{crossref_title[:80]}'",
             data={
                 "score": round(score, 3),
                 "extracted_title": extracted_title,
@@ -220,6 +342,87 @@ def check_doi_title_match(
         passed=True,
         message=f"Title match score: {score:.2f}",
         data={"score": round(score, 3)},
+    )
+
+
+def _extract_surname(author: str) -> str:
+    """Extract surname from an author string.
+
+    Delegates to :func:`tome.identify.surname_from_author`.
+    """
+    from tome.identify import surname_from_author
+
+    return surname_from_author(author)
+
+
+def check_doi_author_match(
+    crossref_authors: list[str] | None,
+    page_texts: list[str] | None = None,
+    threshold: float = 0.6,
+) -> GateResult:
+    """Gate: At least one CrossRef author name appears in the PDF text.
+
+    Tries full names first (with transposition), then falls back to
+    surname-only matching.  At minimum a surname should appear in the
+    first pages of any real paper.
+    """
+    if not crossref_authors or not page_texts:
+        return GateResult(
+            gate="doi_author_match",
+            passed=True,  # non-blocking when data is missing
+            message="No author/text to check",
+        )
+
+    best_score = 0.0
+    best_name = ""
+    best_snippet = ""
+
+    # Pass 1: try full names with transposition
+    for author in crossref_authors:
+        score, snippet = find_in_pages(
+            author, page_texts, threshold=threshold, transpose_names=True,
+        )
+        if score > best_score:
+            best_score = score
+            best_name = author
+            best_snippet = snippet
+            if score >= 0.95:
+                break
+
+    if best_score >= threshold:
+        return GateResult(
+            gate="doi_author_match",
+            passed=True,
+            message=f"Author '{best_name}' found (score {best_score:.2f})",
+            data={"score": round(best_score, 3), "author": best_name, "snippet": best_snippet[:120]},
+        )
+
+    # Pass 2: try surname only
+    for author in crossref_authors:
+        surname = _extract_surname(author)
+        if len(surname) < 2:
+            continue
+        score, snippet = find_in_pages(surname, page_texts, threshold=threshold)
+        if score > best_score:
+            best_score = score
+            best_name = surname
+            best_snippet = snippet
+            if score >= 0.95:
+                break
+
+    if best_score >= threshold:
+        return GateResult(
+            gate="doi_author_match",
+            passed=True,
+            message=f"Author surname '{best_name}' found (score {best_score:.2f})",
+            data={"score": round(best_score, 3), "author": best_name, "snippet": best_snippet[:120]},
+        )
+
+    return GateResult(
+        gate="doi_author_match",
+        passed=False,
+        message=f"No CrossRef author found in text (best {best_score:.2f} for '{best_name}')",
+        data={"score": round(best_score, 3), "authors_tried": crossref_authors},
     )
 
 
@@ -289,8 +492,10 @@ def validate_for_vault(
     pdf_path: Path,
     extracted_title: str | None = None,
     crossref_title: str | None = None,
+    crossref_authors: list[str] | None = None,
     doi: str | None = None,
     first_page_text: str | None = None,
+    page_texts: list[str] | None = None,
     catalog_db: Path | None = None,
     doc_type: str = "article",
 ) -> ValidationReport:
@@ -300,8 +505,10 @@ def validate_for_vault(
         pdf_path: Path to the PDF file.
         extracted_title: Title extracted from PDF (any method).
         crossref_title: Title from CrossRef API (via DOI).
+        crossref_authors: Author list from CrossRef API.
         doi: DOI string if available.
         first_page_text: Text from first page (for quality check).
+        page_texts: Per-page text strings (first N pages) for fuzzy search.
         catalog_db: Path to catalog.db (None = default location).
         doc_type: Document type — affects which gates run and auto_accept logic.
 
@@ -329,11 +536,17 @@ def validate_for_vault(
     if doi:
         report.results.append(check_doi_duplicate(doi, catalog_db))
 
-    # 6. DOI→title cross-check (the big one)
-    if extracted_title and crossref_title:
-        report.results.append(check_doi_title_match(extracted_title, crossref_title))
+    # 6. DOI→title cross-check (searches page text when available)
+    if crossref_title:
+        report.results.append(
+            check_doi_title_match(extracted_title, crossref_title, page_texts=page_texts)
+        )
 
-    # 7. Fuzzy title dedup
+    # 7. DOI→author cross-check
+    if crossref_authors and page_texts:
+        report.results.append(check_doi_author_match(crossref_authors, page_texts))
+
+    # 8. Fuzzy title dedup
     if extracted_title:
         report.results.append(check_title_fuzzy_dedup(extracted_title, catalog_db))
 
