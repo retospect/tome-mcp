@@ -23,7 +23,7 @@ def fake_project(tmp_path, monkeypatch):
 
     tome_dir = tmp_path / "tome"
     tome_dir.mkdir()
-    dot_tome = tmp_path / ".tome"
+    dot_tome = tmp_path / ".tome-mcp"
     dot_tome.mkdir()
     (dot_tome / "chroma").mkdir()
     (dot_tome / "raw").mkdir()
@@ -135,7 +135,7 @@ class TestSearchPapers:
         assert "hint" in result
 
     def test_exact_grep(self, fake_project):
-        raw_dir = fake_project / ".tome" / "raw" / "xu2022"
+        raw_dir = fake_project / ".tome-mcp" / "raw" / "xu2022"
         raw_dir.mkdir(parents=True)
         (raw_dir / "xu2022.p1.txt").write_text("molecules assemble into frameworks")
 
@@ -158,7 +158,7 @@ class TestSearchPapers:
     def test_exact_no_raw_dir(self, fake_project):
         import shutil
 
-        shutil.rmtree(fake_project / ".tome" / "raw")
+        shutil.rmtree(fake_project / ".tome-mcp" / "raw")
         result = json.loads(server._search_papers("q", "exact", "", "", "", 10, 0, 0))
         assert "error" in result
 
@@ -308,7 +308,7 @@ class TestSearchAll:
         assert dists == sorted(dists)
 
     def test_exact_returns_both_sections(self, fake_project):
-        raw_dir = fake_project / ".tome" / "raw" / "xu2022"
+        raw_dir = fake_project / ".tome-mcp" / "raw" / "xu2022"
         raw_dir.mkdir(parents=True)
         (raw_dir / "xu2022.p1.txt").write_text("nanoparticle synthesis method")
         sections = fake_project / "sections"
@@ -375,7 +375,7 @@ class TestTocLocateIndex:
                 "assembly": {"pages": ["20"]},
             },
         }
-        (proj / ".tome" / "doc_index.json").write_text(json.dumps(data))
+        (proj / ".tome-mcp" / "doc_index.json").write_text(json.dumps(data))
 
     def test_search_mode(self, fake_project):
         self._write_index(fake_project)
@@ -453,7 +453,7 @@ class TestGetPaper:
         assert "page_text" not in result
 
     def test_page_text(self, fake_project):
-        raw_dir = fake_project / ".tome" / "raw" / "xu2022"
+        raw_dir = fake_project / ".tome-mcp" / "raw" / "xu2022"
         raw_dir.mkdir(parents=True)
         (raw_dir / "xu2022.p1.txt").write_text("First page content.")
 
@@ -871,7 +871,7 @@ class TestPaperRouting:
         assert result["title"] == "Test Paper"
 
     def test_key_with_page_routes_to_get(self, fake_project):
-        raw_dir = fake_project / ".tome" / "raw" / "xu2022"
+        raw_dir = fake_project / ".tome-mcp" / "raw" / "xu2022"
         raw_dir.mkdir(parents=True)
         (raw_dir / "xu2022.p1.txt").write_text("Page 1 text.")
         result = self._call(key="xu2022", page=1)

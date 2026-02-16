@@ -20,7 +20,7 @@ from tome.needful import (
 
 @pytest.fixture
 def dot_tome(tmp_path):
-    d = tmp_path / ".tome"
+    d = tmp_path / ".tome-mcp"
     d.mkdir()
     return d
 
@@ -28,7 +28,7 @@ def dot_tome(tmp_path):
 @pytest.fixture
 def project(tmp_path):
     """Create a minimal project with a few .tex files."""
-    dot_tome = tmp_path / ".tome"
+    dot_tome = tmp_path / ".tome-mcp"
     dot_tome.mkdir()
     sections = tmp_path / "sections"
     sections.mkdir()

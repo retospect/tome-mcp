@@ -84,7 +84,7 @@ roots:
 # Glob patterns for files to index into ChromaDB (for semantic search).
 # Supports .tex, .py, .md, .txt, .tikz, .mmd and other text files.
 # The \\input tree from roots is used for document analysis; globs are for search.
-# Directories like .tome/, .git/, __pycache__/, .venv/ are always excluded.
+# Directories like .tome-mcp/, .git/, __pycache__/, .venv/ are always excluded.
 tex_globs:
   - "sections/*.tex"
   - "appendix/*.tex"

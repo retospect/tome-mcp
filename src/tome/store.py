@@ -1,8 +1,8 @@
 """ChromaDB storage management.
 
 Two ChromaDB instances:
-- Vault ChromaDB (~/.tome/chroma/) — paper_chunks from all papers
-- Project ChromaDB (project/.tome/chroma/) — corpus_chunks from .tex/.py files
+- Vault ChromaDB (~/.tome-mcp/chroma/) — paper_chunks from all papers
+- Project ChromaDB (project/.tome-mcp/chroma/) — corpus_chunks from .tex/.py files
 
 Search scopes:
 - scope="vault"  → vault unfiltered (all papers)
@@ -34,7 +34,7 @@ def get_client(chroma_dir: Path) -> chromadb.ClientAPI:
     """Get or create a persistent ChromaDB client.
 
     Args:
-        chroma_dir: Path to .tome/chroma/ directory.
+        chroma_dir: Path to .tome-mcp/chroma/ directory.
 
     Returns:
         ChromaDB persistent client.
@@ -401,8 +401,8 @@ def search_all(
     (ChromaDB default all-MiniLM-L6-v2) and the same distance metric.
 
     Args:
-        vault_client: Vault ChromaDB client (~/.tome/chroma/).
-        project_client: Project ChromaDB client (project/.tome/chroma/).
+        vault_client: Vault ChromaDB client (~/.tome-mcp/chroma/).
+        project_client: Project ChromaDB client (project/.tome-mcp/chroma/).
         query: Natural language search query.
         n: Maximum total results.
         keys: Filter papers to these bib keys (project scope).

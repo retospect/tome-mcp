@@ -16,7 +16,7 @@ def tmp_project(tmp_path: Path) -> Path:
     (tome_dir / "pdf").mkdir()
     (tome_dir / "figures").mkdir()
 
-    dot_tome = tmp_path / ".tome"
+    dot_tome = tmp_path / ".tome-mcp"
     dot_tome.mkdir()
 
     return tmp_path
@@ -76,7 +76,7 @@ def sample_tome_json(tmp_project: Path) -> Path:
         },
         "requests": {},
     }
-    json_path = tmp_project / ".tome" / "tome.json"
+    json_path = tmp_project / ".tome-mcp" / "tome.json"
     json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return json_path
 

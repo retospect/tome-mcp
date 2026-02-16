@@ -46,7 +46,7 @@ class TestFileType:
 
 class TestIsExcluded:
     def test_tome_cache(self):
-        assert _is_excluded(".tome/chroma/data.bin") is True
+        assert _is_excluded(".tome-mcp/chroma/data.bin") is True
 
     def test_git(self):
         assert _is_excluded(".git/objects/abc") is True
@@ -99,8 +99,8 @@ class TestDiscoverFiles:
         (tmp_path / "figures" / "flow.mmd").write_text("graph LR", encoding="utf-8")
 
         # Excluded directories
-        (tmp_path / ".tome").mkdir()
-        (tmp_path / ".tome" / "cache.json").write_text("{}", encoding="utf-8")
+        (tmp_path / ".tome-mcp").mkdir()
+        (tmp_path / ".tome-mcp" / "cache.json").write_text("{}", encoding="utf-8")
         (tmp_path / ".git").mkdir()
         (tmp_path / ".git" / "config").write_text("[core]", encoding="utf-8")
         (tmp_path / "code" / "__pycache__").mkdir()
@@ -127,7 +127,7 @@ class TestDiscoverFiles:
 
     def test_excludes_caches(self, project):
         found = _discover_files(project)
-        assert not any(".tome" in f for f in found)
+        assert not any(".tome-mcp" in f for f in found)
         assert not any(".git" in f for f in found)
         assert not any("__pycache__" in f for f in found)
         assert not any("build" in f for f in found)
@@ -175,7 +175,7 @@ class TestScaffoldTome:
         assert "tome/pdf/" in created
         assert "tome/inbox/" in created
         assert "tome/figures/papers/" in created
-        assert ".tome/" in created
+        assert ".tome-mcp/" in created
         assert "tome/references.bib" in created
         assert "tome/config.yaml" in created
 
@@ -201,7 +201,7 @@ class TestScaffoldTome:
         assert "tome/pdf/" in created
         assert "tome/inbox/" in created
         assert "tome/figures/papers/" in created
-        assert ".tome/" in created
+        assert ".tome-mcp/" in created
         # Verify dirs exist
         assert (tmp_path / "tome" / "pdf").is_dir()
         assert (tmp_path / "tome" / "figures" / "papers").is_dir()

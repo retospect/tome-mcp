@@ -23,7 +23,7 @@ from tome.cite_tree import (
 
 @pytest.fixture
 def dot_tome(tmp_path):
-    d = tmp_path / ".tome"
+    d = tmp_path / ".tome-mcp"
     d.mkdir()
     return d
 

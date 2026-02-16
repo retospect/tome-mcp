@@ -1,6 +1,6 @@
 """File summary storage for quick LLM orientation.
 
-Stores LLM-generated section maps for .tex/.py files in .tome/summaries.json.
+Stores LLM-generated section maps for .tex/.py files in .tome-mcp/summaries.json.
 Each summary contains line-range descriptions so the LLM can quickly locate
 content without re-reading entire files.
 

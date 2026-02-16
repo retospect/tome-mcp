@@ -1,6 +1,6 @@
 """Local Semantic Scholar Academic Graph (S2AG) database.
 
-Shared read-only SQLite cache at ~/.tome/s2ag/s2ag.db.
+Shared read-only SQLite cache at ~/.tome-mcp/s2ag/s2ag.db.
 All Tome projects share the same database — it contains global
 citation graph data, not project-specific state.
 
@@ -39,8 +39,10 @@ from typing import Any
 
 import httpx
 
-# ── Paths ────────────────────────────────────────────────────────────
-S2AG_DIR = Path.home() / ".tome" / "s2ag"
+from tome.paths import home_dir as _home_dir
+
+# ── Paths ────────────────────────────────────────────────────────────────
+S2AG_DIR = _home_dir() / "s2ag"
 DB_PATH = S2AG_DIR / "s2ag.db"
 
 # ── API endpoints ────────────────────────────────────────────────────

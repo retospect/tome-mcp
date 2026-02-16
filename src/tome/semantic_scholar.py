@@ -3,7 +3,7 @@
 Provides paper discovery, metadata fetching, and citation graph traversal.
 
 Lookups (get_paper, get_citation_graph) use the local S2AG database at
-~/.tome/s2ag/s2ag.db when it exists — populated via ``python -m tome.s2ag_cli``.
+~/.tome-mcp/s2ag/s2ag.db when it exists — populated via ``python -m tome.s2ag_cli``.
 If the DB file is absent (not yet downloaded), lookups fall back to the S2 API.
 If the DB file exists but a paper isn't found, no API call is made.
 

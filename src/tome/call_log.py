@@ -16,7 +16,9 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
-_BASE_DIR = Path.home() / ".tome-mcp"
+from tome.paths import home_dir as _home_dir
+
+_BASE_DIR = _home_dir()
 _LOGS_DIR = _BASE_DIR / "logs"
 _REQUESTS_DIR = _BASE_DIR / "llm-requests"
 

@@ -64,6 +64,7 @@ from tome import (
 )
 from tome import toc as toc_mod
 from tome import call_log
+from tome import paths as tome_paths
 from tome.validate_vault import validate_for_vault
 from tome.errors import (
     APIError,
@@ -101,7 +102,7 @@ _file_handler: logging.Handler | None = None
 
 
 def _attach_file_log(dot_tome: Path) -> None:
-    """Attach a rotating file handler to .tome/server.log (idempotent)."""
+    """Attach a rotating file handler to .tome-mcp/server.log (idempotent)."""
     global _file_handler
     if _file_handler is not None:
         return  # already attached
@@ -280,7 +281,7 @@ def _project_root() -> Path:
         "Call set_root(path='/path/to/project') first, "
         "or set the TOME_ROOT environment variable. "
         "The project root is the directory containing tome/config.yaml "
-        "and the .tome/ cache directory (these are created on first run "
+        "and the .tome-mcp/ cache directory (these are created on first run "
         "and may not exist yet for new projects). "
         "After connecting, call guide('getting-started') for orientation."
     )
@@ -292,8 +293,8 @@ def _tome_dir() -> Path:
 
 
 def _dot_tome() -> Path:
-    """The hidden .tome/ cache directory (gitignored)."""
-    d = _project_root() / ".tome"
+    """The hidden .tome-mcp/ cache directory (gitignored)."""
+    d = tome_paths.project_dir(_project_root())
     _attach_file_log(d)
     return d
 
@@ -316,7 +317,7 @@ def _chroma_dir() -> Path:
 
 
 def _vault_chroma() -> Path:
-    """Vault-level ChromaDB (paper chunks). Lives at ~/.tome/chroma/."""
+    """Vault-level ChromaDB (paper chunks). Lives at ~/.tome-mcp/chroma/."""
     from tome.vault import vault_chroma_dir
 
     return vault_chroma_dir()
@@ -392,7 +393,7 @@ def _resolve_keys(
 
 EXCLUDE_DIRS = frozenset(
     {
-        ".tome",
+        tome_paths.DOT_DIR,
         ".git",
         "__pycache__",
         ".venv",
@@ -1543,7 +1544,7 @@ def _notes_file(
     """File meta notes — read, write, or clear.
 
     Meta fields (intent, status, etc.) are stored in-file as comments.
-    Summary fields (summary, short, sections) are stored in .tome/summaries.json.
+    Summary fields (summary, short, sections) are stored in .tome-mcp/summaries.json.
     """
     validate.validate_relative_path(file, field="file")
     file_path = _project_root() / file
@@ -2078,7 +2079,7 @@ def _search_papers_exact(
     if not raw_dir.is_dir():
         return json.dumps(
             {
-                "error": "No raw text directory (.tome/raw/) found. "
+                "error": "No raw text directory (.tome-mcp/raw/) found. "
                 "No papers have been ingested yet, or the cache was deleted. "
                 "Use ingest to add papers, or run reindex(scope='papers') to regenerate from tome/pdf/."
             }
@@ -2957,7 +2958,7 @@ def _discover_stats() -> dict[str, Any]:
 
         if not DB_PATH.exists():
             return {
-                "error": "S2AG database not found at ~/.tome/s2ag/s2ag.db",
+                "error": "S2AG database not found at ~/.tome-mcp/s2ag/s2ag.db",
                 "hint": "Run: python -m tome.s2ag_cli sync-library <bib_file>",
             }
         db = S2AGLocal()
@@ -3450,7 +3451,7 @@ def doi(
 
 
 def _reindex_papers(key: str = "") -> dict[str, Any]:
-    """Re-derive .tome/ cache from tome/ source files for papers."""
+    """Re-derive .tome-mcp/ cache from tome/ source files for papers."""
     lib = _load_bib()
     results: dict[str, Any] = {"rebuilt": [], "errors": []}
 
@@ -4361,7 +4362,7 @@ _SCAFFOLD_DIRS = [
     "tome/inbox",
     "tome/figures/papers",
     "tome/notes",
-    ".tome",
+    tome_paths.DOT_DIR,
 ]
 
 
@@ -4407,7 +4408,7 @@ def set_root(path: str) -> str:
         return json.dumps({"error": f"Directory not found: {path}"})
 
     _runtime_root = p
-    _attach_file_log(p / ".tome")
+    _attach_file_log(tome_paths.project_dir(p))
     logger.info("Project root set to %s", p)
     tome_dir = p / "tome"
 
@@ -4482,7 +4483,7 @@ def set_root(path: str) -> str:
         response["scaffolded"] = scaffolded
         response["scaffold_hint"] = (
             "Created standard Tome directory structure. "
-            "Add .tome/ to .gitignore (it is a rebuildable cache). "
+            "Add .tome-mcp/ to .gitignore (it is a rebuildable cache). "
             "Drop PDFs in tome/inbox/ and run ingest(). "
             "See guide('configuration') for config options. "
             "Consider adding project rules (e.g. .windsurf/rules/) to codify "
@@ -4766,7 +4767,7 @@ def main():
     root = os.environ.get("TOME_ROOT")
     if root:
         try:
-            _attach_file_log(Path(root) / ".tome")
+            _attach_file_log(tome_paths.project_dir(Path(root)))
         except Exception:
             pass  # will attach later via _dot_tome()
 

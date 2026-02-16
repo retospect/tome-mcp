@@ -68,7 +68,7 @@ DOI 10.1234/example confirms 2024."
 ### Good blocker
 tool='reindex', severity='blocker'
 "reindex(key='jones2021') raises KeyError: 'pages'. Traceback ends at \
-store.py line 142. Paper has 8 extracted pages in .tome/raw/jones2021/. \
+store.py line 142. Paper has 8 extracted pages in .tome-mcp/raw/jones2021/. \
 Happens on every retry."
 """
 

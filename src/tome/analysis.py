@@ -4,7 +4,7 @@ Parses LaTeX files to extract structural information:
 - Built-in: labels, refs, cites (with deep/shallow), sections, word count
 - Tracked: project-specific macros from config.yaml
 
-Results are cached in .tome/doc_analysis.json, keyed by file SHA256 + config SHA256.
+Results are cached in .tome-mcp/doc_analysis.json, keyed by file SHA256 + config SHA256.
 Cache miss re-parses (~50ms per file). Cache hit returns instantly.
 """
 
@@ -537,7 +537,7 @@ def analyze_file_cached(
     Args:
         rel_path: Relative path for display.
         abs_path: Absolute path to read from.
-        dot_tome: Path to .tome/ cache directory.
+        dot_tome: Path to .tome-mcp/ cache directory.
         config: Loaded config (its sha256 is part of the cache key).
 
     Returns:

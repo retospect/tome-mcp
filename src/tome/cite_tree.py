@@ -1,6 +1,6 @@
 """Persistent citation tree cache for forward-discovery of new papers.
 
-Caches Semantic Scholar citation graphs in ``.tome/cite_tree.json``.
+Caches Semantic Scholar citation graphs in ``.tome-mcp/cite_tree.json``.
 Enables periodic refresh and discovery of new papers that cite multiple
 library references — a strong relevance signal.
 
@@ -26,7 +26,7 @@ from typing import Any
 from tome.semantic_scholar import S2Paper, get_citation_graph, get_citations_with_abstracts
 
 # ---------------------------------------------------------------------------
-# Persistence (.tome/cite_tree.json)
+# Persistence (.tome-mcp/cite_tree.json)
 # ---------------------------------------------------------------------------
 
 

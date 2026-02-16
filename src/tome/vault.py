@@ -1,12 +1,12 @@
 """Vault — shared cross-project document repository.
 
 Documents (papers, patents, datasheets, books, theses, standards, reports)
-live in ~/.tome/vault/ as parallel pairs:
+live in ~/.tome-mcp/vault/ as parallel pairs:
   key.pdf       (source PDF)
   key.tome      (ZIP archive: meta.json + pages/*.txt + chunks.npz)
 
 catalog.db (SQLite) provides fast structured queries without opening ZIPs.
-Vault ChromaDB (~/.tome/chroma/) holds all document chunks for semantic search.
+Vault ChromaDB (~/.tome-mcp/chroma/) holds all document chunks for semantic search.
 """
 
 from __future__ import annotations
@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from tome.paths import home_dir as _home_dir
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +50,12 @@ SUPPLEMENT_PATTERN_RE = r"_sup\d+$"
 
 
 def vault_root() -> Path:
-    """Return the vault root directory (~/.tome/)."""
-    return Path.home() / ".tome"
+    """Return the vault root directory (~/.tome-mcp/)."""
+    return _home_dir()
 
 
 def vault_dir() -> Path:
-    """Return the vault papers directory (~/.tome/vault/)."""
+    """Return the vault papers directory (~/.tome-mcp/vault/)."""
     return vault_root() / VAULT_DIR_NAME
 
 
@@ -222,7 +224,7 @@ def write_archive(
     """Write a .tome archive (ZIP) containing paper data.
 
     Args:
-        archive_path: Destination path (e.g. ~/.tome/vault/key.tome).
+        archive_path: Destination path (e.g. ~/.tome-mcp/vault/key.tome).
         meta: Paper metadata.
         page_texts: List of page text strings (1-indexed in filenames).
         chunk_texts: Optional chunked text strings.

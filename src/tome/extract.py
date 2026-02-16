@@ -202,7 +202,7 @@ def read_page(raw_dir: Path, key: str, page: int) -> str:
     """Read the extracted text of a specific page.
 
     Args:
-        raw_dir: The .tome/raw/ directory.
+        raw_dir: The .tome-mcp/raw/ directory.
         key: Bib key.
         page: 1-indexed page number.
 
@@ -234,7 +234,7 @@ def read_all_text(raw_dir: Path, key: str) -> str:
     """Read all extracted pages concatenated.
 
     Args:
-        raw_dir: The .tome/raw/ directory.
+        raw_dir: The .tome-mcp/raw/ directory.
         key: Bib key.
 
     Returns:

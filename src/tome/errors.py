@@ -147,7 +147,7 @@ class BibWriteError(TomeError):
         super().__init__(
             f"Bib write aborted for '{path}': {detail}. "
             f"A roundtrip parse-serialize-parse test detected unexpected changes. "
-            f"The file was not modified. A backup exists at .tome/tome.json.bak. "
+            f"The file was not modified. A backup exists at .tome-mcp/tome.json.bak. "
             f"If this recurs, use report_issue to log a bug — see guide('reporting-issues')."
         )
         self.path = path
@@ -301,7 +301,7 @@ class NoTexFiles(ConfigError):
             hint=(
                 "Check that tex_globs in tome/config.yaml match your project structure. "
                 "Common patterns: 'sections/*.tex', 'chapters/*.tex', '**/*.tex'. "
-                "Directories .tome/, .git/, .venv/ are always excluded. "
+                "Directories .tome-mcp/, .git/, .venv/ are always excluded. "
                 "See guide('configuration') for details."
             ),
         )
@@ -313,8 +313,8 @@ class ChromaDBError(TomeError):
     def __init__(self, detail: str):
         super().__init__(
             f"ChromaDB error: {detail}. "
-            f"Paper chunks live in ~/.tome/chroma/ (vault), "
-            f"corpus chunks in .tome/chroma/ (project). "
+            f"Paper chunks live in ~/.tome-mcp/chroma/ (vault), "
+            f"corpus chunks in .tome-mcp/chroma/ (project). "
             f"Try: reindex(scope='all') to rebuild. "
             f"If that fails, delete the relevant chroma/ dir and reindex again. "
             f"If this persists, use report_issue to log it — see guide('reporting-issues')."

@@ -81,7 +81,7 @@ def grep_paper(
 
     Args:
         query: Text to find (will be normalized).
-        raw_dir: Path to .tome/raw/ directory.
+        raw_dir: Path to .tome-mcp/raw/ directory.
         key: Bib key (subdirectory name).
         context_chars: Characters of context around each match.
 
@@ -332,7 +332,7 @@ def grep_paper_paragraphs(
 
     Args:
         query: Text to find (will be normalized).
-        raw_dir: Path to .tome/raw/ directory.
+        raw_dir: Path to .tome-mcp/raw/ directory.
         key: Bib key.
         paragraphs: Number of paragraphs to return centered on match.
         n: Maximum matches to return.
@@ -433,7 +433,7 @@ def grep_all(
 
     Args:
         query: Text to find (will be normalized).
-        raw_dir: Path to .tome/raw/ directory.
+        raw_dir: Path to .tome-mcp/raw/ directory.
         keys: If set, only search these papers. None = all.
         context_chars: Characters of context around each match.
         max_results: Stop after this many matches.

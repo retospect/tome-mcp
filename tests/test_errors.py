@@ -319,7 +319,7 @@ class TestChromaDBError:
         msg = str(e)
         assert "collection not found" in msg
         assert "reindex" in msg
-        assert ".tome/chroma/" in msg
+        assert ".tome-mcp/chroma/" in msg
 
 
 class TestUnpaywallNotConfigured:

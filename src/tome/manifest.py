@@ -1,4 +1,4 @@
-"""Atomic read/write for .tome/tome.json — the derived metadata cache.
+"""Atomic read/write for .tome-mcp/tome.json — the derived metadata cache.
 
 All writes are atomic (write to .tmp, rename) with automatic backup.
 """
@@ -24,12 +24,12 @@ def default_manifest() -> dict[str, Any]:
 
 
 def load_manifest(dot_tome: Path) -> dict[str, Any]:
-    """Load tome.json from the .tome/ directory.
+    """Load tome.json from the .tome-mcp/ directory.
 
     Returns the default empty manifest if the file doesn't exist.
 
     Args:
-        dot_tome: Path to the .tome/ directory.
+        dot_tome: Path to the .tome-mcp/ directory.
 
     Returns:
         The parsed manifest dict.
@@ -51,7 +51,7 @@ def save_manifest(dot_tome: Path, data: dict[str, Any]) -> None:
     """Write tome.json atomically with backup.
 
     Args:
-        dot_tome: Path to the .tome/ directory.
+        dot_tome: Path to the .tome-mcp/ directory.
         data: The manifest dict to write.
     """
     dot_tome.mkdir(parents=True, exist_ok=True)

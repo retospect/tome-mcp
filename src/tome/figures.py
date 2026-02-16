@@ -65,7 +65,7 @@ def request_figure(
         page: Page number where the figure appears.
         reason: Why this figure is needed.
         caption: Manually provided caption (overrides extraction).
-        raw_dir: Path to .tome/raw/ for caption extraction.
+        raw_dir: Path to .tome-mcp/raw/ for caption extraction.
 
     Returns:
         The created figure entry dict.
@@ -198,7 +198,7 @@ def extract_captions_and_context(
     """Extract caption and in-text contexts for a figure from raw text.
 
     Args:
-        raw_dir: Path to .tome/raw/.
+        raw_dir: Path to .tome-mcp/raw/.
         key: Bib key.
         figure_num: The figure number to search for.
 

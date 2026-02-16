@@ -334,7 +334,7 @@ class TestAnalyzeDocument:
 
 class TestAnalyzeFileCached:
     def test_cache_hit(self, tmp_path):
-        dot_tome = tmp_path / ".tome"
+        dot_tome = tmp_path / ".tome-mcp"
         tex_file = tmp_path / "test.tex"
         tex_file.write_text("\\label{sec:a}\n")
         cfg = TomeConfig()
@@ -347,7 +347,7 @@ class TestAnalyzeFileCached:
         assert fa2.labels[0].name == "sec:a"
 
     def test_cache_invalidates_on_file_change(self, tmp_path):
-        dot_tome = tmp_path / ".tome"
+        dot_tome = tmp_path / ".tome-mcp"
         tex_file = tmp_path / "test.tex"
         tex_file.write_text("\\label{sec:a}\n")
         cfg = TomeConfig()
@@ -361,7 +361,7 @@ class TestAnalyzeFileCached:
         assert len(fa2.labels) == 2
 
     def test_cache_invalidates_on_config_change(self, tmp_path):
-        dot_tome = tmp_path / ".tome"
+        dot_tome = tmp_path / ".tome-mcp"
         tex_file = tmp_path / "test.tex"
         tex_file.write_text("\\mtechq{TQ-01}{question}\n")
 

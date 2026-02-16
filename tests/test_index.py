@@ -183,7 +183,7 @@ class TestPersistence:
 
 class TestRebuildIndex:
     def test_full_pipeline(self, tmp_path):
-        dot_tome = tmp_path / ".tome"
+        dot_tome = tmp_path / ".tome-mcp"
         dot_tome.mkdir()
         idx = tmp_path / "main.idx"
         idx.write_text(
@@ -275,14 +275,14 @@ class TestListAllTerms:
 
 class TestIsStale:
     def test_no_idx_file(self, tmp_path):
-        dot_tome = tmp_path / ".tome"
+        dot_tome = tmp_path / ".tome-mcp"
         dot_tome.mkdir()
         idx = tmp_path / "main.idx"
         # No .idx → nothing to rebuild from → not stale
         assert is_stale(idx, dot_tome) is False
 
     def test_idx_exists_no_cache(self, tmp_path):
-        dot_tome = tmp_path / ".tome"
+        dot_tome = tmp_path / ".tome-mcp"
         dot_tome.mkdir()
         idx = tmp_path / "main.idx"
         idx.write_text("\\indexentry{test}{1}\n")
@@ -292,7 +292,7 @@ class TestIsStale:
     def test_cache_newer_than_idx(self, tmp_path):
         import time
 
-        dot_tome = tmp_path / ".tome"
+        dot_tome = tmp_path / ".tome-mcp"
         dot_tome.mkdir()
         idx = tmp_path / "main.idx"
         idx.write_text("\\indexentry{test}{1}\n")
@@ -304,7 +304,7 @@ class TestIsStale:
     def test_idx_newer_than_cache(self, tmp_path):
         import time
 
-        dot_tome = tmp_path / ".tome"
+        dot_tome = tmp_path / ".tome-mcp"
         dot_tome.mkdir()
         idx = tmp_path / "main.idx"
         idx.write_text("\\indexentry{test}{1}\n")

@@ -1,7 +1,7 @@
 """LaTeX index parsing and search.
 
 Parses .idx files produced by ``makeindex`` into a structured JSON index
-stored in ``.tome/doc_index.json``. Provides prefix and fuzzy search over
+stored in ``.tome-mcp/doc_index.json``. Provides prefix and fuzzy search over
 index terms for both human readers and LLM tools.
 
 The .idx file contains lines like::
@@ -175,7 +175,7 @@ def build_index(entries: list[IndexEntry]) -> dict[str, Any]:
     }
 
 
-# ── Persistence (.tome/doc_index.json) ───────────────────────────────────
+# ── Persistence (.tome-mcp/doc_index.json) ───────────────────────────────────
 
 
 def _index_path(dot_tome: Path) -> Path:
@@ -207,7 +207,7 @@ def load_index(dot_tome: Path) -> dict[str, Any]:
 
 
 def save_index(dot_tome: Path, data: dict[str, Any]) -> None:
-    """Save index to .tome/doc_index.json with backup."""
+    """Save index to .tome-mcp/doc_index.json with backup."""
     dot_tome.mkdir(parents=True, exist_ok=True)
     path = _index_path(dot_tome)
     if path.exists():

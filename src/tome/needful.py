@@ -5,7 +5,7 @@ files. Each (task, file) pair has a completion record with timestamp and file
 hash. Scoring ranks items by staleness: never-done > file-changed > time-overdue.
 
 Config lives in tome/config.yaml under the ``needful:`` key.
-State lives in .tome/needful.json (gitignored, rebuildable).
+State lives in .tome-mcp/needful.json (gitignored, rebuildable).
 
 Config schema::
 
@@ -67,7 +67,7 @@ class NeedfulTask:
 
 
 # ---------------------------------------------------------------------------
-# State persistence (.tome/needful.json)
+# State persistence (.tome-mcp/needful.json)
 # ---------------------------------------------------------------------------
 
 
