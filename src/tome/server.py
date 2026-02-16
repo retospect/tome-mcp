@@ -3392,7 +3392,9 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
     except Exception as e:
         results["errors"].append({"phase": "catalog_rebuild", "error": _sanitize_exc(e)})
 
-    # Phase 2: Get ChromaDB client, retrying once after reset if stale/corrupted
+    # Phase 2: Get ChromaDB client — force reset for full rebuild to clear stale connections
+    if not key:
+        _reset_vault_chroma()
     try:
         client, embed_fn, col = _vault_paper_col()
         col.count()
