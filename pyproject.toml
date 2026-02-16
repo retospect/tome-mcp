@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tome-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "MCP server for managing a research paper library"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -110,7 +110,7 @@ ignore = ["E501"]  # line length managed by ruff format
 "tests/test_git_diff.py" = ["W293"]  # intentional trailing whitespace in diff fixtures
 
 [tool.bumpversion]
-current_version = "0.2.0"
+current_version = "0.3.0"
 commit = true
 tag = true
 tag_name = "v{new_version}"
