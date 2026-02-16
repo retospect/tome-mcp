@@ -338,7 +338,9 @@ def write_archive(
         # Chunks group
         if chunk_texts is not None:
             g = f.create_group("chunks")
-            g.create_dataset("texts", data=[_sanitize_str(t) for t in chunk_texts], dtype=_VLEN_STR)
+            g.create_dataset(
+                "texts", data=[_sanitize_str(t) for t in chunk_texts], dtype=_VLEN_STR
+            )
             if chunk_embeddings is not None:
                 g.create_dataset("embeddings", data=chunk_embeddings, dtype=np.float32)
             if chunk_pages is not None:

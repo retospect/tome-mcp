@@ -24,6 +24,7 @@ from mcp.server.fastmcp import FastMCP
 from tome import (
     analysis,
     bib,
+    call_log,
     checksum,
     chunk,
     crossref,
@@ -57,15 +58,13 @@ from tome import (
     needful as needful_mod,
 )
 from tome import notes as notes_mod
+from tome import paths as tome_paths
 from tome import rejected_dois as rejected_dois_mod
 from tome import semantic_scholar as s2
 from tome import (
     slug as slug_mod,
 )
 from tome import toc as toc_mod
-from tome import call_log
-from tome import paths as tome_paths
-from tome.validate_vault import validate_for_vault
 from tome.errors import (
     APIError,
     ChromaDBError,
@@ -78,6 +77,7 @@ from tome.errors import (
     TomeError,
     UnpaywallNotConfigured,
 )
+from tome.validate_vault import validate_for_vault
 
 mcp_server = FastMCP("Tome")
 
@@ -768,8 +768,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
                 warnings.append(f"Possible duplicate: {gate.message}")
             elif gate.gate == "doi_title_match":
                 warnings.append(
-                    f"DOI-title mismatch: {gate.message}. "
-                    f"The DOI may belong to a different paper."
+                    f"DOI-title mismatch: {gate.message}. The DOI may belong to a different paper."
                 )
             elif gate.gate == "text_quality":
                 warnings.append(f"Low text quality: {gate.message}")
@@ -824,7 +823,9 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
 
     # Auto-enrich bare authorYYYY keys with a slug from the resolved title
     import re as _re
+
     from tome.slug import slug_from_title
+
     if _re.fullmatch(r"[a-z]+\d{4}[a-c]?", key) and fields.get("title"):
         slug = slug_from_title(fields["title"])
         if slug:
@@ -832,6 +833,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
 
     # Sanitize key for filesystem safety (strip /\:*?"<>| and null bytes)
     from tome.vault import sanitize_key
+
     key = sanitize_key(key)
 
     lib = _load_bib()
@@ -874,6 +876,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     if embedded and chunks_col is not None and all_chunks:
         try:
             import numpy as np
+
             ids = [f"{key}::chunk_{i}" for i in range(len(all_chunks))]
             result = chunks_col.get(ids=ids, include=["embeddings"])
             embeds = result.get("embeddings") if result else None
@@ -1100,6 +1103,7 @@ def _paper_remove(key: str) -> str:
         pass  # best-effort: vault may not exist yet
 
     from tome.vault import vault_pdf_path, vault_tome_path
+
     v_tome = vault_tome_path(key)
     if v_tome.exists():
         v_tome.unlink()
@@ -1120,7 +1124,6 @@ def _paper_remove(key: str) -> str:
     _save_manifest(data)
 
     return json.dumps({"status": "removed", "key": key})
-
 
 
 def _paper_get(key: str, page: int = 0) -> str:
@@ -3382,9 +3385,7 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
     Falls back to PDF re-extraction only for papers without .tome files.
     """
     from tome.vault import (
-        DocumentMeta,
         catalog_rebuild,
-        catalog_upsert,
         init_catalog,
         read_archive_chunks,
         read_archive_meta,
@@ -3469,7 +3470,9 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
                 pages_arr = chunks_data.get("chunk_pages")
                 page_map = list(pages_arr) if pages_arr is not None else list(range(len(texts)))
                 store.upsert_paper_chunks(col, k, texts, page_map, meta.content_hash)
-                results["rebuilt"].append({"key": k, "chunks": len(texts), "source": "archive_reembed"})
+                results["rebuilt"].append(
+                    {"key": k, "chunks": len(texts), "source": "archive_reembed"}
+                )
                 results["from_archive"] += 1
 
             rebuilt_keys.add(k)
@@ -4391,7 +4394,9 @@ def set_root(path: str, test_vault_root: str = "") -> str:
         return json.dumps({"error": f"Directory not found: {path}"})
 
     # Undocumented: redirect vault I/O to a temp dir for safe smoke testing
-    from tome.vault import clear_vault_root, set_vault_root as _set_vault_root
+    from tome.vault import clear_vault_root
+    from tome.vault import set_vault_root as _set_vault_root
+
     if test_vault_root:
         _set_vault_root(test_vault_root)
         logger.info("Vault root overridden to %s", test_vault_root)
@@ -4405,6 +4410,7 @@ def set_root(path: str, test_vault_root: str = "") -> str:
 
     # Ensure vault dirs + catalog.db exist
     from tome.vault import ensure_vault_dirs
+
     ensure_vault_dirs()
 
     call_log.set_project(str(p))

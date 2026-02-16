@@ -1,7 +1,6 @@
 """Tests for vault — catalog.db, archive read/write, project linkage."""
 
 import json
-import zipfile
 
 import numpy as np
 
@@ -92,6 +91,7 @@ class TestArchive:
 
         assert archive.exists()
         import h5py
+
         assert h5py.is_hdf5(archive)
 
         restored = read_archive_meta(archive)
@@ -153,6 +153,7 @@ class TestArchive:
 
         # Should be valid HDF5 with expected structure
         import h5py
+
         assert h5py.is_hdf5(archive)
         with h5py.File(archive, "r") as f:
             assert f.attrs["format_version"] == 1
