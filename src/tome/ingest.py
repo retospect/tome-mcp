@@ -119,7 +119,8 @@ def resolve_metadata(
     Returns:
         ``(id_result, crossref_result_or_None, s2_result_or_None)``
     """
-    from tome import crossref, semantic_scholar as s2
+    from tome import crossref
+    from tome import semantic_scholar as s2
 
     id_result = identify_pdf(pdf_path)
 

@@ -755,7 +755,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     staging = _staging_dir() / key
     staging.mkdir(parents=True, exist_ok=True)
     try:
-        ext_result = extract.extract_pdf_pages(pdf_path, staging / "raw", key, force=True)
+        extract.extract_pdf_pages(pdf_path, staging / "raw", key, force=True)
     except Exception as e:
         return {"error": f"Text extraction failed: {e}"}
 
