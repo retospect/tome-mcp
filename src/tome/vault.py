@@ -689,6 +689,13 @@ def catalog_rebuild(path: Path | None = None) -> int:
     return count
 
 
+def vault_iter_archives() -> Iterator[Path]:
+    """Yield all .tome archive paths in the vault (sorted)."""
+    tome_dir = vault_root() / VAULT_TOME_DIR
+    if tome_dir.exists():
+        yield from sorted(tome_dir.rglob(f"*{ARCHIVE_EXTENSION}"))
+
+
 # ---------------------------------------------------------------------------
 # Project linkage
 # ---------------------------------------------------------------------------
