@@ -6,7 +6,6 @@ import fitz
 import pytest
 
 from tome.ingest import IngestResult, ingest_pdf
-from tome.purgatory import list_purgatory
 from tome.vault import catalog_get, catalog_get_by_key, init_catalog
 
 
@@ -41,14 +40,11 @@ class TestIngestAutoAccept:
         init_catalog(db)
         v_dir = tmp_path / "vault"
         v_dir.mkdir()
-        purg = tmp_path / "purgatory"
-        purg.mkdir()
 
         # Monkey-patch vault paths for isolation
         import tome.vault as vault_mod
         monkeypatch.setattr(vault_mod, "vault_dir", lambda: v_dir)
         monkeypatch.setattr(vault_mod, "catalog_path", lambda: db)
-        monkeypatch.setattr(vault_mod, "purgatory_dir", lambda: purg)
         monkeypatch.setattr(vault_mod, "ensure_vault_dirs", lambda: None)
 
         result = ingest_pdf(
@@ -74,26 +70,21 @@ class TestIngestAutoAccept:
         assert row is not None
         assert row["status"] == "verified"
 
-        # Nothing in purgatory
-        assert list_purgatory(purg) == []
 
 
-class TestIngestPurgatory:
-    """Papers without CrossRef verification go to purgatory."""
+class TestIngestReject:
+    """Papers without CrossRef verification are rejected."""
 
-    def test_no_crossref_goes_to_purgatory(self, tmp_path, monkeypatch):
+    def test_no_crossref_rejected(self, tmp_path, monkeypatch):
         pdf = _make_pdf(tmp_path / "test.pdf", title="Some Paper About Chemistry")
         db = tmp_path / "catalog.db"
         init_catalog(db)
         v_dir = tmp_path / "vault"
         v_dir.mkdir()
-        purg = tmp_path / "purgatory"
-        purg.mkdir()
 
         import tome.vault as vault_mod
         monkeypatch.setattr(vault_mod, "vault_dir", lambda: v_dir)
         monkeypatch.setattr(vault_mod, "catalog_path", lambda: db)
-        monkeypatch.setattr(vault_mod, "purgatory_dir", lambda: purg)
         monkeypatch.setattr(vault_mod, "ensure_vault_dirs", lambda: None)
 
         result = ingest_pdf(
@@ -102,15 +93,10 @@ class TestIngestPurgatory:
             catalog_db=db,
         )
 
-        assert result.status == "staged"
-        assert result.triage is not None
+        assert result.status == "rejected"
         # No DOI = no auto-accept, even if all gates pass
         assert result.validation is not None
         assert not result.validation.auto_accept
-
-        # In purgatory
-        entries = list_purgatory(purg)
-        assert len(entries) == 1
 
         # Not in vault
         assert not list(v_dir.glob("*.pdf"))
@@ -125,18 +111,15 @@ class TestIngestDuplicate:
         init_catalog(db)
         v_dir = tmp_path / "vault"
         v_dir.mkdir()
-        purg = tmp_path / "purgatory"
-        purg.mkdir()
 
         import tome.vault as vault_mod
         monkeypatch.setattr(vault_mod, "vault_dir", lambda: v_dir)
         monkeypatch.setattr(vault_mod, "catalog_path", lambda: db)
-        monkeypatch.setattr(vault_mod, "purgatory_dir", lambda: purg)
         monkeypatch.setattr(vault_mod, "ensure_vault_dirs", lambda: None)
 
-        # First ingest: goes to purgatory (no crossref)
+        # First ingest: rejected (no crossref)
         r1 = ingest_pdf(pdf_path=pdf, catalog_db=db)
-        assert r1.status == "staged"
+        assert r1.status == "rejected"
 
         # Promote it manually by inserting into catalog
         from tome.vault import PaperMeta, catalog_upsert
@@ -165,13 +148,10 @@ class TestIngestMetadata:
         init_catalog(db)
         v_dir = tmp_path / "vault"
         v_dir.mkdir()
-        purg = tmp_path / "purgatory"
-        purg.mkdir()
 
         import tome.vault as vault_mod
         monkeypatch.setattr(vault_mod, "vault_dir", lambda: v_dir)
         monkeypatch.setattr(vault_mod, "catalog_path", lambda: db)
-        monkeypatch.setattr(vault_mod, "purgatory_dir", lambda: purg)
         monkeypatch.setattr(vault_mod, "ensure_vault_dirs", lambda: None)
 
         result = ingest_pdf(pdf_path=pdf, catalog_db=db)

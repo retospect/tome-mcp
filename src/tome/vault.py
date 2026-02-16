@@ -32,7 +32,6 @@ import numpy as np
 
 VAULT_DIR_NAME = "vault"
 CATALOG_DB_NAME = "catalog.db"
-PURGATORY_DIR_NAME = "purgatory"
 CHROMA_DIR_NAME = "chroma"
 CONFIG_NAME = "config.yaml"
 
@@ -62,11 +61,6 @@ def catalog_path() -> Path:
     return vault_root() / CATALOG_DB_NAME
 
 
-def purgatory_dir() -> Path:
-    """Return path to purgatory staging directory."""
-    return vault_root() / PURGATORY_DIR_NAME
-
-
 def vault_chroma_dir() -> Path:
     """Return path to vault-level ChromaDB."""
     return vault_root() / CHROMA_DIR_NAME
@@ -75,7 +69,6 @@ def vault_chroma_dir() -> Path:
 def ensure_vault_dirs() -> None:
     """Create vault directory structure if it doesn't exist."""
     vault_dir().mkdir(parents=True, exist_ok=True)
-    purgatory_dir().mkdir(parents=True, exist_ok=True)
     vault_chroma_dir().mkdir(parents=True, exist_ok=True)
 
 

@@ -1,7 +1,7 @@
 """Validation gates for vault ingest.
 
 Each gate returns a ValidationResult. The ingest pipeline runs all gates
-and decides whether to auto-accept or send to purgatory based on results.
+and decides whether to auto-accept or reject based on results.
 """
 
 from __future__ import annotations

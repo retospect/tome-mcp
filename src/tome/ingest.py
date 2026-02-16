@@ -1,7 +1,7 @@
 """Vault ingest pipeline — the main entry point for adding papers.
 
-Orchestrates: validate → dedup → extract meta → cross-check → accept/purgatory.
-Auto-accepts when DOI cross-check passes. Otherwise stages in purgatory for review.
+Orchestrates: validate → dedup → extract meta → cross-check → accept/reject.
+Auto-accepts when DOI cross-check passes. Otherwise rejects with issues.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from tome.extract import (
     extract_xmp,
 )
 from tome.identify import IdentifyResult, identify_pdf, surname_from_author
-from tome.purgatory import TriageResult, stage_paper
 from tome.slug import make_key
 from tome.validate_vault import ValidationReport, validate_for_vault
 import tome.vault as _vault
@@ -37,12 +36,11 @@ from tome.vault import (
 class IngestResult:
     """Result of the ingest pipeline."""
 
-    status: str  # "accepted" | "staged" | "duplicate" | "rejected"
+    status: str  # "accepted" | "duplicate" | "rejected"
     key: str = ""
     content_hash: str = ""
     message: str = ""
     validation: ValidationReport | None = None
-    triage: TriageResult | None = None
     meta: PaperMeta | None = None
 
 
@@ -237,24 +235,13 @@ def ingest_pdf(
             meta=meta,
         )
     else:
-        # Stage in purgatory for review
-        triage = TriageResult(
-            key_suggested=suggested_key,
-            confidence=_compute_confidence(validation),
-            recommendation="review",
-            issues=validation.issues,
-            title_sources=title_sources,
-        )
-
-        stage_paper(pdf_path, meta, triage)
-
+        # Reject — paper stays in inbox for manual review
         return IngestResult(
-            status="staged",
+            status="rejected",
             key=suggested_key,
             content_hash=content_hash,
-            message=f"Staged for review: {'; '.join(validation.issues[:3])}",
+            message=f"Needs review: {'; '.join(validation.issues[:3])}",
             validation=validation,
-            triage=triage,
             meta=meta,
         )
 
