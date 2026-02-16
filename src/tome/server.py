@@ -847,10 +847,11 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     bib.add_entry(lib, key, "article", fields)
     bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
 
-    # Commit: move files
+    # Commit: move files (skip if source == dest, e.g. ingesting from tome/pdf/)
     dest_pdf = _tome_dir() / "pdf" / f"{key}.pdf"
     dest_pdf.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(pdf_path, dest_pdf)
+    if pdf_path.resolve() != dest_pdf.resolve():
+        shutil.copy2(pdf_path, dest_pdf)
 
     raw_dest = _raw_dir() / key
     raw_dest.parent.mkdir(parents=True, exist_ok=True)
