@@ -63,6 +63,7 @@ from tome import (
     slug as slug_mod,
 )
 from tome import toc as toc_mod
+from tome.validate_vault import validate_for_vault
 from tome.errors import (
     APIError,
     ChromaDBError,
@@ -540,35 +541,44 @@ def ingest(
     return json.dumps(_commit_ingest(pdf_path, key, tags), indent=2)
 
 
-def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
-    """Phase 1: Extract metadata, query APIs, propose key."""
-    try:
-        result = identify.identify_pdf(pdf_path)
-    except Exception as e:
-        return {"source_file": str(pdf_path.name), "status": "failed", "reason": _sanitize_exc(e)}
+def _resolve_metadata(pdf_path: Path):
+    """Shared metadata resolution for propose and commit phases.
 
-    # Try CrossRef if DOI found
+    Returns (id_result, crossref_result, s2_result).
+    Tries CrossRef first (if DOI found), then S2 as fallback.
+    Pulls DOI from S2 when text extraction misses it.
+    """
+    id_result = identify.identify_pdf(pdf_path)
+
     crossref_result = None
-    if result.doi:
+    if id_result.doi:
         try:
-            crossref_result = crossref.check_doi(result.doi)
+            crossref_result = crossref.check_doi(id_result.doi)
         except Exception:
-            pass  # best-effort: CrossRef down doesn't block proposal
+            pass  # best-effort: CrossRef down doesn't block
 
-    # Try S2 if we have a title but no DOI confirmation
     s2_result = None
-    if crossref_result is None and result.title_from_pdf:
+    if crossref_result is None and id_result.title_from_pdf:
         try:
-            s2_results = s2.search(result.title_from_pdf, limit=3)
+            s2_results = s2.search(id_result.title_from_pdf, limit=3)
             if s2_results:
                 s2_result = s2_results[0]
         except Exception:
-            pass  # best-effort: S2 down doesn't block proposal
+            pass  # best-effort: S2 down doesn't block
 
-    # Pull DOI from S2 if text extraction missed it (common in old PDFs)
-    if not result.doi and s2_result and s2_result.doi:
-        result.doi = s2_result.doi
-        result.doi_source = "s2"
+    if not id_result.doi and s2_result and s2_result.doi:
+        id_result.doi = s2_result.doi
+        id_result.doi_source = "s2"
+
+    return id_result, crossref_result, s2_result
+
+
+def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
+    """Phase 1: Extract metadata, query APIs, propose key."""
+    try:
+        result, crossref_result, s2_result = _resolve_metadata(pdf_path)
+    except Exception as e:
+        return {"source_file": str(pdf_path.name), "status": "failed", "reason": _sanitize_exc(e)}
 
     # Determine suggested key using slug.make_key() when title is available
     suggested_key = None
@@ -682,7 +692,11 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
 
 
 def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
-    """Phase 2: Commit — extract, embed, write bib, move file."""
+    """Phase 2: Commit — validate, extract, embed, write bib, move file.
+
+    Runs the full vault validation pipeline (PDF integrity, text quality,
+    DOI-title fuzzy match, DOI duplicate check) before committing.
+    """
     if not key:
         return {
             "error": "Key is required for commit. Provide key='authorYYYYslug' (e.g. 'xu2022interference')."
@@ -707,36 +721,56 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     # Stage: chunk all pages
     all_chunks = []
     page_map = []
+    first_page_text = ""
     for page_num in range(1, ext_result.pages + 1):
         page_text = extract.read_page(staging / "raw", key, page_num)
+        if page_num == 1:
+            first_page_text = page_text
         page_chunks = chunk.chunk_text(page_text)
         for c in page_chunks:
             all_chunks.append(c)
             page_map.append(page_num)
 
-    # Commit: resolve metadata (same logic as propose phase)
-    id_result = identify.identify_pdf(pdf_path)
+    # Resolve metadata via shared helper (CrossRef/S2)
+    try:
+        id_result, crossref_result, s2_result = _resolve_metadata(pdf_path)
+    except Exception as e:
+        return {"error": f"Metadata extraction failed: {_sanitize_exc(e)}"}
 
-    crossref_result = None
-    if id_result.doi:
-        try:
-            crossref_result = crossref.check_doi(id_result.doi)
-        except Exception:
-            pass
+    # Run vault validation gates (PDF integrity, text quality, DOI-title match)
+    crossref_title = crossref_result.title if crossref_result else None
+    extracted_title = id_result.title_from_pdf
+    validation = validate_for_vault(
+        pdf_path=pdf_path,
+        extracted_title=extracted_title,
+        crossref_title=crossref_title,
+        doi=id_result.doi,
+        first_page_text=first_page_text,
+    )
 
-    s2_result = None
-    if crossref_result is None and id_result.title_from_pdf:
-        try:
-            s2_results = s2.search(id_result.title_from_pdf, limit=3)
-            if s2_results:
-                s2_result = s2_results[0]
-        except Exception:
-            pass
+    # Collect validation warnings/blockers
+    warnings: list[str] = []
+    for gate in validation.results:
+        if not gate.passed:
+            if gate.gate == "doi_title_match":
+                warnings.append(
+                    f"DOI-title mismatch: {gate.message}. "
+                    f"The DOI may belong to a different paper."
+                )
+            elif gate.gate in ("pdf_integrity",):
+                shutil.rmtree(staging, ignore_errors=True)
+                return {"error": f"Validation failed: {gate.message}"}
+            elif gate.gate == "text_quality":
+                warnings.append(f"Low text quality: {gate.message}")
+            elif gate.gate == "text_extractable":
+                warnings.append(f"Poor text extraction: {gate.message}")
 
-    # Pull DOI from S2 if text extraction missed it
-    if not id_result.doi and s2_result and s2_result.doi:
-        id_result.doi = s2_result.doi
-        id_result.doi_source = "s2"
+    # Determine DOI status from validation
+    doi_title_matched = False
+    if crossref_result and id_result.doi:
+        doi_title_matched = all(
+            g.passed for g in validation.results if g.gate == "doi_title_match"
+        )
 
     # Build bib fields from best available source
     fields: dict[str, str] = {}
@@ -765,8 +799,12 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
 
     if id_result.doi:
         fields["doi"] = id_result.doi
-        # If CrossRef confirmed the DOI during metadata resolution, mark verified
-        fields["x-doi-status"] = "verified" if crossref_result else "unchecked"
+        if doi_title_matched:
+            fields["x-doi-status"] = "verified"
+        elif crossref_result:
+            fields["x-doi-status"] = "mismatch"
+        else:
+            fields["x-doi-status"] = "unchecked"
     else:
         fields["x-doi-status"] = "missing"
     fields["x-pdf"] = "true"
