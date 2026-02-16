@@ -63,6 +63,7 @@ from tome import (
     slug as slug_mod,
 )
 from tome import toc as toc_mod
+from tome import call_log
 from tome.validate_vault import validate_for_vault
 from tome.errors import (
     APIError,
@@ -211,11 +212,14 @@ def _logging_tool(**kwargs):
             try:
                 result = fn(*args, **kw)
                 dt = time.monotonic() - t0
+                dt_ms = dt * 1000
                 rsize = len(result) if isinstance(result, str) else 0
                 logger.info("TOOL %s completed in %.2fs (%d bytes)", name, dt, rsize)
+                call_log.log_call(name, kw, dt_ms, status="ok")
                 return _cap_response(result, name) if isinstance(result, str) else result
             except TomeError as exc:
                 dt = time.monotonic() - t0
+                call_log.log_call(name, kw, dt * 1000, status="error", error=str(exc))
                 hint = _guide_hint(name)
                 if hint and hint.rstrip(". ") not in str(exc):
                     exc.args = (str(exc) + hint,)
@@ -229,6 +233,7 @@ def _logging_tool(**kwargs):
                 raise
             except Exception as exc:
                 dt = time.monotonic() - t0
+                call_log.log_call(name, kw, dt * 1000, status="crash", error=str(exc))
                 logger.error(
                     "TOOL %s crashed after %.2fs:\n%s",
                     name,
@@ -4334,6 +4339,10 @@ def report_issue(
     if severity not in ("minor", "major", "blocker"):
         severity = "minor"
 
+    # Write to ~/.tome-mcp/llm-requests/ (persistent, cross-project)
+    issue_path = call_log.write_issue(tool, description, severity)
+
+    # Also append to project-local tome/issues.md for visibility
     num = issues_mod.append_issue(_tome_dir(), tool, description, severity)
     open_count = issues_mod.count_open(_tome_dir())
 
@@ -4342,6 +4351,7 @@ def report_issue(
             "status": "reported",
             "issue_id": f"ISSUE-{num:03d}",
             "file": "tome/issues.md",
+            "log": issue_path,
             "open_issues": open_count,
         },
         indent=2,
@@ -4412,6 +4422,8 @@ def set_root(path: str) -> str:
     # Ensure vault dirs + catalog.db exist
     from tome.vault import ensure_vault_dirs
     ensure_vault_dirs()
+
+    call_log.set_project(str(p))
 
     # Scaffold standard directories + files if missing (idempotent)
     scaffolded = _scaffold_tome(p)
