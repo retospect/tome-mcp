@@ -27,15 +27,6 @@ classifiers = [
     "Topic :: Text Processing :: Markup :: LaTeX",
     "Typing :: Typed",
 ]
-
-[project.urls]
-Homepage = "https://github.com/retostamm/tome-mcp"
-Repository = "https://github.com/retostamm/tome-mcp"
-Issues = "https://github.com/retostamm/tome-mcp/issues"
-
-[project.scripts]
-tome-mcp = "tome.server:main"
-
 dependencies = [
     "chromadb>=0.5.0",
     "PyMuPDF>=1.24.0",
@@ -44,6 +35,14 @@ dependencies = [
     "mcp>=1.0.0",
     "PyYAML>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/retostamm/tome-mcp"
+Repository = "https://github.com/retostamm/tome-mcp"
+Issues = "https://github.com/retostamm/tome-mcp/issues"
+
+[project.scripts]
+tome-mcp = "tome.server:main"
 
 [project.optional-dependencies]
 dev = [
