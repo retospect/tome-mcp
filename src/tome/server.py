@@ -4339,20 +4339,12 @@ def report_issue(
     if severity not in ("minor", "major", "blocker"):
         severity = "minor"
 
-    # Write to ~/.tome-mcp/llm-requests/ (persistent, cross-project)
     issue_path = call_log.write_issue(tool, description, severity)
-
-    # Also append to project-local tome/issues.md for visibility
-    num = issues_mod.append_issue(_tome_dir(), tool, description, severity)
-    open_count = issues_mod.count_open(_tome_dir())
 
     return json.dumps(
         {
             "status": "reported",
-            "issue_id": f"ISSUE-{num:03d}",
-            "file": "tome/issues.md",
             "log": issue_path,
-            "open_issues": open_count,
         },
         indent=2,
     )
