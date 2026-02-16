@@ -425,12 +425,6 @@ def ingest(
 ) -> str:
     """Process PDFs from tome/inbox/. Without confirm: proposes key and metadata
     from PDF analysis and CrossRef/S2 lookup. With confirm=true: commits the paper.
-
-    Args:
-        path: Path to a specific PDF in inbox/. Empty = scan all inbox files.
-        key: Bib key to assign. If empty, auto-generated from first author + year.
-        confirm: Set true to commit a previously proposed ingest.
-        tags: Comma-separated tags to assign.
     """
     inbox = _tome_dir() / "inbox"
     inbox.mkdir(parents=True, exist_ok=True)
@@ -1037,24 +1031,6 @@ def paper(
     action='remove' → remove paper and all data (requires key).
     action='request' → track a wanted paper (requires key).
     action='requests' → list open paper requests.
-
-    Args:
-        key: Bib key (e.g. 'miller1999'). Same as used in \\cite{}.
-        page: Page number (1-indexed) to include raw text for. 0 = no page text.
-        action: Explicit action — 'list', 'rename', 'remove', 'request', 'requests'.
-        title: Paper title (for set/request).
-        author: Authors in BibTeX format ('Surname, Given and Surname2, Given2').
-        year: Publication year.
-        journal: Journal name.
-        doi: DOI string. Setting a DOI changes x-doi-status to 'unchecked'.
-        tags: Comma-separated tags (replaces existing x-tags).
-        entry_type: BibTeX entry type (article, inproceedings, misc, etc.).
-        raw_field: For LaTeX-specific field values — field name to set verbatim.
-        raw_value: The verbatim value for raw_field (no escaping applied).
-        new_key: New bib key for rename action.
-        status: Filter by x-doi-status when action='list'.
-        reason: Why you need this paper (for request action).
-        tentative_title: Best-guess title (for request action).
     """
     # --- Explicit actions ---
     if action == "list":
@@ -1124,33 +1100,7 @@ def notes(
 
     No fields → read.  field="text" → stores text, overwrites existing.
     clear="field" or clear="*" → deletes fields.  Cannot mix clear with writes.
-
-    For files, summary/short/sections are stored in .tome/summaries.json
-    (sidecar) while other fields are stored as in-file meta comments.
-    Staleness is tracked via git history since last_summarized date.
-
-    Named params (summary, claims, etc.) are convenience aliases for the
-    default field sets.  For custom fields defined in config.yaml note_fields,
-    pass a JSON object via the 'fields' param, e.g. fields='{"my_field": "value"}'.
     Named params and 'fields' JSON are merged (named params take priority).
-
-    Args:
-        key: Bib key for paper notes.
-        file: Relative path for file notes/summaries.
-        summary: Paper summary (key mode) or file content summary (file mode).
-        short: One-line short summary (< 80 chars, file mode only).
-        sections: JSON array of {"lines": "1-45", "description": "..."} (file mode only).
-        claims: Key claims (paper mode) or file claims (file mode).
-        relevance: Relevance notes (paper mode only).
-        limitations: Limitations (paper mode only).
-        quality: Quality assessment (paper mode only).
-        tags: Tags (paper mode only).
-        intent: Section intent (file mode only).
-        status: Editorial status (file mode only).
-        depends: Cross-section dependencies (file mode only).
-        open: Open questions (file mode only).
-        clear: Field name to clear, or "*" for all.
-        fields: JSON object for custom fields.
     """
     if not key and not file:
         return json.dumps({"error": "Provide key (paper) or file (tex file).",
@@ -1694,20 +1644,6 @@ def search(
     paragraphs: int = 0,
 ) -> str:
     """Search papers, project files, or notes. Returns ranked results.
-
-    Args:
-        query: Search query (natural language for semantic, text for exact).
-        scope: What to search — 'all', 'papers', 'corpus', or 'notes'.
-        mode: 'semantic' (embedding similarity) or 'exact' (normalized text match).
-        key: Restrict to one paper (bib key). Papers/notes scopes.
-        keys: Comma-separated bib keys. Papers/notes scopes.
-        tags: Comma-separated tags to filter papers by.
-        paths: Glob pattern to restrict corpus search (e.g. 'sections/*.tex').
-        labels_only: Only return corpus chunks with \\label{} targets.
-        cites_only: Only return corpus chunks with \\cite{} references.
-        n: Maximum results.
-        context: Exact mode: chars of context for papers, lines for corpus.
-        paragraphs: Exact+papers: return N cleaned paragraphs around match.
     """
     if scope == "papers":
         return _search_papers(query, mode, key, keys, tags, n, context, paragraphs)
@@ -2040,14 +1976,9 @@ def reindex(
 ) -> str:
     """Re-index papers, corpus files, or both into the search index.
 
-    scope='corpus' (or paths provided) → re-index .tex/.py files.
+    scope='corpus' → re-index .tex/.py files.
     scope='papers' (or key provided) → re-extract PDFs and rebuild embeddings.
-    scope='all' → both corpus and papers.
-
-    Args:
-        scope: What to re-index — 'all', 'papers', or 'corpus'.
-        key: Bib key to rebuild one paper (implies scope='papers').
-        paths: Glob patterns for corpus indexing (default: 'sections/*.tex').
+    scope='all' → both.
     """
     # key implies papers scope; explicit scope overrides
     if key and scope == "all":
@@ -2666,16 +2597,6 @@ def discover(
     scope='refresh' → update cite_tree + S2AG cache (key= for one paper).
     scope='stats' → S2AG local database statistics.
     scope='lookup' + doi/s2_id → look up a single paper.
-
-    Args:
-        query: Natural language search query. Triggers federated search.
-        key: Bib key — for citation graph or targeted refresh.
-        doi: DOI — for lookup or citation graph.
-        s2_id: Semantic Scholar paper ID — for lookup or citation graph.
-        scope: Action scope — 'shared_citers', 'refresh', 'stats', 'lookup'.
-        min_shared: Minimum shared citations for co-citation discovery.
-        min_year: Year filter for refresh/co-citation (0 = no filter).
-        n: Maximum results.
     """
     if key:
         validate.validate_key_if_given(key)
@@ -2793,10 +2714,6 @@ def _doi_fetch(key: str) -> str:
 def cite_graph(key: str = "", s2_id: str = "") -> str:
     """Get citation graph (who cites this paper, what it cites) from Semantic Scholar.
     Flags papers already in the library.
-
-    Args:
-        key: Bib key to look up (uses DOI or S2 ID from manifest).
-        s2_id: Direct Semantic Scholar paper ID. Use if key not available.
     """
     paper_id = s2_id
     if key and not paper_id:
@@ -2869,16 +2786,6 @@ def figure(
     No key → list all figures (filter with status='requested'|'captured').
     key + figure, no path → request a figure screenshot.
     key + figure + path → register a captured screenshot.
-
-    Args:
-        key: Bib key of the paper.
-        figure: Figure label (e.g. 'fig3', 'scheme1').
-        path: Relative path to the figure file in tome/figures/.
-            When provided, registers the figure as captured.
-        page: Page number where the figure appears (0 = unknown).
-        reason: Why this figure is needed (request mode).
-        caption: Manual caption override (request mode).
-        status: Filter for list mode — 'requested' or 'captured'. Empty = all.
     """
     # List mode — no key
     if not key:
@@ -3041,12 +2948,6 @@ def doi(
     action='reject' → record a DOI as invalid (requires doi).
     action='rejected' → list all rejected DOIs.
     action='fetch' → fetch open-access PDF via Unpaywall (requires key).
-
-    Args:
-        key: Bib key for DOI check or OA fetch.
-        doi: DOI string (for reject action).
-        action: Explicit action — 'reject', 'rejected', 'fetch'.
-        reason: Why this DOI is invalid (for reject action).
     """
     # --- Explicit actions ---
     if action == "rejected":
@@ -3166,16 +3067,8 @@ def guide(topic: str = "") -> str:
     """On-demand usage guides. START HERE for new sessions.
 
     Call without args for the topic index. Key topics:
-    'getting-started' (orientation + tool groups),
-    'paper-workflow' (ingest → search → cite pipeline),
-    'search' (semantic search strategies),
-    'needful' (recurring task tracking),
-    'exploration' (citation discovery workflows).
-
-    Works before set_root — no project root needed.
-
-    Args:
-        topic: Topic slug or search term. Empty = list all topics.
+    'getting-started', 'paper-workflow', 'search', 'needful', 'exploration'.
+    Works before set_root.
     """
     try:
         proj = _project_root()
@@ -3239,23 +3132,6 @@ def toc(
 ) -> str:
     """Navigate document structure. Default shows the TOC; use locate to
     find citations, labels, index entries, or the file tree.
-
-    Args:
-        root: Named root from config.yaml (default: 'default'), or a .tex path.
-        locate: What to find — 'heading' (TOC), 'cite' (citation locations),
-            'label' (label targets), 'index' (back-of-book index), 'tree' (file list).
-        depth: Max heading level to show — part, section, subsection,
-            subsubsection (default), paragraph, or all.
-        query: Filter text. For headings: substring match on title.
-            For cite: bib key to find. For label: prefix filter (e.g. 'fig:').
-            For index: search term (empty = list all).
-        file: Only show entries from this source file (substring match).
-        pages: Page range filter, e.g. '31-70'.
-        figures: Include figure and table entries.
-        part: Restrict to a part by number or name substring.
-        page: Result page (1-indexed). Each page shows up to 200 lines.
-        notes: Show file-meta fields under headings. '*' = all fields,
-            or comma-separated field names like 'status,open'. Empty = no notes.
     """
     if locate == "cite":
         return _toc_locate_cite(query, root)
@@ -3448,10 +3324,6 @@ def _toc_locate_tree(root: str = "default") -> str:
 def doc_lint(root: str = "default", file: str = "") -> str:
     """Lint the document for structural issues. Uses built-in patterns
     (labels, refs, cites) plus any custom patterns from tome/config.yaml.
-
-    Args:
-        root: Named root from config.yaml (default: 'default'), or a .tex path.
-        file: Optional — lint only this file instead of the whole document.
     """
     cfg = _load_config()
     root_tex = _resolve_root(root)
@@ -3500,10 +3372,6 @@ def doc_lint(root: str = "default", file: str = "") -> str:
 @mcp_server.tool()
 def review_status(root: str = "default", file: str = "") -> str:
     """Show tracked marker counts from tome/config.yaml patterns.
-
-    Args:
-        root: Named root from config.yaml (default: 'default'), or a .tex path.
-        file: Optional — status for only this file.
     """
     cfg = _load_config()
     proj = _project_root()
@@ -3557,10 +3425,6 @@ def review_status(root: str = "default", file: str = "") -> str:
 @mcp_server.tool()
 def dep_graph(file: str, root: str = "default") -> str:
     """Show dependency graph for a .tex file.
-
-    Args:
-        file: Relative path to the .tex file (e.g. 'sections/connectivity.tex').
-        root: Named root from config.yaml for cross-file resolution.
     """
     cfg = _load_config()
     root_tex = _resolve_root(root)
@@ -3619,10 +3483,6 @@ def dep_graph(file: str, root: str = "default") -> str:
 @mcp_server.tool()
 def validate_deep_cites(file: str = "", key: str = "") -> str:
     """Verify deep citation quotes against source paper text in ChromaDB.
-
-    Args:
-        file: Optional — check only this file's deep cites.
-        key: Optional — check only cites for this bib key.
     """
     cfg = _load_config()
     proj = _project_root()
@@ -3931,18 +3791,6 @@ def explore(
     action='dismiss' + s2_id → dismiss a candidate.
     action='clear' → reset all exploration data.
     action='expandable' → show relevant nodes not yet expanded.
-
-    Args:
-        key: Library bib key (looks up DOI/S2 ID).
-        s2_id: Semantic Scholar paper ID.
-        relevance: Mark relevance — 'relevant', 'irrelevant', 'deferred', 'unknown'.
-        note: Rationale for relevance judgment (persisted).
-        action: Explicit action — 'dismiss', 'clear', 'expandable', 'list'.
-        seed: Filter explorations to descendants of this S2 ID.
-        limit: Max citing papers to fetch (max 100).
-        parent_s2_id: S2 ID of parent paper (for tree tracking).
-        depth: Exploration depth from seed (0 = seed itself).
-        expandable: Only show relevant nodes not yet expanded.
     """
     if key:
         validate.validate_key_if_given(key)
@@ -3986,13 +3834,7 @@ def explore(
 def report_issue(tool: str, description: str, severity: Literal["minor", "major", "blocker"] = "minor") -> str:
     """Report a tool issue for the project maintainer to review.
 
-    Severity levels: minor (cosmetic/UX), major (wrong results), blocker
-    (tool unusable).  See guide('reporting-issues') for best practices.
-
-    Args:
-        tool: Name of the MCP tool (e.g. 'search', 'ingest', 'doc_lint').
-        description: What happened and what you expected.
-        severity: Issue severity level.
+    Severity levels: minor (cosmetic/UX), major (wrong results), blocker (tool unusable).
     """
     if severity not in ("minor", "major", "blocker"):
         severity = "minor"
@@ -4058,9 +3900,6 @@ def _scaffold_tome(project_root: Path) -> list[str]:
 @mcp_server.tool()
 def set_root(path: str) -> str:
     """Switch Tome's project root directory at runtime.
-
-    Args:
-        path: Absolute path to the project root (e.g. '/Users/bots/repos/myProject').
     """
     global _runtime_root
     p = Path(path)
@@ -4208,17 +4047,7 @@ def needful(n: int = 10, file: str = "", task: str = "", note: str = "") -> str:
 
     No task → list mode (ranked by urgency).
     task + file → mark-done mode (record completion).
-
-    Important: commit your changes BEFORE marking done so that the
-    stored git SHA is a clean baseline for future diffs.
-
-    Args:
-        n: Maximum items to return (list mode).
-        file: Substring filter on file path (list mode), or exact
-            relative path (mark-done mode, e.g. 'sections/logic-mechanisms.tex').
-        task: Task name to mark done (must match config.yaml needful section).
-            When set, switches to mark-done mode.
-        note: Optional note about what was done or found (mark-done mode).
+    Important: commit changes BEFORE marking done.
     """
     cfg = tome_config.load_config(_tome_dir())
 
@@ -4319,11 +4148,6 @@ def needful(n: int = 10, file: str = "", task: str = "", note: str = "") -> str:
 @mcp_server.tool()
 def file_diff(file: str, task: str = "", base: str = "") -> str:
     """Show what changed in a file since the last review.
-
-    Args:
-        file: Relative path to the file (e.g. 'sections/logic-mechanisms.tex').
-        task: Task name to auto-lookup base SHA from needful state.
-        base: Explicit base commit SHA (overrides task lookup).
     """
     project = _project_root()
     abs_path = project / file
@@ -4373,17 +4197,6 @@ def purgatory(
     key only → show details of one entry.
     key + action="promote" → promote to vault (with optional metadata overrides).
     key + action="discard" → remove from purgatory.
-
-    Args:
-        key: Purgatory entry key.
-        action: Explicit action — 'promote' or 'discard'.
-        title: Override title (promote mode).
-        author: Override authors in BibTeX format (promote mode).
-        year: Override year (promote mode).
-        journal: Override journal (promote mode).
-        doi: Override DOI (promote mode).
-        entry_type: Override entry type (promote mode).
-        new_key: Override vault key (promote mode).
     """
     from tome.purgatory import (
         discard_paper,
