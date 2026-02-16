@@ -834,6 +834,131 @@ class TestPaperRouting:
         result = self._call(action="requests")
         assert result["count"] == 0
 
+    # --- Write-field routing: any write field triggers set ---
+
+    def test_key_with_author_routes_to_set(self):
+        result = self._call(key="xu2022", author="New, Author")
+        assert result["status"] == "updated"
+
+    def test_key_with_doi_routes_to_set(self):
+        result = self._call(key="xu2022", doi="10.1234/test")
+        assert result["status"] == "updated"
+
+    def test_key_with_tags_routes_to_set(self):
+        result = self._call(key="xu2022", tags="mof,conductivity")
+        assert result["status"] == "updated"
+
+    def test_key_with_raw_field_routes_to_set(self):
+        result = self._call(key="xu2022", raw_field="note",
+                            raw_value="test note")
+        assert result["status"] == "updated"
+
+    def test_key_with_year_routes_to_set(self):
+        result = self._call(key="xu2022", year="2023")
+        assert result["status"] == "updated"
+
+    def test_key_with_journal_routes_to_set(self):
+        result = self._call(key="xu2022", journal="Nature")
+        assert result["status"] == "updated"
+
+    def test_multiple_write_fields(self):
+        result = self._call(key="xu2022", title="New", author="A, B",
+                            year="2023")
+        assert result["status"] == "updated"
+
+    # --- Edge cases ---
+
+    def test_no_key_with_write_fields_routes_to_stats(self, monkeypatch):
+        """Write fields without key can't route to set; falls through to stats."""
+        monkeypatch.setattr(
+            server, "_paper_stats",
+            lambda: json.dumps({"total_papers": 0}),
+        )
+        result = self._call(title="orphan title")
+        assert "total_papers" in result
+
+    def test_action_list_ignores_key(self, monkeypatch):
+        """action='list' takes priority over key-based routing."""
+        captured = {}
+        monkeypatch.setattr(
+            server, "_paper_list",
+            lambda tags, status, page: (
+                captured.update({"tags": tags, "status": status, "page": page}),
+                json.dumps({"total": 0, "papers": []}),
+            )[-1],
+        )
+        result = self._call(action="list", key="xu2022", tags="mof",
+                            status="valid")
+        assert result["total"] == 0
+        assert captured["tags"] == "mof"
+        assert captured["status"] == "valid"
+
+    def test_action_list_page_passthrough(self, monkeypatch):
+        """page param passes through to list (not used as get page)."""
+        captured = {}
+        monkeypatch.setattr(
+            server, "_paper_list",
+            lambda tags, status, page: (
+                captured.update({"page": page}),
+                json.dumps({"total": 0, "papers": []}),
+            )[-1],
+        )
+        self._call(action="list", page=3)
+        assert captured["page"] == 3
+
+    def test_action_list_page_default(self, monkeypatch):
+        """page=0 (default) becomes page=1 for list."""
+        captured = {}
+        monkeypatch.setattr(
+            server, "_paper_list",
+            lambda tags, status, page: (
+                captured.update({"page": page}),
+                json.dumps({"total": 0, "papers": []}),
+            )[-1],
+        )
+        self._call(action="list")
+        assert captured["page"] == 1
+
+    def test_action_rename_success(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_paper_rename",
+            lambda old_key, new_key: json.dumps(
+                {"status": "renamed", "old_key": old_key, "new_key": new_key}
+            ),
+        )
+        result = self._call(key="xu2022", action="rename",
+                            new_key="xu2022mof")
+        assert result["status"] == "renamed"
+        assert result["old_key"] == "xu2022"
+        assert result["new_key"] == "xu2022mof"
+
+    def test_action_rename_no_key_no_new_key(self):
+        result = self._call(action="rename")
+        assert "error" in result
+
+    def test_request_passes_all_fields(self, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(
+            server, "_paper_request",
+            lambda key, doi, reason, tentative_title: (
+                captured.update({"key": key, "doi": doi, "reason": reason,
+                                 "tentative_title": tentative_title}),
+                json.dumps({"status": "requested"}),
+            )[-1],
+        )
+        self._call(action="request", key="s2024", doi="10.1/x",
+                   reason="need it", tentative_title="Smith 2024")
+        assert captured["key"] == "s2024"
+        assert captured["doi"] == "10.1/x"
+        assert captured["reason"] == "need it"
+        assert captured["tentative_title"] == "Smith 2024"
+
+    def test_key_with_page_zero_routes_to_get_no_text(self):
+        """page=0 (default) routes to get without page text."""
+        result = self._call(key="xu2022", page=0)
+        assert result["key"] == "xu2022"
+        assert "page_text" not in result
+
 
 # ===========================================================================
 # doi — unified routing
@@ -894,3 +1019,45 @@ class TestDoiRouting:
     def test_action_fetch_no_key(self):
         result = self._call(action="fetch")
         assert "error" in result
+
+    def test_reject_passes_key_and_reason(self, monkeypatch):
+        captured = {}
+        monkeypatch.setattr(
+            server, "_doi_reject",
+            lambda doi, key, reason: (
+                captured.update({"doi": doi, "key": key, "reason": reason}),
+                json.dumps({"status": "rejected"}),
+            )[-1],
+        )
+        self._call(action="reject", doi="10.1/x", key="xu2022",
+                   reason="hallucinated")
+        assert captured["doi"] == "10.1/x"
+        assert captured["key"] == "xu2022"
+        assert captured["reason"] == "hallucinated"
+
+    def test_key_with_doi_param_routes_to_check(self, monkeypatch):
+        """doi param without action='reject' doesn't interfere with check."""
+        captured = {}
+        monkeypatch.setattr(
+            server, "_doi_check",
+            lambda key: (
+                captured.update({"key": key}),
+                json.dumps({"checked": 1, "results": []}),
+            )[-1],
+        )
+        result = self._call(key="xu2022", doi="10.1/unused")
+        assert captured["key"] == "xu2022"
+        assert result["checked"] == 1
+
+    def test_no_args_batch_check_empty_key(self, monkeypatch):
+        """No args passes empty key to _doi_check for batch mode."""
+        captured = {}
+        monkeypatch.setattr(
+            server, "_doi_check",
+            lambda key: (
+                captured.update({"key": key}),
+                json.dumps({"checked": 0, "results": []}),
+            )[-1],
+        )
+        self._call()
+        assert captured["key"] == ""
