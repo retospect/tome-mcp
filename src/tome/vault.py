@@ -11,9 +11,9 @@ Vault ChromaDB (~/.tome-mcp/chroma/) holds all document chunks for semantic sear
 
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
+import os
 import re
 import sqlite3
 from collections.abc import Iterator
@@ -22,6 +22,11 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+# Disable HDF5 file locking — prevents indefinite hangs when h5py.File()
+# cannot acquire flock (e.g. after server restart during write).  Safe because
+# only one process writes a given .tome archive at a time.
+os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
 
 import h5py
 import numpy as np
@@ -143,24 +148,6 @@ def ensure_vault_dirs() -> None:
     (vault_root() / VAULT_TOME_DIR).mkdir(parents=True, exist_ok=True)
     vault_chroma_dir().mkdir(parents=True, exist_ok=True)
     init_catalog()
-
-
-@contextmanager
-def vault_write_lock() -> Iterator[None]:
-    """Exclusive file lock for vault write operations (ChromaDB, catalog.db).
-
-    Prevents corruption when multiple MCP server instances (one per project)
-    write to shared vault resources simultaneously.  Reads don't need locking.
-    """
-    lock_path = vault_root() / "vault.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = lock_path.open("w")
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        fcntl.flock(fd, fcntl.LOCK_UN)
-        fd.close()
 
 
 # ---------------------------------------------------------------------------
