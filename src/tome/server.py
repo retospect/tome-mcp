@@ -697,10 +697,6 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     Runs the full vault validation pipeline (PDF integrity, text quality,
     DOI-title fuzzy match, DOI duplicate check) before committing.
     """
-    from tome.vault import ensure_vault_dirs
-
-    ensure_vault_dirs()  # init catalog.db + vault dirs if missing
-
     if not key:
         return {
             "error": "Key is required for commit. Provide key='authorYYYYslug' (e.g. 'xu2022interference')."
@@ -4412,6 +4408,10 @@ def set_root(path: str) -> str:
     _attach_file_log(p / ".tome")
     logger.info("Project root set to %s", p)
     tome_dir = p / "tome"
+
+    # Ensure vault dirs + catalog.db exist
+    from tome.vault import ensure_vault_dirs
+    ensure_vault_dirs()
 
     # Scaffold standard directories + files if missing (idempotent)
     scaffolded = _scaffold_tome(p)
