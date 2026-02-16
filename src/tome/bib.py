@@ -37,12 +37,12 @@ def parse_bib(path: Path) -> bibtexparser.Library:
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as e:
-        raise BibParseError(str(path), f"UTF-8 decode error: {e}") from e
+        raise BibParseError(path.name, f"UTF-8 decode error: {e}") from e
 
     try:
         library = bibtexparser.parse_string(text)
     except Exception as e:
-        raise BibParseError(str(path), str(e)) from e
+        raise BibParseError(path.name, str(e)) from e
 
     return library
 
@@ -223,7 +223,7 @@ def write_bib(
     try:
         reparsed = bibtexparser.parse_string(serialized)
     except Exception as e:
-        raise BibWriteError(str(path), f"Roundtrip parse failed: {e}") from e
+        raise BibWriteError(path.name, f"Roundtrip parse failed: {e}") from e
 
     _check_roundtrip(library, reparsed, path)
 
@@ -255,14 +255,14 @@ def _check_roundtrip(
     lost = orig_keys - reparse_keys
     if lost:
         raise BibWriteError(
-            str(path),
+            path.name,
             f"Roundtrip lost {len(lost)} entries: {', '.join(sorted(lost)[:5])}",
         )
 
     gained = reparse_keys - orig_keys
     if gained:
         raise BibWriteError(
-            str(path),
+            path.name,
             f"Roundtrip gained {len(gained)} unexpected entries: "
             f"{', '.join(sorted(gained)[:5])}",
         )
@@ -275,7 +275,7 @@ def _check_roundtrip(
         reparse_count = len(reparse_by_key[key].fields)
         if orig_count != reparse_count:
             raise BibWriteError(
-                str(path),
+                path.name,
                 f"Entry '{key}' had {orig_count} fields before write, "
                 f"{reparse_count} after roundtrip.",
             )

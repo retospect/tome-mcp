@@ -14,7 +14,6 @@ from tome.errors import (
     BibWriteError,
     ChromaDBError,
     ConfigError,
-    ConfigMissing,
     DOIResolutionFailed,
     DuplicateKey,
     FigureNotFound,
@@ -43,7 +42,7 @@ class TestHierarchy:
             PaperNotFound, PageOutOfRange, DuplicateKey, DOIResolutionFailed,
             IngestFailed, BibParseError, BibWriteError, FigureNotFound,
             TextNotExtracted, APIError, UnsafeInput,
-            ConfigError, ConfigMissing, RootNotFound, RootFileNotFound,
+            ConfigError, RootNotFound, RootFileNotFound,
             NoBibFile, NoTexFiles, ChromaDBError, UnpaywallNotConfigured,
         ]
         for cls in classes:
@@ -51,7 +50,7 @@ class TestHierarchy:
 
     def test_config_subtypes(self):
         config_classes = [
-            ConfigMissing, RootNotFound, RootFileNotFound,
+            RootNotFound, RootFileNotFound,
             NoBibFile, NoTexFiles, UnpaywallNotConfigured,
         ]
         for cls in config_classes:
@@ -251,16 +250,6 @@ class TestConfigError:
         assert "something wrong" in msg
 
 
-class TestConfigMissing:
-    def test_message_and_inheritance(self):
-        e = ConfigMissing("/project/tome")
-        assert isinstance(e, ConfigError)
-        msg = str(e)
-        assert "/project/tome" in msg
-        assert "set_root" in msg
-        assert "config.yaml" in msg
-
-
 class TestRootNotFound:
     def test_with_available(self):
         e = RootNotFound("thesis", ["default", "talk"])
@@ -349,7 +338,6 @@ class TestCatchAll:
         APIError("svc", 500),
         UnsafeInput("field", "val", "reason"),
         ConfigError("detail"),
-        ConfigMissing("/tome"),
         RootNotFound("r", []),
         RootFileNotFound("r", "f.tex", "/root"),
         NoBibFile("/bib"),
@@ -362,7 +350,6 @@ class TestCatchAll:
             raise exc
 
     @pytest.mark.parametrize("exc", [
-        ConfigMissing("/tome"),
         RootNotFound("r", []),
         RootFileNotFound("r", "f.tex", "/root"),
         NoBibFile("/bib"),

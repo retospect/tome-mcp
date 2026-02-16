@@ -61,8 +61,8 @@ class DuplicateDOI(TomeError):
         super().__init__(
             f"DOI '{doi}' already exists in the vault{extra}. "
             f"This PDF may be a duplicate. "
-            f"Use catalog_get_by_doi to inspect the existing entry, "
-            f"or choose a different DOI if this is a correction."
+            f"Use paper(key='...') to inspect the existing entry, "
+            f"or ingest with a different key if this is a distinct document."
         )
         self.doi = doi
         self.existing_key = existing_key
@@ -116,8 +116,8 @@ class IngestFailed(TomeError):
         super().__init__(
             f"Could not ingest '{path}': {reason}. "
             f"The file remains in inbox/. "
-            f"Try: ingest path='{path}' key='authorYYYY' to assign a key manually, "
-            f"or use paper(key='authorYYYY', title='...') to create the bib entry first. "
+            f"Try: ingest(path='{path}', key='authorYYYYslug') to assign a key manually, "
+            f"or use paper(key='authorYYYYslug', title='...') to create the bib entry first. "
             f"See guide('paper-workflow') for the full pipeline. "
             f"If the PDF looks valid, use report_issue to log a bug — see guide('reporting-issues')."
         )
@@ -246,22 +246,6 @@ class ConfigError(TomeError):
         super().__init__(msg)
         self.detail = detail
         self.hint = hint
-
-
-class ConfigMissing(ConfigError):
-    """The tome/config.yaml file does not exist yet."""
-
-    def __init__(self, tome_dir: str):
-        super().__init__(
-            f"No config.yaml found in {tome_dir}/",
-            hint=(
-                "Run set_root(path='...') to auto-create a starter config, "
-                "or create tome/config.yaml manually. "
-                "The config file defines document roots, tex_globs for search indexing, "
-                "tracked LaTeX macros, and recurring tasks. "
-                "See guide('configuration') for details."
-            ),
-        )
 
 
 class RootNotFound(ConfigError):

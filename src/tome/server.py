@@ -304,7 +304,7 @@ def _staging_dir() -> Path:
 def _load_bib():
     p = _bib_path()
     if not p.exists():
-        raise NoBibFile(str(p))
+        raise NoBibFile("tome/references.bib")
     return bib.parse_bib(p)
 
 
@@ -605,7 +605,7 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
 def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     """Phase 2: Commit — extract, embed, write bib, move file."""
     if not key:
-        return {"error": "Key is required for commit. Provide key='authorYYYY'."}
+        return {"error": "Key is required for commit. Provide key='authorYYYYslug' (e.g. 'xu2022interference')."}
 
     lib = _load_bib()
     existing_keys = set(bib.list_keys(lib))
@@ -3185,7 +3185,7 @@ def _resolve_root(root: str) -> str:
     full = _project_root() / tex_path
     if not full.exists():
         root_name = root if root in cfg.roots else "default"
-        raise RootFileNotFound(root_name, tex_path, str(_project_root()))
+        raise RootFileNotFound(root_name, tex_path, "<project_root>")
 
     return tex_path
 
