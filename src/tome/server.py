@@ -724,12 +724,14 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     except Exception as e:
         return {"error": f"Text extraction failed: {e}"}
 
-    # Stage: chunk all pages
+    # Stage: chunk all pages (keep page_texts in memory for .tome archive)
     all_chunks = []
     page_map = []
+    page_texts: list[str] = []
     first_page_text = ""
     for page_num in range(1, ext_result.pages + 1):
         page_text = extract.read_page(staging / "raw", key, page_num)
+        page_texts.append(page_text)
         if page_num == 1:
             first_page_text = page_text
         page_chunks = chunk.chunk_text(page_text)
@@ -917,12 +919,6 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     v_pdf = vault_pdf_path(key)
     v_pdf.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(dest_pdf, v_pdf)
-
-    # Read extracted page texts for the .tome archive
-    page_texts: list[str] = []
-    raw_source = raw_dest if raw_dest.exists() else staging / "raw" / staging_key
-    for page_num in range(1, ext_result.pages + 1):
-        page_texts.append(extract.read_page(raw_source.parent, raw_source.name, page_num))
 
     # Write .tome archive with pages + chunks + embeddings (self-contained)
     v_tome = vault_tome_path(key)
