@@ -9,6 +9,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import re
 import logging.handlers
 import os
 import shutil
@@ -163,6 +164,16 @@ _TOOL_GUIDE: dict[str, str] = {
 }
 
 
+def _sanitize_exc(exc: Exception) -> str:
+    """Strip filesystem paths from exception messages to avoid leaking internals."""
+    msg = str(exc)
+    # Strip absolute paths (Unix-style)
+    msg = re.sub(r"/(?:Users|home|tmp|var|opt|etc)/\S+", "<path>", msg)
+    # Strip Windows-style paths
+    msg = re.sub(r"[A-Z]:\\[\w\\]+", "<path>", msg)
+    return msg.strip()
+
+
 def _guide_hint(tool_name: str) -> str:
     """Return a guide hint string for a tool, or empty if no mapping."""
     topic = _TOOL_GUIDE.get(tool_name, "")
@@ -199,13 +210,21 @@ def _logging_tool(**kwargs):
                     name, type(exc).__name__, dt, exc,
                 )
                 raise
-            except Exception:
+            except Exception as exc:
                 dt = time.monotonic() - t0
                 logger.error(
                     "TOOL %s crashed after %.2fs:\n%s",
                     name, dt, traceback.format_exc(),
                 )
-                raise
+                # Wrap raw exceptions so LLM gets actionable message,
+                # not raw traceback with system paths.
+                hint = _guide_hint(name)
+                raise TomeError(
+                    f"Internal error in {name}: {type(exc).__name__}: "
+                    f"{_sanitize_exc(exc)}.{hint} "
+                    f"If this persists, use report_issue to log it — "
+                    f"see guide('reporting-issues')."
+                ) from exc
 
         return decorator(logged)
 
@@ -478,7 +497,7 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
     try:
         result = identify.identify_pdf(pdf_path)
     except Exception as e:
-        return {"source_file": str(pdf_path.name), "status": "failed", "reason": str(e)}
+        return {"source_file": str(pdf_path.name), "status": "failed", "reason": _sanitize_exc(e)}
 
     # Try CrossRef if DOI found
     crossref_result = None
@@ -515,7 +534,10 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
             surname = "unknown"
         lib = _load_bib()
         existing = set(bib.list_keys(lib))
-        suggested_key = bib.generate_key(surname, year, existing)
+        try:
+            suggested_key = bib.generate_key(surname, year, existing)
+        except ValueError:
+            suggested_key = f"{surname.lower()}{year}"  # collision fallback
     elif s2_result:
         api_title = s2_result.title
         api_authors = s2_result.authors
@@ -526,13 +548,19 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
             surname = "unknown"
         lib = _load_bib()
         existing = set(bib.list_keys(lib))
-        suggested_key = bib.generate_key(surname, year, existing)
+        try:
+            suggested_key = bib.generate_key(surname, year, existing)
+        except ValueError:
+            suggested_key = f"{surname.lower()}{year}"  # collision fallback
     elif result.authors_from_pdf:
         surname = identify.surname_from_author(result.authors_from_pdf)
         year = 2024  # fallback
         lib = _load_bib()
         existing = set(bib.list_keys(lib))
-        suggested_key = bib.generate_key(surname, year, existing)
+        try:
+            suggested_key = bib.generate_key(surname, year, existing)
+        except ValueError:
+            suggested_key = f"{surname.lower()}{year}"  # collision fallback
 
     # Check if DOI is known-bad
     doi_warning = None
@@ -1729,7 +1757,7 @@ def _search_papers(
                 client, query, n=n, embed_fn=embed_fn,
             )
     except Exception as e:
-        raise ChromaDBError(str(e))
+        raise ChromaDBError(_sanitize_exc(e))
 
     response: dict[str, Any] = {
         "scope": "papers", "mode": "semantic",
@@ -1832,7 +1860,7 @@ def _search_corpus(
             embed_fn=embed_fn,
         )
     except Exception as e:
-        raise ChromaDBError(str(e))
+        raise ChromaDBError(_sanitize_exc(e))
 
     response: dict[str, Any] = {
         "scope": "corpus", "mode": "semantic",
@@ -1924,7 +1952,7 @@ def _search_notes(
         )
         formatted = store._format_results(results)
     except Exception as e:
-        raise ChromaDBError(str(e))
+        raise ChromaDBError(_sanitize_exc(e))
 
     response: dict[str, Any] = {
         "scope": "notes", "mode": "semantic",
@@ -1994,7 +2022,7 @@ def _search_all(
         all_results.extend(corpus_hits)
 
     except Exception as e:
-        raise ChromaDBError(str(e))
+        raise ChromaDBError(_sanitize_exc(e))
 
     # Sort by distance (lower = better)
     all_results.sort(key=lambda r: r.get("distance", float("inf")))
@@ -2064,7 +2092,7 @@ def _reindex_corpus(paths: str) -> dict[str, Any]:
         embed_fn = store.get_embed_fn()
         indexed = store.get_indexed_files(client, store.CORPUS_CHUNKS, embed_fn)
     except Exception as e:
-        raise ChromaDBError(str(e))
+        raise ChromaDBError(_sanitize_exc(e))
 
     added, changed, removed, unchanged = [], [], [], []
 
@@ -3039,7 +3067,7 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
         client = store.get_client(_vault_chroma())
         embed_fn = store.get_embed_fn()
     except Exception as e:
-        raise ChromaDBError(str(e))
+        raise ChromaDBError(_sanitize_exc(e))
 
     for entry in entries:
         k = entry.key
@@ -3066,7 +3094,7 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
 
             results["rebuilt"].append({"key": k, "pages": ext_result.pages})
         except Exception as e:
-            results["errors"].append({"key": k, "error": str(e)})
+            results["errors"].append({"key": k, "error": _sanitize_exc(e)})
 
     return results
 
@@ -3264,7 +3292,7 @@ def _toc_locate_label(prefix: str = "") -> str:
         embed_fn = store.get_embed_fn()
         labels = store.get_all_labels(client, embed_fn)
     except Exception as e:
-        raise ChromaDBError(str(e))
+        raise ChromaDBError(_sanitize_exc(e))
 
     if prefix:
         labels = [l for l in labels if l["label"].startswith(prefix)]
@@ -3593,7 +3621,7 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
         embed_fn = store.get_embed_fn()
         col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
     except Exception as e:
-        raise ChromaDBError(str(e))
+        raise ChromaDBError(_sanitize_exc(e))
 
     results: list[dict[str, Any]] = []
     for q in quotes_to_check:
@@ -3619,7 +3647,7 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
                 "verdict": "ok" if best_score > 0.5 else "low_match",
             })
         except Exception as e:
-            results.append({**q, "error": str(e)})
+            results.append({**q, "error": _sanitize_exc(e)})
 
     ok_count = sum(1 for r in results if r.get("verdict") == "ok")
     low_count = sum(1 for r in results if r.get("verdict") == "low_match")
@@ -3983,7 +4011,7 @@ def set_root(path: str) -> str:
                 config_info["tex_globs"] = cfg.tex_globs
             except Exception as e:
                 config_status = "error"
-                config_info["error"] = str(e)
+                config_info["error"] = _sanitize_exc(e)
 
     # Discover all indexable project files
     discovered = _discover_files(p)
