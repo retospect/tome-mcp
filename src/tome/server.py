@@ -3354,10 +3354,20 @@ def doi(
 
 
 def _reset_vault_chroma() -> None:
-    """Delete and recreate the vault ChromaDB directory.
+    """Clear all vault ChromaDB collections.
 
-    Handles corrupted/stale state after manual deletion of chroma/.
+    Uses the client API to avoid stale singleton issues (ChromaDB
+    PersistentClient caches by path — rmtree + recreate returns the
+    stale cached instance).  Falls back to rmtree if API fails.
     """
+    try:
+        client = store.get_client(_vault_chroma())
+        for col_name in [c.name for c in client.list_collections()]:
+            client.delete_collection(col_name)
+        return
+    except Exception:
+        pass
+    # Fallback: filesystem nuke (client will be stale until restart)
     chroma = _vault_chroma()
     if chroma.exists():
         shutil.rmtree(chroma, ignore_errors=True)
