@@ -1,11 +1,11 @@
 """Vault — shared cross-project document repository.
 
 Documents (papers, patents, datasheets, books, theses, standards, reports)
-live in ~/.tome-mcp/vault/ as parallel pairs:
-  key.pdf       (source PDF)
-  key.tome      (ZIP archive: meta.json + pages/*.txt + chunks.npz)
+live in ~/.tome-mcp/ as sharded pairs:
+  pdf/<initial>/<key>.pdf   (source PDF)
+  tome/<initial>/<key>.tome (HDF5 archive: meta, pages, chunks, embeddings)
 
-catalog.db (SQLite) provides fast structured queries without opening ZIPs.
+catalog.db (SQLite) provides fast structured queries.
 Vault ChromaDB (~/.tome-mcp/chroma/) holds all document chunks for semantic search.
 """
 
@@ -15,7 +15,6 @@ import fcntl
 import json
 import logging
 import sqlite3
-import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -23,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import h5py
 import numpy as np
 
 from tome.paths import home_dir as _home_dir
@@ -229,8 +229,15 @@ PaperMeta = DocumentMeta
 
 
 # ---------------------------------------------------------------------------
-# Archive read/write (.tome ZIP files)
+# Archive read/write (.tome HDF5 files)
 # ---------------------------------------------------------------------------
+
+# Variable-length UTF-8 string type for HDF5 datasets
+_VLEN_STR = h5py.string_dtype(encoding="utf-8")
+
+# Embedding model used by ChromaDB default
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"
+EMBEDDING_DIM = 384
 
 
 def write_archive(
@@ -243,15 +250,15 @@ def write_archive(
     chunk_char_starts: list[int] | None = None,
     chunk_char_ends: list[int] | None = None,
 ) -> Path:
-    """Write a .tome archive (ZIP) containing paper data.
+    """Write a .tome archive (HDF5) containing paper data.
 
     Args:
-        archive_path: Destination path (e.g. ~/.tome-mcp/vault/key.tome).
+        archive_path: Destination path (e.g. ~/.tome-mcp/tome/t/tinti2017.tome).
         meta: Paper metadata.
-        page_texts: List of page text strings (1-indexed in filenames).
+        page_texts: List of page text strings (index 0 = page 1).
         chunk_texts: Optional chunked text strings.
-        chunk_embeddings: Optional numpy array of chunk embeddings.
-        chunk_pages: Optional page number per chunk.
+        chunk_embeddings: Optional float32 [N, 384] embedding array.
+        chunk_pages: Optional page number per chunk (1-indexed).
         chunk_char_starts: Optional char offset start per chunk.
         chunk_char_ends: Optional char offset end per chunk.
 
@@ -260,78 +267,79 @@ def write_archive(
     """
     archive_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        # meta.json
-        zf.writestr("meta.json", meta.to_json())
+    with h5py.File(archive_path, "w") as f:
+        # Root attrs — quick access without reading datasets
+        f.attrs["format_version"] = ARCHIVE_FORMAT_VERSION
+        f.attrs["key"] = meta.key
+        f.attrs["content_hash"] = meta.content_hash
+        f.attrs["embedding_model"] = EMBEDDING_MODEL
+        f.attrs["embedding_dim"] = EMBEDDING_DIM
+        f.attrs["created_at"] = datetime.now(UTC).isoformat()
 
-        # pages/p01.txt, pages/p02.txt, ...
-        for i, text in enumerate(page_texts, start=1):
-            zf.writestr(f"pages/p{i:02d}.txt", text)
+        # Meta — full DocumentMeta as JSON string (complex nested dicts)
+        f.create_dataset("meta", data=meta.to_json(), dtype=_VLEN_STR)
 
-        # chunks.npz (numpy arrays + text as object array)
+        # Pages — variable-length string array (index 0 = page 1)
+        if page_texts:
+            f.create_dataset("pages", data=page_texts, dtype=_VLEN_STR)
+
+        # Chunks group
         if chunk_texts is not None:
-            import io
-
-            buf = io.BytesIO()
-            arrays: dict[str, Any] = {
-                "chunk_texts": np.array(chunk_texts, dtype=object),
-            }
+            g = f.create_group("chunks")
+            g.create_dataset("texts", data=chunk_texts, dtype=_VLEN_STR)
             if chunk_embeddings is not None:
-                arrays["chunk_embeddings"] = chunk_embeddings
+                g.create_dataset("embeddings", data=chunk_embeddings, dtype=np.float32)
             if chunk_pages is not None:
-                arrays["chunk_pages"] = np.array(chunk_pages, dtype=np.int32)
+                g.create_dataset("pages", data=np.array(chunk_pages, dtype=np.int32))
             if chunk_char_starts is not None:
-                arrays["chunk_char_starts"] = np.array(chunk_char_starts, dtype=np.int32)
+                g.create_dataset("char_starts", data=np.array(chunk_char_starts, dtype=np.int32))
             if chunk_char_ends is not None:
-                arrays["chunk_char_ends"] = np.array(chunk_char_ends, dtype=np.int32)
-
-            np.savez_compressed(buf, **arrays)
-            buf.seek(0)
-            zf.writestr("chunks.npz", buf.read())
+                g.create_dataset("char_ends", data=np.array(chunk_char_ends, dtype=np.int32))
 
     return archive_path
 
 
 def read_archive_meta(archive_path: Path) -> PaperMeta:
-    """Read only meta.json from a .tome archive.
-
-    Fast — reads a single file from the ZIP without decompressing everything.
-    """
-    with zipfile.ZipFile(archive_path, "r") as zf:
-        data = json.loads(zf.read("meta.json"))
+    """Read metadata from a .tome archive. Fast — reads one dataset."""
+    with h5py.File(archive_path, "r") as f:
+        raw = f["meta"][()]
+        data = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
     return PaperMeta.from_json(data)
 
 
 def read_archive_pages(archive_path: Path) -> list[str]:
     """Read all page texts from a .tome archive."""
-    with zipfile.ZipFile(archive_path, "r") as zf:
-        page_files = sorted(
-            n for n in zf.namelist() if n.startswith("pages/") and n.endswith(".txt")
-        )
-        return [zf.read(f).decode("utf-8") for f in page_files]
+    with h5py.File(archive_path, "r") as f:
+        if "pages" not in f:
+            return []
+        pages = f["pages"][:]
+        return [p if isinstance(p, str) else p.decode("utf-8") for p in pages]
 
 
 def read_archive_chunks(archive_path: Path) -> dict[str, Any]:
-    """Read chunks.npz from a .tome archive.
+    """Read chunk data from a .tome archive.
 
     Returns:
-        Dict with keys: chunk_texts, chunk_embeddings, chunk_pages,
-        chunk_char_starts, chunk_char_ends. Missing keys omitted.
+        Dict with keys: chunk_texts (list[str]), chunk_embeddings (ndarray),
+        chunk_pages (ndarray), chunk_char_starts (ndarray), chunk_char_ends (ndarray).
+        Missing keys omitted.
     """
-    with zipfile.ZipFile(archive_path, "r") as zf:
-        if "chunks.npz" not in zf.namelist():
+    with h5py.File(archive_path, "r") as f:
+        if "chunks" not in f:
             return {}
-        import io
-
-        buf = io.BytesIO(zf.read("chunks.npz"))
-        npz = np.load(buf, allow_pickle=True)
+        g = f["chunks"]
         result: dict[str, Any] = {}
-        for k in npz.files:
-            arr = npz[k]
-            if arr.dtype == object:
-                result[k] = arr.tolist()
-            else:
-                result[k] = arr
+        if "texts" in g:
+            raw = g["texts"][:]
+            result["chunk_texts"] = [t if isinstance(t, str) else t.decode("utf-8") for t in raw]
+        if "embeddings" in g:
+            result["chunk_embeddings"] = g["embeddings"][:]
+        if "pages" in g:
+            result["chunk_pages"] = g["pages"][:]
+        if "char_starts" in g:
+            result["chunk_char_starts"] = g["char_starts"][:]
+        if "char_ends" in g:
+            result["chunk_char_ends"] = g["char_ends"][:]
         return result
 
 

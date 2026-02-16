@@ -78,6 +78,33 @@ Or point your MCP client at a local install:
 
 Alternatively, use `set_root(path='...')` at the start of each session.
 
+## Quick start: your first session
+
+Once Tome is installed and your MCP client is configured, open your project
+in the IDE and type these prompts in order:
+
+**1. Orient**
+> This is a LaTeX project using the Tome MCP server for paper management.
+> Call `guide('getting-started')` to see the tool index, then
+> `set_root('/path/to/my/project')` to connect.
+
+**2. Describe your project** (so the LLM builds context)
+> The book/paper is about [your topic]. The main file is `main.tex`.
+> Run `toc()` to see the document structure and `paper()` to see the library.
+
+**3. Ingest your first paper**
+> I dropped a PDF in `tome/inbox/`. Ingest it and verify the DOI.
+
+**4. Search and cite**
+> Find papers in our library about [topic] and show me relevant quotes.
+
+**5. Compile**
+> Compile the document and check for warnings.
+
+That's it. The LLM discovers Tome's tools via `guide()` and learns your
+project structure from the filesystem. From here, explore the built-in
+guides — call `guide()` with no arguments to see all topics.
+
 ### Environment variables (all optional)
 
 | Variable | Default | Purpose |

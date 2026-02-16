@@ -1,88 +1,79 @@
 # .tome Archive Format — v1
 
-Self-contained ZIP archive for a single document. Contains everything
+Self-contained HDF5 file for a single document. Contains everything
 needed to rebuild catalog.db and ChromaDB without the original PDF.
 
 ## Layout
 
 ```
-<key>.tome  (ZIP, DEFLATED)
-├── manifest.json          # version + key + content_hash
-├── meta.json              # full document metadata
-├── pages/
-│   ├── p01.txt            # raw extracted text, 1-indexed
-│   ├── p02.txt
-│   └── ...
-├── chunks.json            # ordered chunks with page + char offsets
-└── embeddings.npy         # float32 [N, 384] numpy array (all-MiniLM-L6-v2)
+<key>.tome  (HDF5)
+├── attrs:                 # root attributes — quick access
+│   ├── format_version     # int: 1
+│   ├── key                # str: "tinti2017intrusion"
+│   ├── content_hash       # str: "f408df064f2bc8c5..."
+│   ├── embedding_model    # str: "all-MiniLM-L6-v2"
+│   ├── embedding_dim      # int: 384
+│   └── created_at         # str: ISO-8601 timestamp
+├── meta                   # dataset: JSON string (full DocumentMeta)
+├── pages                  # dataset: vlen UTF-8 string array [P]
+└── chunks/                # group (optional, present when embedded)
+    ├── texts              # dataset: vlen UTF-8 string array [N]
+    ├── embeddings         # dataset: float32 [N, 384]
+    ├── pages              # dataset: int32 [N] (1-indexed page number)
+    ├── char_starts        # dataset: int32 [N]
+    └── char_ends          # dataset: int32 [N]
 ```
 
-## manifest.json
+## Root Attributes
 
-Minimal top-level metadata for quick reads without parsing full meta.
+Quick-access scalars — readable without loading any datasets.
 
-```json
-{
-  "format_version": 1,
-  "key": "tinti2017intrusion",
-  "content_hash": "f408df064f2bc8c5...",
-  "embedding_model": "all-MiniLM-L6-v2",
-  "embedding_dim": 384,
-  "created_at": "2026-02-16T15:33:00Z"
-}
+```python
+import h5py
+with h5py.File("tinti2017intrusion.tome", "r") as f:
+    f.attrs["format_version"]    # → 1
+    f.attrs["key"]               # → "tinti2017intrusion"
+    f.attrs["content_hash"]      # → "f408df064f2bc8c5..."
 ```
 
-## meta.json
+## meta (dataset)
 
-Full document metadata (same fields as catalog.db `documents` table).
+Full DocumentMeta as a JSON string (same fields as catalog.db `documents` table).
 Used by `catalog_rebuild()` to repopulate catalog.db.
 
 Required fields: `key`, `content_hash`, `title` (non-empty).
 
-## pages/p{NN}.txt
+Stored as JSON because DocumentMeta has complex nested dicts (type_metadata,
+pdf_metadata, xmp_metadata, title_sources) that don't map to HDF5 attrs.
 
-Raw extracted text per page, 1-indexed (`p01.txt` = page 1).
+## pages (dataset)
+
+Variable-length UTF-8 string array. Index 0 = page 1.
 Preserved exactly as extracted by PyMuPDF.
 
-## chunks.json
+Random access: `f["pages"][3]` reads only page 4.
 
-Ordered array of chunk objects. Each chunk maps to one row in
-`embeddings.npy` (same index).
+## chunks/ (group)
 
-```json
-[
-  {
-    "text": "chunk text...",
-    "page": 1,
-    "char_start": 0,
-    "char_end": 487,
-    "token_count": 128
-  },
-  ...
-]
-```
+Present when the document has been chunked and embedded.
 
-- **page**: 1-indexed source page
-- **char_start/char_end**: character offsets within the page text
-- **token_count**: token count from the chunker
+- **texts**: chunk text strings, index-aligned with embeddings
+- **embeddings**: float32 `[N, 384]`, pre-computed all-MiniLM-L6-v2
+- **pages**: 1-indexed source page per chunk
+- **char_starts/char_ends**: character offsets within the page text
 
-## embeddings.npy
-
-NumPy `.npy` format, shape `[N, 384]`, dtype `float32`.
-Row `i` is the embedding for `chunks.json[i]`.
-
-Model: `all-MiniLM-L6-v2` (ChromaDB default).
+Random access: `f["chunks/embeddings"][42]` reads one vector without loading all.
 
 ## Rebuild Contract
 
 From a `.tome` archive alone, you can:
 
-1. **Rebuild catalog.db** — read `meta.json`, call `catalog_upsert()`
-2. **Rebuild ChromaDB** — read `chunks.json` + `embeddings.npy`,
+1. **Rebuild catalog.db** — read `meta` dataset, call `catalog_upsert()`
+2. **Rebuild ChromaDB** — read `chunks/texts` + `chunks/embeddings`,
    call `collection.upsert(ids, documents, embeddings, metadatas)`
    with pre-computed embeddings (no re-embedding needed)
-3. **Serve page text** — read `pages/p{NN}.txt` directly
-4. **Serve chunk context** — read `chunks.json` for paragraph-level citations
+3. **Serve page text** — read `pages[N]` directly (memory-mapped)
+4. **Serve chunk context** — read `chunks/texts` for paragraph-level citations
 
 ## Vault Directory Layout
 

@@ -91,7 +91,8 @@ class TestArchive:
         write_archive(archive, meta, page_texts=["Page 1 text", "Page 2 text"])
 
         assert archive.exists()
-        assert zipfile.is_zipfile(archive)
+        import h5py
+        assert h5py.is_hdf5(archive)
 
         restored = read_archive_meta(archive)
         assert restored.key == "smith2024dna"
@@ -145,14 +146,19 @@ class TestArchive:
         data = read_archive_chunks(archive)
         assert data == {}
 
-    def test_archive_is_compressed(self, tmp_path):
+    def test_archive_format(self, tmp_path):
         meta = PaperMeta(content_hash="x", key="k", title="T", first_author="f")
-        big_text = "word " * 10000  # ~50KB uncompressed
         archive = tmp_path / "test.tome"
-        write_archive(archive, meta, page_texts=[big_text])
+        write_archive(archive, meta, page_texts=["page 1 text"])
 
-        # Archive should be much smaller than raw text
-        assert archive.stat().st_size < len(big_text.encode())
+        # Should be valid HDF5 with expected structure
+        import h5py
+        assert h5py.is_hdf5(archive)
+        with h5py.File(archive, "r") as f:
+            assert f.attrs["format_version"] == 1
+            assert f.attrs["key"] == "k"
+            assert "meta" in f
+            assert "pages" in f
 
     def test_page_ordering(self, tmp_path):
         meta = PaperMeta(content_hash="x", key="k", title="T", first_author="f")

@@ -56,6 +56,7 @@ dependencies = [
     "rapidfuzz>=3.0.0",
     "chonkie[model2vec]>=1.0.0",
     "stop-words>=2024.1.1",
+    "h5py>=3.10.0",
 ]
 
 [project.urls]
