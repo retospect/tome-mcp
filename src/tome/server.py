@@ -876,12 +876,12 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
             import numpy as np
             ids = [f"{key}::chunk_{i}" for i in range(len(all_chunks))]
             result = chunks_col.get(ids=ids, include=["embeddings"])
-            if result and result.get("embeddings"):
-                chunk_embeddings = np.array(result["embeddings"], dtype=np.float32)
-                logger.info("Retrieved %d embeddings for %s", len(result["embeddings"]), key)
+            embeds = result.get("embeddings") if result else None
+            if embeds is not None and len(embeds) > 0:
+                chunk_embeddings = np.array(embeds, dtype=np.float32)
+                logger.info("Retrieved %d embeddings for %s", len(embeds), key)
             else:
-                logger.warning("No embeddings returned for %s (ids=%d, result_keys=%s)",
-                               key, len(ids), list(result.keys()) if result else "None")
+                logger.warning("No embeddings returned for %s (ids=%d)", key, len(ids))
         except Exception as exc:
             logger.warning("Failed to retrieve embeddings for %s: %s", key, exc)
 
