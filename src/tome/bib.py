@@ -62,7 +62,9 @@ def get_entry(library: bibtexparser.Library, key: str) -> Entry:
     """
     entries_dict = {e.key: e for e in library.entries}
     if key not in entries_dict:
-        raise PaperNotFound(key)
+        import difflib
+        near = difflib.get_close_matches(key, entries_dict.keys(), n=5, cutoff=0.5)
+        raise PaperNotFound(key, near=near)
     return entries_dict[key]
 
 
@@ -184,7 +186,9 @@ def rename_key(library: bibtexparser.Library, old_key: str, new_key: str) -> Ent
     """
     existing_keys = {e.key for e in library.entries}
     if old_key not in existing_keys:
-        raise PaperNotFound(old_key)
+        import difflib
+        near = difflib.get_close_matches(old_key, existing_keys, n=5, cutoff=0.5)
+        raise PaperNotFound(old_key, near=near)
     if new_key in existing_keys:
         raise DuplicateKey(new_key)
 

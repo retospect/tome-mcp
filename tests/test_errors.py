@@ -70,13 +70,27 @@ class TestPaperNotFound:
     def test_attributes(self):
         e = PaperNotFound("xu2022")
         assert e.key == "xu2022"
+        assert e.near == []
 
     def test_message_contains_key_and_hint(self):
         e = PaperNotFound("xu2022")
         msg = str(e)
         assert "xu2022" in msg
         assert "paper(action='list')" in msg
-        assert "paper(key=" in msg
+        assert "search(query=" in msg
+
+    def test_near_suggestions(self):
+        e = PaperNotFound("xu2022", near=["xu2022mof", "xu2023"])
+        msg = str(e)
+        assert "Similar keys" in msg
+        assert "xu2022mof" in msg
+        assert "xu2023" in msg
+        assert e.near == ["xu2022mof", "xu2023"]
+
+    def test_near_capped_at_five(self):
+        e = PaperNotFound("k", near=["a", "b", "c", "d", "e", "f"])
+        msg = str(e)
+        assert "'f'" not in msg  # only first 5 shown
 
 
 class TestPageOutOfRange:
@@ -91,6 +105,15 @@ class TestPageOutOfRange:
         assert "12 pages" in msg
         assert "page 15" in msg
         assert "1-12" in msg
+
+    def test_page_zero_hint(self):
+        msg = str(PageOutOfRange("xu2022", 0, 12))
+        assert "1-indexed" in msg
+        assert "page=1" in msg
+
+    def test_negative_page_hint(self):
+        msg = str(PageOutOfRange("xu2022", -1, 12))
+        assert "1-indexed" in msg
 
 
 class TestDuplicateKey:
@@ -109,6 +132,8 @@ class TestDOIResolutionFailed:
         assert e.doi == "10.1/fake"
         assert e.status_code == 404
         assert "hallucinated" in str(e)
+        assert "discover(query=" in str(e)
+        assert "doi(action='reject'" in str(e)
 
     def test_429(self):
         e = DOIResolutionFailed("10.1/x", 429)
@@ -138,6 +163,7 @@ class TestBibParseError:
         assert e.path == "tome/references.bib"
         assert e.detail == "unmatched brace at line 42"
         assert "not modified" in str(e)
+        assert "git diff" in str(e)
 
 
 class TestBibWriteError:
@@ -159,7 +185,19 @@ class TestTextNotExtracted:
     def test_message_suggests_reindex(self):
         e = TextNotExtracted("xu2022")
         assert e.key == "xu2022"
+        assert e.has_pdf is None
         assert "reindex" in str(e)
+
+    def test_has_pdf_true(self):
+        e = TextNotExtracted("xu2022", has_pdf=True)
+        assert "PDF exists" in str(e)
+        assert "reindex" in str(e)
+
+    def test_has_pdf_false(self):
+        e = TextNotExtracted("xu2022", has_pdf=False)
+        assert "No PDF" in str(e)
+        assert "doi(key='xu2022', action='fetch')" in str(e)
+        assert "inbox" in str(e)
 
 
 class TestAPIError:

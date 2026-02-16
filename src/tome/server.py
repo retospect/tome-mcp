@@ -60,6 +60,7 @@ from tome.errors import (
     PaperNotFound,
     RootFileNotFound,
     RootNotFound,
+    TextNotExtracted,
     TomeError,
     UnpaywallNotConfigured,
     UnsafeInput,
@@ -996,7 +997,10 @@ def _paper_get(key: str, page: int = 0) -> str:
 
     # Include page text if requested
     if page > 0:
-        text = extract.read_page(_raw_dir(), key, page)
+        try:
+            text = extract.read_page(_raw_dir(), key, page)
+        except TextNotExtracted:
+            raise TextNotExtracted(key, has_pdf=result.get("has_pdf"))
         result["page"] = page
         result["page_text"] = text
 

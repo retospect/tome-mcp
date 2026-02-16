@@ -12,21 +12,29 @@ class TomeError(Exception):
 class PaperNotFound(TomeError):
     """Paper key not in library."""
 
-    def __init__(self, key: str):
-        super().__init__(
-            f"No paper with key '{key}' in tome/references.bib. "
-            f"Use paper(action='list') to see available keys, or paper(key='...', title='...') to create one."
+    def __init__(self, key: str, near: list[str] | None = None):
+        msg = f"No paper with key '{key}' in tome/references.bib."
+        if near:
+            suggestions = ", ".join(f"'{k}'" for k in near[:5])
+            msg += f" Similar keys: {suggestions}."
+        msg += (
+            " Use paper(action='list') to browse keys,"
+            " search(query='...') to find by topic,"
+            " or paper(key='...', title='...') to create one."
         )
+        super().__init__(msg)
         self.key = key
+        self.near = near or []
 
 
 class PageOutOfRange(TomeError):
     """Requested page number exceeds paper's page count."""
 
     def __init__(self, key: str, page: int, total: int):
-        super().__init__(
-            f"Paper '{key}' has {total} pages. Requested page {page}. " f"Valid range: 1-{total}."
-        )
+        msg = f"Paper '{key}' has {total} pages. Requested page {page}. Valid range: 1-{total}."
+        if page <= 0:
+            msg += " Note: pages are 1-indexed. Use page=1 for the first page."
+        super().__init__(msg)
         self.key = key
         self.page = page
         self.total = total
@@ -51,8 +59,10 @@ class DOIResolutionFailed(TomeError):
         if status_code == 404:
             msg = (
                 f"DOI '{doi}' does not exist (CrossRef 404). "
-                f"This DOI may be hallucinated. "
-                f"Use paper(key='...', doi='...') to fix it, or doi(action='reject', doi='...') to reject it."
+                f"This DOI may be hallucinated (~10%% of AI-sourced DOIs are wrong). "
+                f"Use discover(query='<paper title>') to find the real DOI, "
+                f"paper(key='...', doi='<correct>') to fix it, "
+                f"or doi(action='reject', doi='{doi}') to reject it."
             )
         elif status_code == 429:
             msg = (
@@ -94,6 +104,7 @@ class BibParseError(TomeError):
             f"Failed to parse '{path}': {detail}. "
             f"Check the file for syntax errors (unmatched braces, missing commas). "
             f"The file was not modified. "
+            f"Try: git diff {path} to see recent changes. "
             f"If the file looks correct, use report_issue to log a bug — see guide('reporting-issues')."
         )
         self.path = path
@@ -130,13 +141,27 @@ class FigureNotFound(TomeError):
 class TextNotExtracted(TomeError):
     """Paper exists but text has not been extracted yet."""
 
-    def __init__(self, key: str):
-        super().__init__(
-            f"Text not yet extracted for paper '{key}'. "
-            f"Run reindex(key='{key}') to extract text from the PDF, "
-            f"or check that the PDF exists in tome/pdf/."
-        )
+    def __init__(self, key: str, has_pdf: bool | None = None):
+        if has_pdf is False:
+            msg = (
+                f"No PDF for paper '{key}'. "
+                f"Place the PDF in tome/inbox/ and run ingest, "
+                f"or try doi(key='{key}', action='fetch') for open-access retrieval."
+            )
+        elif has_pdf is True:
+            msg = (
+                f"PDF exists for '{key}' but text not yet extracted. "
+                f"Run reindex(key='{key}') to extract and index it."
+            )
+        else:
+            msg = (
+                f"Text not yet extracted for paper '{key}'. "
+                f"Run reindex(key='{key}') to extract text from the PDF, "
+                f"or check that the PDF exists in tome/pdf/."
+            )
+        super().__init__(msg)
         self.key = key
+        self.has_pdf = has_pdf
 
 
 class APIError(TomeError):
