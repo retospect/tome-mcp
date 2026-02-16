@@ -19,6 +19,8 @@ from tome.store import (
     get_all_labels,
     get_indexed_files,
     search_all,
+    search_corpus,
+    search_papers,
     upsert_corpus_chunks,
     upsert_paper_chunks,
 )
@@ -39,7 +41,14 @@ def dummy_embed_fn():
             return "dummy_embed"
 
         def __call__(self, input):
-            return [[float(i)] * 10 for i in range(len(input))]
+            return [[float(i % 7) * 0.1] * 10 for i in range(len(input))]
+
+        def embed_documents(self, input):
+            return self(input)
+
+        def embed_query(self, input):
+            # input is a list of query strings; return list of embeddings
+            return [[0.5] * 10 for _ in input]
 
     return DummyEmbed()
 
@@ -178,12 +187,15 @@ class TestDeletePaper:
 
 class TestDeleteCorpusFile:
     def test_deletes(self, client, dummy_embed_fn):
-        col = client.get_or_create_collection("del_corpus_test", embedding_function=dummy_embed_fn)
+        col = client.get_or_create_collection(CORPUS_CHUNKS, embedding_function=dummy_embed_fn)
         upsert_corpus_chunks(col, "sections/del.tex", ["c1", "c2"], "sha1")
-        assert col.count() == 2
+        before = col.count()
 
-        col.delete(where={"source_file": "sections/del.tex"})
-        assert col.count() == 0
+        delete_corpus_file(client, "sections/del.tex", embed_fn=dummy_embed_fn)
+        assert col.count() == before - 2
+
+    def test_delete_nonexistent(self, client, dummy_embed_fn):
+        delete_corpus_file(client, "nonexistent.tex", embed_fn=dummy_embed_fn)
 
 
 class TestGetIndexedFiles:
@@ -302,6 +314,149 @@ class TestGetAllLabels:
         fig_labels = [l for l in labels if l["label"].startswith("fig:pfx")]
         assert len(fig_labels) == 1
         assert fig_labels[0]["label"] == "fig:pfx_one"
+
+
+class TestUpsertPaperChunksEdgeCases:
+    def test_empty_chunks_returns_zero(self, chunks_col):
+        count = upsert_paper_chunks(chunks_col, "empty2024", [], [], "sha_e")
+        assert count == 0
+
+    def test_doc_type_in_metadata(self, chunks_col):
+        upsert_paper_chunks(
+            chunks_col, "pat2024", ["chunk"], [1], "sha_p", doc_type="patent",
+        )
+        data = chunks_col.get(ids=["pat2024::chunk_0"], include=["metadatas"])
+        assert data["metadatas"][0]["doc_type"] == "patent"
+
+    def test_no_doc_type_omitted(self, chunks_col):
+        upsert_paper_chunks(chunks_col, "nodt2024", ["chunk"], [1], "sha_n")
+        data = chunks_col.get(ids=["nodt2024::chunk_0"], include=["metadatas"])
+        assert "doc_type" not in data["metadatas"][0]
+
+
+class TestUpsertCorpusChunksEdgeCases:
+    def test_empty_chunks_returns_zero(self, corpus_col):
+        count = upsert_corpus_chunks(corpus_col, "empty.tex", [], "sha_e")
+        assert count == 0
+
+    def test_file_type_in_metadata(self, corpus_col):
+        upsert_corpus_chunks(
+            corpus_col, "code.py", ["def foo(): pass"], "sha_c", file_type="python",
+        )
+        data = corpus_col.get(ids=["code.py::chunk_0"], include=["metadatas"])
+        assert data["metadatas"][0]["file_type"] == "python"
+
+
+class TestSearchPapers:
+    def test_basic_search(self, client, dummy_embed_fn):
+        col = client.get_or_create_collection(PAPER_CHUNKS, embedding_function=dummy_embed_fn)
+        upsert_paper_chunks(col, "xu2022", ["crystal self-assembly"], [1], "sha1")
+        upsert_paper_chunks(col, "chen2023", ["molecular motors"], [1], "sha2")
+
+        results = search_papers(client, "assembly", n=5, embed_fn=dummy_embed_fn)
+        assert len(results) >= 1
+        assert all("bib_key" in r for r in results)
+
+    def test_filter_by_key(self, client, dummy_embed_fn):
+        col = client.get_or_create_collection(PAPER_CHUNKS, embedding_function=dummy_embed_fn)
+        upsert_paper_chunks(col, "xu2022", ["crystal assembly"], [1], "sha1")
+        upsert_paper_chunks(col, "chen2023", ["molecular motors"], [1], "sha2")
+
+        results = search_papers(client, "anything", n=5, key="xu2022", embed_fn=dummy_embed_fn)
+        assert all(r["bib_key"] == "xu2022" for r in results)
+
+    def test_filter_by_keys(self, client, dummy_embed_fn):
+        col = client.get_or_create_collection(PAPER_CHUNKS, embedding_function=dummy_embed_fn)
+        upsert_paper_chunks(col, "a2022", ["text a"], [1], "sha_a")
+        upsert_paper_chunks(col, "b2023", ["text b"], [1], "sha_b")
+        upsert_paper_chunks(col, "c2024", ["text c"], [1], "sha_c")
+
+        results = search_papers(
+            client, "text", n=10, keys=["a2022", "b2023"], embed_fn=dummy_embed_fn,
+        )
+        keys = {r["bib_key"] for r in results}
+        assert "c2024" not in keys
+
+
+class TestSearchCorpus:
+    def test_basic_search(self, client, dummy_embed_fn):
+        col = client.get_or_create_collection(CORPUS_CHUNKS, embedding_function=dummy_embed_fn)
+        upsert_corpus_chunks(col, "intro.tex", ["introduction to crystals"], "sha1")
+
+        results = search_corpus(client, "crystals", n=5, embed_fn=dummy_embed_fn)
+        assert len(results) >= 1
+
+    def test_filter_by_source_file(self, client, dummy_embed_fn):
+        col = client.get_or_create_collection(CORPUS_CHUNKS, embedding_function=dummy_embed_fn)
+        markers = [{"is_comment_heavy": False, "has_label": False, "has_cite": False}]
+        upsert_corpus_chunks(col, "a.tex", ["text a"], "sha_a", chunk_markers=markers)
+        upsert_corpus_chunks(col, "b.tex", ["text b"], "sha_b", chunk_markers=markers)
+
+        results = search_corpus(
+            client, "text", n=10, source_file="a.tex", embed_fn=dummy_embed_fn,
+        )
+        assert all(r.get("source_file") == "a.tex" for r in results)
+
+    def test_labels_only(self, client, dummy_embed_fn):
+        col = client.get_or_create_collection(CORPUS_CHUNKS, embedding_function=dummy_embed_fn)
+        markers_with = [{"has_label": True, "labels": "sec:intro", "is_comment_heavy": False}]
+        markers_without = [{"has_label": False, "is_comment_heavy": False}]
+        upsert_corpus_chunks(col, "a.tex", ["labeled"], "sha_a", chunk_markers=markers_with)
+        upsert_corpus_chunks(col, "b.tex", ["unlabeled"], "sha_b", chunk_markers=markers_without)
+
+        results = search_corpus(
+            client, "text", n=10, labels_only=True, embed_fn=dummy_embed_fn,
+        )
+        assert all(r.get("has_label") is True for r in results)
+
+    def test_cites_only(self, client, dummy_embed_fn):
+        col = client.get_or_create_collection(CORPUS_CHUNKS, embedding_function=dummy_embed_fn)
+        markers_with = [{"has_cite": True, "cites": "xu2022", "is_comment_heavy": False}]
+        markers_without = [{"has_cite": False, "is_comment_heavy": False}]
+        upsert_corpus_chunks(col, "a.tex", ["cited"], "sha_a", chunk_markers=markers_with)
+        upsert_corpus_chunks(col, "b.tex", ["not cited"], "sha_b", chunk_markers=markers_without)
+
+        results = search_corpus(
+            client, "text", n=10, cites_only=True, embed_fn=dummy_embed_fn,
+        )
+        assert all(r.get("has_cite") is True for r in results)
+
+
+class TestSearchAll:
+    def test_merges_paper_and_corpus(self, client, dummy_embed_fn):
+        pcol = client.get_or_create_collection(PAPER_CHUNKS, embedding_function=dummy_embed_fn)
+        upsert_paper_chunks(pcol, "xu2022", ["paper text"], [1], "sha1")
+
+        ccol = client.get_or_create_collection(CORPUS_CHUNKS, embedding_function=dummy_embed_fn)
+        upsert_corpus_chunks(ccol, "intro.tex", ["corpus text"], "sha2")
+
+        results = search_all(client, client, "text", n=10, embed_fn=dummy_embed_fn)
+        assert len(results) >= 2
+        # Paper results have bib_key, corpus results have source_file
+        has_paper = any("bib_key" in r for r in results)
+        has_corpus = any("source_file" in r for r in results)
+        assert has_paper
+        assert has_corpus
+
+    def test_sorted_by_distance(self, client, dummy_embed_fn):
+        pcol = client.get_or_create_collection(PAPER_CHUNKS, embedding_function=dummy_embed_fn)
+        upsert_paper_chunks(pcol, "xu2022", ["text"], [1], "sha1")
+
+        ccol = client.get_or_create_collection(CORPUS_CHUNKS, embedding_function=dummy_embed_fn)
+        upsert_corpus_chunks(ccol, "a.tex", ["text"], "sha2")
+
+        results = search_all(client, client, "text", n=10, embed_fn=dummy_embed_fn)
+        distances = [r["distance"] for r in results if r["distance"] is not None]
+        assert distances == sorted(distances)
+
+
+class TestDropPaperPages:
+    def test_drops_existing(self, client, dummy_embed_fn):
+        client.get_or_create_collection("paper_pages", embedding_function=dummy_embed_fn)
+        assert drop_paper_pages(client) is True
+
+    def test_returns_false_if_missing(self, client):
+        assert drop_paper_pages(client) is False
 
 
 class TestFormatResults:
