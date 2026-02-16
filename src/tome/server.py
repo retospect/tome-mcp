@@ -758,14 +758,19 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     warnings: list[str] = []
     for gate in validation.results:
         if not gate.passed:
-            if gate.gate == "doi_title_match":
+            if gate.gate in ("pdf_integrity", "dedup"):
+                shutil.rmtree(staging, ignore_errors=True)
+                return {"error": f"Validation failed: {gate.message}"}
+            elif gate.gate == "doi_duplicate":
+                shutil.rmtree(staging, ignore_errors=True)
+                return {"error": f"Duplicate DOI: {gate.message}"}
+            elif gate.gate == "title_dedup":
+                warnings.append(f"Possible duplicate: {gate.message}")
+            elif gate.gate == "doi_title_match":
                 warnings.append(
                     f"DOI-title mismatch: {gate.message}. "
                     f"The DOI may belong to a different paper."
                 )
-            elif gate.gate in ("pdf_integrity",):
-                shutil.rmtree(staging, ignore_errors=True)
-                return {"error": f"Validation failed: {gate.message}"}
             elif gate.gate == "text_quality":
                 warnings.append(f"Low text quality: {gate.message}")
             elif gate.gate == "text_extractable":
