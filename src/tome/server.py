@@ -833,13 +833,15 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
 
     doi_status = fields.get("x-doi-status", "missing")
     doi_hint = (
-        "DOI verified via CrossRef. "
+        "DOI verified (CrossRef + title match). "
         if doi_status == "verified"
-        else f"Verify: doi(key='{key}'). "
+        else f"⚠ DOI-title mismatch — verify with doi(key='{key}'). "
+        if doi_status == "mismatch"
+        else f"DOI unchecked (S2 only) — verify: doi(key='{key}'). "
         if doi_status == "unchecked"
-        else "No DOI found — add manually with paper(key='{key}', doi='...'). "
+        else f"No DOI — add manually: paper(key='{key}', doi='...'). "
     )
-    return {
+    commit_result: dict[str, Any] = {
         "status": "ingested",
         "key": key,
         "doi": fields.get("doi"),
@@ -857,6 +859,9 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
             f"See guide('paper-workflow') for the full pipeline."
         ),
     }
+    if warnings:
+        commit_result["warnings"] = warnings
+    return commit_result
 
 
 def _paper_set(
