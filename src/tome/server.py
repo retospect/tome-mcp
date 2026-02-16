@@ -764,21 +764,25 @@ def _paper_set(
 
 
 def _paper_remove(key: str) -> str:
-    """Remove a paper from the library. Deletes all associated data.
+    """Remove a paper from the library and vault. Deletes all associated data."""
+    from tome.vault import (
+        ARCHIVE_EXTENSION,
+        catalog_delete,
+        catalog_get_by_key,
+        vault_chroma_dir,
+        vault_dir,
+    )
 
-    Args:
-        key: Bib key of the paper to remove.
-    """
     lib = _load_bib()
     bib.remove_entry(lib, key)
     bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
 
-    # Remove PDF
+    # Remove project-local PDF
     pdf = _tome_dir() / "pdf" / f"{key}.pdf"
     if pdf.exists():
         pdf.unlink()
 
-    # Remove derived data
+    # Remove derived data (project-level)
     raw = _raw_dir() / key
     if raw.exists():
         shutil.rmtree(raw)
@@ -786,9 +790,26 @@ def _paper_remove(key: str) -> str:
     if cache.exists():
         cache.unlink()
 
-    # Remove from ChromaDB
+    # Remove from vault: archive, PDF, catalog.db
+    content_hash = None
     try:
-        client = store.get_client(_chroma_dir())
+        doc = catalog_get_by_key(key)
+        if doc:
+            content_hash = doc["content_hash"]
+            catalog_delete(content_hash)
+    except Exception:
+        pass
+
+    vault_archive = vault_dir() / (key + ARCHIVE_EXTENSION)
+    if vault_archive.exists():
+        vault_archive.unlink()
+    vault_pdf = vault_dir() / f"{key}.pdf"
+    if vault_pdf.exists():
+        vault_pdf.unlink()
+
+    # Remove from vault ChromaDB (paper_chunks)
+    try:
+        client = store.get_client(vault_chroma_dir())
         store.delete_paper(client, key, embed_fn=store.get_embed_fn())
     except Exception:
         pass
@@ -858,9 +879,40 @@ def _paper_rename(old_key: str, new_key: str) -> str:
         except OSError as e:
             errors.append(f"raw rename: {e}")
 
-    # 5. Update ChromaDB — delete old, rebuild new
+    # 5. Update vault: rename archive + PDF, update catalog.db key
+    from tome.vault import (
+        ARCHIVE_EXTENSION,
+        catalog_get_by_key,
+        vault_chroma_dir,
+        vault_dir,
+    )
     try:
-        client = store.get_client(_chroma_dir())
+        doc = catalog_get_by_key(old_key)
+        if doc:
+            from tome.vault import _db, _SCHEMA, catalog_path
+            with _db(catalog_path()) as conn:
+                conn.executescript(_SCHEMA)
+                conn.execute(
+                    "UPDATE documents SET key = ?, vault_path = ? WHERE content_hash = ?",
+                    (new_key, new_key + ARCHIVE_EXTENSION, doc["content_hash"]),
+                )
+            renamed.append("catalog.db")
+    except Exception as e:
+        errors.append(f"catalog.db: {e}")
+
+    v_dir = vault_dir()
+    for suffix in [ARCHIVE_EXTENSION, ".pdf"]:
+        old_vault = v_dir / (old_key + suffix)
+        if old_vault.exists():
+            try:
+                old_vault.rename(v_dir / (new_key + suffix))
+                renamed.append(f"vault/{new_key}{suffix}")
+            except OSError as e:
+                errors.append(f"vault rename {suffix}: {e}")
+
+    # 6. Update vault ChromaDB — delete old, rebuild new
+    try:
+        client = store.get_client(vault_chroma_dir())
         embed_fn = store.get_embed_fn()
         store.delete_paper(client, old_key, embed_fn=embed_fn)
         # Also delete old note entry
@@ -904,7 +956,7 @@ def _paper_rename(old_key: str, new_key: str) -> str:
     except Exception as e:
         errors.append(f"chromadb: {e}")
 
-    # 6. Update manifest (paper data + requests)
+    # 7. Update manifest (paper data + requests)
     data = _load_manifest()
     paper_data = manifest.remove_paper(data, old_key)
     if paper_data is not None:
