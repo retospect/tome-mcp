@@ -14,6 +14,7 @@ from __future__ import annotations
 import fcntl
 import json
 import logging
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -60,24 +61,52 @@ def vault_dir() -> Path:
     return vault_root() / "vault"
 
 
+# Characters unsafe in filenames on any major filesystem (POSIX + Windows + HFS+)
+_UNSAFE_FILENAME_RE = re.compile(r'[/\\:*?"<>|\x00]')
+
+
+def sanitize_key(key: str) -> str:
+    """Sanitize a bib key for filesystem safety.
+
+    Strips characters that are unsafe on POSIX, Windows, and HFS+.
+    Should be called at key creation time (ingest, rename).
+    """
+    return _UNSAFE_FILENAME_RE.sub("", key).strip()
+
+
 def _shard(key: str) -> str:
-    """Return the single-char shard directory for a key."""
-    return key[0].lower() if key else "_"
+    """Return the single-char shard directory for a key.
+
+    Drops to ASCII lowercase; non-ASCII or non-alphanumeric first chars
+    go to '_'. Safe on all filesystems.
+    """
+    if not key:
+        return "_"
+    ch = key[0].lower()
+    return ch if ch.isascii() and ch.isalnum() else "_"
+
+
+def _safe_key(key: str) -> str:
+    """Defense-in-depth: strip unsafe chars from key before path construction."""
+    return _UNSAFE_FILENAME_RE.sub("", key) if key else key
 
 
 def vault_pdf_path(key: str) -> Path:
     """Return path for a PDF in the vault: ~/.tome-mcp/pdf/<initial>/<key>.pdf"""
-    return vault_root() / VAULT_PDF_DIR / _shard(key) / f"{key}.pdf"
+    k = _safe_key(key)
+    return vault_root() / VAULT_PDF_DIR / _shard(k) / f"{k}.pdf"
 
 
 def vault_tome_path(key: str) -> Path:
     """Return path for a .tome archive: ~/.tome-mcp/tome/<initial>/<key>.tome"""
-    return vault_root() / VAULT_TOME_DIR / _shard(key) / f"{key}{ARCHIVE_EXTENSION}"
+    k = _safe_key(key)
+    return vault_root() / VAULT_TOME_DIR / _shard(k) / f"{k}{ARCHIVE_EXTENSION}"
 
 
 def _vault_relative_tome(key: str) -> str:
     """Relative path for catalog.db vault_path field: tome/<initial>/<key>.tome"""
-    return f"{VAULT_TOME_DIR}/{_shard(key)}/{key}{ARCHIVE_EXTENSION}"
+    k = _safe_key(key)
+    return f"{VAULT_TOME_DIR}/{_shard(k)}/{k}{ARCHIVE_EXTENSION}"
 
 
 def catalog_path() -> Path:
@@ -240,6 +269,11 @@ EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 EMBEDDING_DIM = 384
 
 
+def _sanitize_str(s: str) -> str:
+    """Strip null bytes — HDF5 VLEN strings don't support embedded NULLs."""
+    return s.replace("\x00", "") if "\x00" in s else s
+
+
 def write_archive(
     archive_path: Path,
     meta: PaperMeta,
@@ -277,16 +311,16 @@ def write_archive(
         f.attrs["created_at"] = datetime.now(UTC).isoformat()
 
         # Meta — full DocumentMeta as JSON string (complex nested dicts)
-        f.create_dataset("meta", data=meta.to_json(), dtype=_VLEN_STR)
+        f.create_dataset("meta", data=_sanitize_str(meta.to_json()), dtype=_VLEN_STR)
 
         # Pages — variable-length string array (index 0 = page 1)
         if page_texts:
-            f.create_dataset("pages", data=page_texts, dtype=_VLEN_STR)
+            f.create_dataset("pages", data=[_sanitize_str(p) for p in page_texts], dtype=_VLEN_STR)
 
         # Chunks group
         if chunk_texts is not None:
             g = f.create_group("chunks")
-            g.create_dataset("texts", data=chunk_texts, dtype=_VLEN_STR)
+            g.create_dataset("texts", data=[_sanitize_str(t) for t in chunk_texts], dtype=_VLEN_STR)
             if chunk_embeddings is not None:
                 g.create_dataset("embeddings", data=chunk_embeddings, dtype=np.float32)
             if chunk_pages is not None:

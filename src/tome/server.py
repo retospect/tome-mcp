@@ -830,6 +830,10 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
         if slug:
             key = key + slug
 
+    # Sanitize key for filesystem safety (strip /\:*?"<>| and null bytes)
+    from tome.vault import sanitize_key
+    key = sanitize_key(key)
+
     lib = _load_bib()
     if key in set(bib.list_keys(lib)):
         return {
@@ -870,7 +874,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     if embedded and chunks_col is not None and all_chunks:
         try:
             import numpy as np
-            ids = [f"{key}::c{i}" for i in range(len(all_chunks))]
+            ids = [f"{key}::chunk_{i}" for i in range(len(all_chunks))]
             result = chunks_col.get(ids=ids, include=["embeddings"])
             if result and result["embeddings"]:
                 chunk_embeddings = np.array(result["embeddings"], dtype=np.float32)
@@ -3607,7 +3611,7 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
                 char_ends = chunks_data.get("chunk_char_ends")
 
                 page_map = list(pages_arr) if pages_arr is not None else list(range(len(texts)))
-                ids = [f"{k}::c{i}" for i in range(len(texts))]
+                ids = [f"{k}::chunk_{i}" for i in range(len(texts))]
                 metadatas = []
                 for i in range(len(texts)):
                     md: dict[str, Any] = {"bib_key": k, "source_type": "paper"}
