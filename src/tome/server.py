@@ -822,6 +822,14 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     if tags:
         fields["x-tags"] = tags
 
+    # Auto-enrich bare authorYYYY keys with a slug from the resolved title
+    import re as _re
+    from tome.slug import slug_from_title
+    if _re.fullmatch(r"[a-z]+\d{4}[a-c]?", key) and fields.get("title"):
+        slug = slug_from_title(fields["title"])
+        if slug:
+            key = key + slug
+
     lib = _load_bib()
     if key in set(bib.list_keys(lib)):
         return {
@@ -844,14 +852,17 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
 
     # Commit: ChromaDB upsert (embedding handled internally by ChromaDB)
     embedded = False
-    try:
-        _, _, chunks_col = _vault_paper_col()
-        sha = checksum.sha256_file(dest_pdf)
-
-        store.upsert_paper_chunks(chunks_col, key, all_chunks, page_map, sha)
-        embedded = True
-    except Exception:
-        pass  # ChromaDB failures are non-fatal
+    for _attempt in range(2):
+        try:
+            _, _, chunks_col = _vault_paper_col()
+            sha = checksum.sha256_file(dest_pdf)
+            store.upsert_paper_chunks(chunks_col, key, all_chunks, page_map, sha)
+            embedded = True
+            break
+        except Exception:
+            if _attempt == 0:
+                _reset_vault_chroma()  # retry once after reset
+            # else: ChromaDB failures are non-fatal
 
     # Commit: write to vault — PDF + .tome archive + catalog.db
     from tome.vault import (
@@ -863,11 +874,13 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     )
 
     content_hash = checksum.sha256_file(dest_pdf)
+    # Ensure title is never empty — catalog.db requires length(title) > 0
+    title = (fields.get("title") or "").strip() or key
     doc_meta = DocumentMeta(
         content_hash=content_hash,
         key=key,
         doi=fields.get("doi"),
-        title=fields.get("title", ""),
+        title=title,
         first_author=fields.get("author", "").split(" and ")[0] if fields.get("author") else "",
         authors=fields.get("author", "").split(" and ") if fields.get("author") else [],
         year=int(fields.get("year")) if fields.get("year", "").isdigit() else None,
@@ -3498,18 +3511,47 @@ def doi(
 # Use reindex(scope="papers") to rebuild all papers.
 
 
+def _reset_vault_chroma() -> None:
+    """Delete and recreate the vault ChromaDB directory.
+
+    Handles corrupted/stale state after manual deletion of chroma/.
+    """
+    chroma = _vault_chroma()
+    if chroma.exists():
+        shutil.rmtree(chroma, ignore_errors=True)
+    chroma.mkdir(parents=True, exist_ok=True)
+
+
 def _reindex_papers(key: str = "") -> dict[str, Any]:
-    """Re-derive .tome-mcp/ cache from tome/ source files for papers."""
+    """Re-derive .tome-mcp/ cache from tome/ source files for papers.
+
+    Handles deleted catalog.db and chroma/ gracefully — recreates from
+    source files (PDFs + bib) without requiring a server restart.
+    """
     lib = _load_bib()
     results: dict[str, Any] = {"rebuilt": [], "errors": []}
 
     entries = [bib.get_entry(lib, key)] if key else lib.entries
     pdf_dir = _tome_dir() / "pdf"
 
+    # Ensure catalog.db exists (schema created on first upsert, but init early)
+    from tome.vault import init_catalog
+    try:
+        init_catalog()
+    except Exception:
+        pass  # non-fatal: catalog_upsert will retry
+
+    # Get ChromaDB client, retrying once after reset if stale/corrupted
     try:
         client, embed_fn, col = _vault_paper_col()
-    except Exception as e:
-        raise ChromaDBError(_sanitize_exc(e))
+        # Quick health check — touch the collection
+        col.count()
+    except Exception:
+        _reset_vault_chroma()
+        try:
+            client, embed_fn, col = _vault_paper_col()
+        except Exception as e:
+            raise ChromaDBError(_sanitize_exc(e))
 
     for entry in entries:
         k = entry.key
