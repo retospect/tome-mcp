@@ -3,8 +3,6 @@
 All fields are plain strings, all overwrite.  No merge/remove logic.
 """
 
-import pytest
-
 from tome.notes import (
     DEFAULT_PAPER_FIELDS,
     delete_note,
@@ -108,8 +106,12 @@ class TestSaveNote:
         assert not (tmp_path / "notes" / "xu2022.yaml").exists()
 
     def test_ignores_unknown_fields_with_filter(self, tmp_path):
-        save_note(tmp_path, "xu2022", {"summary": "test", "bogus": "ignored"},
-                  allowed_fields=DEFAULT_PAPER_FIELDS)
+        save_note(
+            tmp_path,
+            "xu2022",
+            {"summary": "test", "bogus": "ignored"},
+            allowed_fields=DEFAULT_PAPER_FIELDS,
+        )
         loaded = load_note(tmp_path, "xu2022")
         assert "bogus" not in loaded
 

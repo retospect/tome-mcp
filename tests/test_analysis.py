@@ -1,22 +1,13 @@
 """Tests for tome.analysis — .tex file parsing, document tree, cross-file checks."""
 
-import pytest
-
 from tome.analysis import (
-    FileAnalysis,
-    Label,
-    Ref,
-    Citation,
-    SectionHeading,
-    TrackedMatch,
-    DocAnalysis,
-    analyze_file,
-    analyze_document,
-    resolve_document_tree,
-    find_orphan_files,
-    analyze_file_cached,
-    _strip_latex_for_wordcount,
     _infer_label_type,
+    _strip_latex_for_wordcount,
+    analyze_document,
+    analyze_file,
+    analyze_file_cached,
+    find_orphan_files,
+    resolve_document_tree,
 )
 from tome.config import TomeConfig, TrackedPattern
 
@@ -89,7 +80,7 @@ class TestAnalyzeFile:
         assert fa.cites[0].is_deep is False
 
     def test_cites_deep(self):
-        text = '\\mciteboxp{jones2019}{5}{verbatim quote here}\n'
+        text = "\\mciteboxp{jones2019}{5}{verbatim quote here}\n"
         fa = analyze_file("test.tex", text)
         assert len(fa.cites) == 1
         assert fa.cites[0].key == "jones2019"
@@ -192,9 +183,7 @@ class TestTrackedPatterns:
 
 class TestResolveDocumentTree:
     def test_simple_tree(self, tmp_path):
-        (tmp_path / "main.tex").write_text(
-            "\\input{sections/intro}\n\\input{sections/body}\n"
-        )
+        (tmp_path / "main.tex").write_text("\\input{sections/intro}\n\\input{sections/body}\n")
         (tmp_path / "sections").mkdir()
         (tmp_path / "sections" / "intro.tex").write_text("Intro content.\n")
         (tmp_path / "sections" / "body.tex").write_text("Body content.\n")
@@ -291,15 +280,11 @@ class TestFindOrphanFiles:
 
 class TestAnalyzeDocument:
     def _make_project(self, tmp_path):
-        (tmp_path / "main.tex").write_text(
-            "\\input{sections/intro}\n\\input{sections/body}\n"
-        )
+        (tmp_path / "main.tex").write_text("\\input{sections/intro}\n\\input{sections/body}\n")
         sections = tmp_path / "sections"
         sections.mkdir()
         (sections / "intro.tex").write_text(
-            "\\section{Introduction}\n"
-            "\\label{sec:intro}\n"
-            "Some text~\\cite{smith2020}.\n"
+            "\\section{Introduction}\n\\label{sec:intro}\nSome text~\\cite{smith2020}.\n"
         )
         (sections / "body.tex").write_text(
             "\\section{Body}\n"

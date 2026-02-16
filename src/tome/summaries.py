@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -81,7 +81,7 @@ def set_summary(
     Returns:
         The stored summary entry.
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     existing = data.get(file_path, {})
     entry = {
         "summary": summary or existing.get("summary", ""),
@@ -107,7 +107,9 @@ def git_file_is_dirty(project_root: Path, file_path: str) -> bool:
     try:
         result = subprocess.run(
             ["git", "status", "--porcelain", "--", file_path],
-            capture_output=True, text=True, cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            cwd=str(project_root),
             timeout=5,
         )
         if result.returncode != 0:
@@ -130,12 +132,14 @@ def git_changes_since(
     try:
         result = subprocess.run(
             ["git", "log", "--oneline", f"--after={since_iso}", "--", file_path],
-            capture_output=True, text=True, cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            cwd=str(project_root),
             timeout=5,
         )
         if result.returncode != 0:
             return -1
-        lines = [l for l in result.stdout.strip().split("\n") if l]
+        lines = [ln for ln in result.stdout.strip().split("\n") if ln]
         return len(lines)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return -1
@@ -160,18 +164,37 @@ def check_staleness_git(
     for fp in file_paths:
         entry = data.get(fp)
         if entry is None:
-            results.append({"file": fp, "short": "", "status": "missing",
-                           "last_summarized": None, "commits_since": None})
+            results.append(
+                {
+                    "file": fp,
+                    "short": "",
+                    "status": "missing",
+                    "last_summarized": None,
+                    "commits_since": None,
+                }
+            )
             continue
         last = entry.get("last_summarized") or entry.get("updated", "")
         if not last:
-            results.append({"file": fp, "short": entry.get("short", ""),
-                           "status": "unknown", "last_summarized": last,
-                           "commits_since": None})
+            results.append(
+                {
+                    "file": fp,
+                    "short": entry.get("short", ""),
+                    "status": "unknown",
+                    "last_summarized": last,
+                    "commits_since": None,
+                }
+            )
             continue
         commits = git_changes_since(project_root, fp, last)
         status = "fresh" if commits == 0 else ("stale" if commits > 0 else "unknown")
-        results.append({"file": fp, "short": entry.get("short", ""),
-                       "status": status, "last_summarized": last,
-                       "commits_since": commits if commits >= 0 else None})
+        results.append(
+            {
+                "file": fp,
+                "short": entry.get("short", ""),
+                "status": status,
+                "last_summarized": last,
+                "commits_since": commits if commits >= 0 else None,
+            }
+        )
     return results

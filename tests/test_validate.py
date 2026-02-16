@@ -1,10 +1,9 @@
 """Tests for tome.validate."""
 
 import pytest
-from pathlib import Path
 
 from tome.errors import UnsafeInput
-from tome.validate import validate_key, validate_relative_path, ensure_within
+from tome.validate import ensure_within, validate_key, validate_relative_path
 
 
 class TestValidateKey:

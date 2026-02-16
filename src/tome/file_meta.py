@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -35,6 +34,7 @@ DEFAULT_FIELD_ORDER = ["intent", "status", "depends", "claims", "open"]
 # ---------------------------------------------------------------------------
 # Parse
 # ---------------------------------------------------------------------------
+
 
 def parse_meta(
     text: str,
@@ -87,6 +87,7 @@ def parse_meta_from_file(
 # Serialize
 # ---------------------------------------------------------------------------
 
+
 def render_meta(
     data: dict[str, str],
     field_order: list[str] | None = None,
@@ -117,6 +118,7 @@ def render_meta(
 # ---------------------------------------------------------------------------
 # Write back to file
 # ---------------------------------------------------------------------------
+
 
 def _strip_meta_block(text: str) -> str:
     """Remove an existing FILE META block from the end of file text."""
@@ -160,6 +162,7 @@ def write_meta(
 # ---------------------------------------------------------------------------
 # Flatten for search
 # ---------------------------------------------------------------------------
+
 
 def flatten_for_search(
     rel_path: str,

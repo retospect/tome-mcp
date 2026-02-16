@@ -10,7 +10,6 @@ import pytest
 
 from tome.errors import PageOutOfRange, TextNotExtracted
 from tome.extract import (
-    ExtractionResult,
     extract_first_page_text,
     extract_pdf_metadata,
     extract_pdf_pages,

@@ -19,12 +19,11 @@ from __future__ import annotations
 
 import json
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from tome.semantic_scholar import S2Paper, get_citation_graph, get_citations_with_abstracts
-
 
 # ---------------------------------------------------------------------------
 # Persistence (.tome/cite_tree.json)
@@ -114,7 +113,7 @@ def build_entry(
         "s2_id": graph.paper.s2_id,
         "doi": graph.paper.doi,
         "title": graph.paper.title,
-        "last_checked": datetime.now(timezone.utc).isoformat(),
+        "last_checked": datetime.now(UTC).isoformat(),
         "citation_count": graph.paper.citation_count,
         "cited_by": cited_by,
         "references": references,
@@ -153,7 +152,7 @@ def find_stale(
         List of bib keys needing refresh, sorted by staleness.
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
     stale: list[tuple[float, str]] = []
 
@@ -167,7 +166,7 @@ def find_stale(
         try:
             last_dt = datetime.fromisoformat(last_str)
             if last_dt.tzinfo is None:
-                last_dt = last_dt.replace(tzinfo=timezone.utc)
+                last_dt = last_dt.replace(tzinfo=UTC)
             age_days = (now - last_dt).total_seconds() / 86400.0
         except (ValueError, TypeError):
             age_days = float("inf")
@@ -246,7 +245,7 @@ def discover_new(
                 library_dois.add(entry["doi"].lower())
 
     # Filter and score
-    current_year = datetime.now(timezone.utc).year
+    current_year = datetime.now(UTC).year
     results: list[dict[str, Any]] = []
 
     for cid, info in candidates.items():
@@ -269,17 +268,19 @@ def discover_new(
         recency = max(0.1, 1.0 - (current_year - year) * 0.1) if year else 0.5
         score = len(shared) * recency
 
-        results.append({
-            "s2_id": cid,
-            "title": info.get("title"),
-            "authors": info.get("authors", []),
-            "year": year,
-            "doi": info.get("doi"),
-            "citation_count": info.get("citation_count", 0),
-            "shared_refs": sorted(shared),
-            "shared_count": len(shared),
-            "score": round(score, 2),
-        })
+        results.append(
+            {
+                "s2_id": cid,
+                "title": info.get("title"),
+                "authors": info.get("authors", []),
+                "year": year,
+                "doi": info.get("doi"),
+                "citation_count": info.get("citation_count", 0),
+                "shared_refs": sorted(shared),
+                "shared_count": len(shared),
+                "score": round(score, 2),
+            }
+        )
 
     results.sort(key=lambda x: (-x["score"], -x.get("year", 0)))
     return results[:max_results]
@@ -344,8 +345,8 @@ def explore_paper(
         try:
             fetched = datetime.fromisoformat(cached.get("last_fetched", ""))
             if fetched.tzinfo is None:
-                fetched = fetched.replace(tzinfo=timezone.utc)
-            age_days = (datetime.now(timezone.utc) - fetched).total_seconds() / 86400.0
+                fetched = fetched.replace(tzinfo=UTC)
+            age_days = (datetime.now(UTC) - fetched).total_seconds() / 86400.0
             if age_days < 7.0:
                 return cached
         except (ValueError, TypeError):
@@ -362,7 +363,7 @@ def explore_paper(
         "year": seed.year,
         "doi": seed.doi,
         "citation_count": seed.citation_count,
-        "last_fetched": datetime.now(timezone.utc).isoformat(),
+        "last_fetched": datetime.now(UTC).isoformat(),
         "cited_by": [_s2_paper_to_explore_dict(p) for p in citers if p.s2_id],
         "relevance": cached.get("relevance", "unknown") if cached else "unknown",
         "note": cached.get("note", "") if cached else "",
@@ -445,9 +446,7 @@ def list_explorations(
             citers = entry.get("cited_by", [])
             if not citers:
                 continue  # nothing to expand
-            already_explored = sum(
-                1 for c in citers if c.get("s2_id") in explored_ids
-            )
+            already_explored = sum(1 for c in citers if c.get("s2_id") in explored_ids)
             if already_explored >= len(citers):
                 continue  # fully explored
 
@@ -468,7 +467,9 @@ def list_explorations(
 
 
 def _is_descendant_of(
-    explorations: dict[str, Any], s2_id: str, ancestor_s2_id: str,
+    explorations: dict[str, Any],
+    s2_id: str,
+    ancestor_s2_id: str,
     _visited: set[str] | None = None,
 ) -> bool:
     """Check if s2_id is a descendant of ancestor_s2_id via parent chain."""

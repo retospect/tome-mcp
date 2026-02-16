@@ -1,15 +1,10 @@
 """Tests for enhanced PDF extraction — XMP, font-size title, text metrics."""
 
-import xml.etree.ElementTree as ET
-
 from tome.extract import (
-    TextMetrics,
-    XMPMetadata,
     _classify_paper_type,
     _parse_xmp_xml,
     compute_text_metrics,
 )
-
 
 # ---------------------------------------------------------------------------
 # XMP parsing

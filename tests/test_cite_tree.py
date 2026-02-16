@@ -1,14 +1,13 @@
 """Tests for tome.cite_tree — citation tree cache and forward discovery."""
 
 import json
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from tome.cite_tree import (
     RELEVANCE_STATES,
-    build_entry,
+    _is_descendant_of,
     clear_explorations,
     discover_new,
     dismiss_paper,
@@ -19,7 +18,6 @@ from tome.cite_tree import (
     mark_exploration,
     save_tree,
     update_tree,
-    _is_descendant_of,
 )
 
 
@@ -90,7 +88,7 @@ class TestUpdateTree:
 
 
 class TestFindStale:
-    NOW = datetime(2026, 3, 14, 12, 0, 0, tzinfo=timezone.utc)
+    NOW = datetime(2026, 3, 14, 12, 0, 0, tzinfo=UTC)
 
     def test_missing_paper(self):
         tree = {"papers": {}, "dismissed": []}
@@ -98,35 +96,47 @@ class TestFindStale:
         assert stale == ["miller2008"]
 
     def test_fresh_paper(self):
-        tree = {"papers": {
-            "miller2008": {
-                "last_checked": (self.NOW - timedelta(days=5)).isoformat(),
-            }
-        }, "dismissed": []}
+        tree = {
+            "papers": {
+                "miller2008": {
+                    "last_checked": (self.NOW - timedelta(days=5)).isoformat(),
+                }
+            },
+            "dismissed": [],
+        }
         stale = find_stale(tree, {"miller2008"}, max_age_days=30, now=self.NOW)
         assert stale == []
 
     def test_stale_paper(self):
-        tree = {"papers": {
-            "miller2008": {
-                "last_checked": (self.NOW - timedelta(days=45)).isoformat(),
-            }
-        }, "dismissed": []}
+        tree = {
+            "papers": {
+                "miller2008": {
+                    "last_checked": (self.NOW - timedelta(days=45)).isoformat(),
+                }
+            },
+            "dismissed": [],
+        }
         stale = find_stale(tree, {"miller2008"}, max_age_days=30, now=self.NOW)
         assert stale == ["miller2008"]
 
     def test_oldest_first(self):
-        tree = {"papers": {
-            "a2020": {"last_checked": (self.NOW - timedelta(days=60)).isoformat()},
-            "b2021": {"last_checked": (self.NOW - timedelta(days=40)).isoformat()},
-        }, "dismissed": []}
+        tree = {
+            "papers": {
+                "a2020": {"last_checked": (self.NOW - timedelta(days=60)).isoformat()},
+                "b2021": {"last_checked": (self.NOW - timedelta(days=40)).isoformat()},
+            },
+            "dismissed": [],
+        }
         stale = find_stale(tree, {"a2020", "b2021"}, max_age_days=30, now=self.NOW)
         assert stale[0] == "a2020"  # oldest first
 
     def test_corrupt_timestamp(self):
-        tree = {"papers": {
-            "miller2008": {"last_checked": "not-a-date"},
-        }, "dismissed": []}
+        tree = {
+            "papers": {
+                "miller2008": {"last_checked": "not-a-date"},
+            },
+            "dismissed": [],
+        }
         stale = find_stale(tree, {"miller2008"}, max_age_days=30, now=self.NOW)
         assert "miller2008" in stale
 
@@ -142,14 +152,16 @@ def _make_tree(library_keys, citing_map):
     for key in library_keys:
         cited_by = []
         for cid, title, year, doi in citing_map.get(key, []):
-            cited_by.append({
-                "s2_id": cid,
-                "title": title,
-                "authors": ["Author"],
-                "year": year,
-                "doi": doi,
-                "citation_count": 10,
-            })
+            cited_by.append(
+                {
+                    "s2_id": cid,
+                    "title": title,
+                    "authors": ["Author"],
+                    "year": year,
+                    "doi": doi,
+                    "citation_count": 10,
+                }
+            )
         tree["papers"][key] = {
             "key": key,
             "s2_id": f"s2_{key}",
@@ -252,7 +264,7 @@ class TestDiscoverNew:
         results = discover_new(tree, {"a", "b", "c"}, min_shared=2)
         assert len(results) == 2
         assert results[0]["s2_id"] == "high"  # cites 3, higher score
-        assert results[1]["s2_id"] == "low"   # cites 2
+        assert results[1]["s2_id"] == "low"  # cites 2
 
     def test_max_results(self):
         # Create many candidates
@@ -297,8 +309,24 @@ def _make_exploration_tree():
                 "citation_count": 100,
                 "last_fetched": "2026-03-10T00:00:00+00:00",
                 "cited_by": [
-                    {"s2_id": "child1", "title": "Child 1", "year": 2022, "authors": [], "doi": None, "citation_count": 5, "abstract": "About MOFs"},
-                    {"s2_id": "child2", "title": "Child 2", "year": 2023, "authors": [], "doi": None, "citation_count": 3, "abstract": "About DNA"},
+                    {
+                        "s2_id": "child1",
+                        "title": "Child 1",
+                        "year": 2022,
+                        "authors": [],
+                        "doi": None,
+                        "citation_count": 5,
+                        "abstract": "About MOFs",
+                    },
+                    {
+                        "s2_id": "child2",
+                        "title": "Child 2",
+                        "year": 2023,
+                        "authors": [],
+                        "doi": None,
+                        "citation_count": 3,
+                        "abstract": "About DNA",
+                    },
                 ],
                 "relevance": "unknown",
                 "note": "",
@@ -314,7 +342,14 @@ def _make_exploration_tree():
                 "citation_count": 5,
                 "last_fetched": "2026-03-10T00:00:00+00:00",
                 "cited_by": [
-                    {"s2_id": "grandchild1", "title": "Grandchild", "year": 2024, "authors": [], "doi": None, "citation_count": 1},
+                    {
+                        "s2_id": "grandchild1",
+                        "title": "Grandchild",
+                        "year": 2024,
+                        "authors": [],
+                        "doi": None,
+                        "citation_count": 1,
+                    },
                 ],
                 "relevance": "relevant",
                 "note": "MOF conductivity relevant",
@@ -510,17 +545,32 @@ class TestExplorePaper:
         from tome.semantic_scholar import S2Paper
 
         seed = S2Paper(
-            s2_id="seed1", title="Seed", authors=["A"], year=2020,
-            doi="10.1/seed", citation_count=50, abstract="Seed abstract",
+            s2_id="seed1",
+            title="Seed",
+            authors=["A"],
+            year=2020,
+            doi="10.1/seed",
+            citation_count=50,
+            abstract="Seed abstract",
         )
         citers = [
             S2Paper(
-                s2_id="c1", title="Citer 1", authors=["B"], year=2023,
-                doi=None, citation_count=5, abstract="About MOFs",
+                s2_id="c1",
+                title="Citer 1",
+                authors=["B"],
+                year=2023,
+                doi=None,
+                citation_count=5,
+                abstract="About MOFs",
             ),
             S2Paper(
-                s2_id="c2", title="Citer 2", authors=["C"], year=2024,
-                doi=None, citation_count=2, abstract="About DNA",
+                s2_id="c2",
+                title="Citer 2",
+                authors=["C"],
+                year=2024,
+                doi=None,
+                citation_count=2,
+                abstract="About DNA",
             ),
         ]
         monkeypatch.setattr(
@@ -548,24 +598,30 @@ class TestExplorePaper:
             nonlocal call_count
             call_count += 1
             from tome.semantic_scholar import S2Paper
+
             return S2Paper(s2_id="s1", title="T"), []
 
         monkeypatch.setattr(
-            "tome.cite_tree.get_citations_with_abstracts", mock_fetch,
+            "tome.cite_tree.get_citations_with_abstracts",
+            mock_fetch,
         )
 
-        tree = {"papers": {}, "dismissed": [], "explorations": {
-            "s1": {
-                "s2_id": "s1",
-                "title": "Cached",
-                "last_fetched": datetime.now(timezone.utc).isoformat(),
-                "cited_by": [],
-                "relevance": "relevant",
-                "note": "kept",
-                "parent_s2_id": "",
-                "depth": 0,
+        tree = {
+            "papers": {},
+            "dismissed": [],
+            "explorations": {
+                "s1": {
+                    "s2_id": "s1",
+                    "title": "Cached",
+                    "last_fetched": datetime.now(UTC).isoformat(),
+                    "cited_by": [],
+                    "relevance": "relevant",
+                    "note": "kept",
+                    "parent_s2_id": "",
+                    "depth": 0,
+                },
             },
-        }}
+        }
         result = explore_paper(tree, "s1")
         assert result["title"] == "Cached"
         assert result["relevance"] == "relevant"
@@ -579,19 +635,23 @@ class TestExplorePaper:
             lambda pid, limit=50: (S2Paper(s2_id="s1", title="Fresh"), []),
         )
 
-        stale_time = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
-        tree = {"papers": {}, "dismissed": [], "explorations": {
-            "s1": {
-                "s2_id": "s1",
-                "title": "Stale",
-                "last_fetched": stale_time,
-                "cited_by": [],
-                "relevance": "relevant",
-                "note": "preserved",
-                "parent_s2_id": "parent",
-                "depth": 1,
+        stale_time = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+        tree = {
+            "papers": {},
+            "dismissed": [],
+            "explorations": {
+                "s1": {
+                    "s2_id": "s1",
+                    "title": "Stale",
+                    "last_fetched": stale_time,
+                    "cited_by": [],
+                    "relevance": "relevant",
+                    "note": "preserved",
+                    "parent_s2_id": "parent",
+                    "depth": 1,
+                },
             },
-        }}
+        }
         result = explore_paper(tree, "s1")
         assert result["title"] == "Fresh"
         # Relevance and note preserved from cache
@@ -625,7 +685,10 @@ class TestExplorePaper:
 
         long_abstract = "x" * 1000
         citer = S2Paper(
-            s2_id="c1", title="Long", abstract=long_abstract, citation_count=5,
+            s2_id="c1",
+            title="Long",
+            abstract=long_abstract,
+            citation_count=5,
         )
         monkeypatch.setattr(
             "tome.cite_tree.get_citations_with_abstracts",

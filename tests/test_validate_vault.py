@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import fitz
-import pytest
 
 from tome.validate_vault import (
     GateResult,
@@ -92,6 +91,7 @@ class TestDedup:
 
         # Insert into catalog with same hash
         from tome.checksum import sha256_file
+
         h = sha256_file(pdf)
         meta = PaperMeta(content_hash=h, key="existing2024", title="Existing", first_author="test")
         catalog_upsert(meta, db)
@@ -225,7 +225,10 @@ class TestDOIDuplicate:
     def test_existing_doi(self, tmp_path):
         db = tmp_path / "test.db"
         meta = PaperMeta(
-            content_hash="h1", key="smith2024", title="T", first_author="smith",
+            content_hash="h1",
+            key="smith2024",
+            title="T",
+            first_author="smith",
             doi="10.1021/existing",
         )
         catalog_upsert(meta, db)
@@ -252,7 +255,9 @@ class TestTitleFuzzyDedup:
     def test_similar_found(self, tmp_path):
         db = tmp_path / "test.db"
         meta = PaperMeta(
-            content_hash="h1", key="smith2024mof", title="Metal-Organic Frameworks for Electronics",
+            content_hash="h1",
+            key="smith2024mof",
+            title="Metal-Organic Frameworks for Electronics",
             first_author="smith",
         )
         catalog_upsert(meta, db)
@@ -275,28 +280,34 @@ class TestTitleFuzzyDedup:
 
 class TestValidationReport:
     def test_all_passed(self):
-        report = ValidationReport(results=[
-            GateResult(gate="a", passed=True),
-            GateResult(gate="doi_title_match", passed=True),
-        ])
+        report = ValidationReport(
+            results=[
+                GateResult(gate="a", passed=True),
+                GateResult(gate="doi_title_match", passed=True),
+            ]
+        )
         assert report.all_passed
         assert report.auto_accept
         assert report.issues == []
 
     def test_some_failed(self):
-        report = ValidationReport(results=[
-            GateResult(gate="a", passed=True),
-            GateResult(gate="b", passed=False, message="Problem"),
-        ])
+        report = ValidationReport(
+            results=[
+                GateResult(gate="a", passed=True),
+                GateResult(gate="b", passed=False, message="Problem"),
+            ]
+        )
         assert not report.all_passed
         assert not report.auto_accept
         assert report.issues == ["Problem"]
 
     def test_no_doi_check_no_auto_accept(self):
-        report = ValidationReport(results=[
-            GateResult(gate="pdf_integrity", passed=True),
-            GateResult(gate="dedup", passed=True),
-        ])
+        report = ValidationReport(
+            results=[
+                GateResult(gate="pdf_integrity", passed=True),
+                GateResult(gate="dedup", passed=True),
+            ]
+        )
         assert report.all_passed
         assert not report.auto_accept  # no doi_title_match gate
 
@@ -316,7 +327,9 @@ class TestValidationReport:
 
         assert report.all_passed
         assert report.auto_accept
-        assert len(report.results) >= 5  # integrity, dedup, extractable, quality, doi_dup, doi_match, title_dedup
+        assert (
+            len(report.results) >= 5
+        )  # integrity, dedup, extractable, quality, doi_dup, doi_match, title_dedup
 
     def test_validation_stops_on_corrupt_pdf(self, tmp_path):
         db = tmp_path / "test.db"

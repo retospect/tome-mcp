@@ -5,13 +5,11 @@ entry points) to verify scope/mode/locate dispatch and data flow.
 """
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
 from tome import server
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -65,19 +63,27 @@ def mock_store(monkeypatch):
     mocks = {}
     mocks["get_client"] = MagicMock(return_value=MagicMock())
     mocks["get_embed_fn"] = MagicMock(return_value=MagicMock())
-    mocks["search_papers"] = MagicMock(return_value=[
-        {"text": "paper hit", "distance": 0.1, "bib_key": "xu2022"},
-    ])
-    mocks["search_corpus"] = MagicMock(return_value=[
-        {"text": "corpus hit", "distance": 0.2, "source_file": "sections/a.tex"},
-    ])
-    mocks["get_all_labels"] = MagicMock(return_value=[
-        {"label": "sec:intro", "file": "sections/a.tex", "section": "Introduction"},
-        {"label": "fig:one", "file": "sections/a.tex", "section": "Introduction"},
-    ])
-    mocks["_format_results"] = MagicMock(return_value=[
-        {"text": "note hit", "distance": 0.15, "bib_key": "xu2022"},
-    ])
+    mocks["search_papers"] = MagicMock(
+        return_value=[
+            {"text": "paper hit", "distance": 0.1, "bib_key": "xu2022"},
+        ]
+    )
+    mocks["search_corpus"] = MagicMock(
+        return_value=[
+            {"text": "corpus hit", "distance": 0.2, "source_file": "sections/a.tex"},
+        ]
+    )
+    mocks["get_all_labels"] = MagicMock(
+        return_value=[
+            {"label": "sec:intro", "file": "sections/a.tex", "section": "Introduction"},
+            {"label": "fig:one", "file": "sections/a.tex", "section": "Introduction"},
+        ]
+    )
+    mocks["_format_results"] = MagicMock(
+        return_value=[
+            {"text": "note hit", "distance": 0.15, "bib_key": "xu2022"},
+        ]
+    )
 
     col_mock = MagicMock()
     col_mock.query.return_value = {
@@ -133,15 +139,25 @@ class TestSearchPapers:
         raw_dir.mkdir(parents=True)
         (raw_dir / "xu2022.p1.txt").write_text("molecules assemble into frameworks")
 
-        result = json.loads(server._search_papers(
-            "molecules assemble", "exact", "xu2022", "", "", 10, 0, 0,
-        ))
+        result = json.loads(
+            server._search_papers(
+                "molecules assemble",
+                "exact",
+                "xu2022",
+                "",
+                "",
+                10,
+                0,
+                0,
+            )
+        )
         assert result["scope"] == "papers"
         assert result["mode"] == "exact"
         assert result["match_count"] >= 1
 
     def test_exact_no_raw_dir(self, fake_project):
         import shutil
+
         shutil.rmtree(fake_project / ".tome" / "raw")
         result = json.loads(server._search_papers("q", "exact", "", "", "", 10, 0, 0))
         assert "error" in result
@@ -178,9 +194,17 @@ class TestSearchCorpus:
         sections.mkdir()
         (sections / "intro.tex").write_text("molecular assembly is the key process\n")
 
-        result = json.loads(server._search_corpus(
-            "molecular assembly", "exact", "", False, False, 10, 0,
-        ))
+        result = json.loads(
+            server._search_corpus(
+                "molecular assembly",
+                "exact",
+                "",
+                False,
+                False,
+                10,
+                0,
+            )
+        )
         assert result["scope"] == "corpus"
         assert result["mode"] == "exact"
         assert result["match_count"] >= 1
@@ -191,9 +215,17 @@ class TestSearchCorpus:
         (sections / "a.tex").write_text("hello world\n")
         (sections / "b.tex").write_text("goodbye world\n")
 
-        result = json.loads(server._search_corpus(
-            "hello", "exact", "sections/a.tex", False, False, 10, 0,
-        ))
+        result = json.loads(
+            server._search_corpus(
+                "hello",
+                "exact",
+                "sections/a.tex",
+                False,
+                False,
+                10,
+                0,
+            )
+        )
         assert result["match_count"] >= 1
         for r in result["results"]:
             assert "a.tex" in r["file"]
@@ -217,8 +249,9 @@ class TestSearchNotes:
         call_kw = col.query.call_args[1]
         # Should have source_type filter
         where = call_kw.get("where", {})
-        assert where == {"source_type": "note"} or \
-               any(c == {"source_type": "note"} for c in where.get("$and", []))
+        assert where == {"source_type": "note"} or any(
+            c == {"source_type": "note"} for c in where.get("$and", [])
+        )
 
     def test_key_filter_added(self, mock_store):
         server._search_notes("test", "semantic", "xu2022", "", "", 10)
@@ -239,18 +272,38 @@ class TestSearchNotes:
 
 class TestSearchAll:
     def test_semantic_merges_both(self, mock_store):
-        result = json.loads(server._search_all(
-            "test", "semantic", "", "", "", "", False, False, 10,
-        ))
+        result = json.loads(
+            server._search_all(
+                "test",
+                "semantic",
+                "",
+                "",
+                "",
+                "",
+                False,
+                False,
+                10,
+            )
+        )
         assert result["scope"] == "all"
         assert result["mode"] == "semantic"
         mock_store["search_papers"].assert_called_once()
         mock_store["search_corpus"].assert_called_once()
 
     def test_semantic_sorted_by_distance(self, mock_store):
-        result = json.loads(server._search_all(
-            "test", "semantic", "", "", "", "", False, False, 10,
-        ))
+        result = json.loads(
+            server._search_all(
+                "test",
+                "semantic",
+                "",
+                "",
+                "",
+                "",
+                False,
+                False,
+                10,
+            )
+        )
         dists = [r["distance"] for r in result["results"]]
         assert dists == sorted(dists)
 
@@ -262,9 +315,19 @@ class TestSearchAll:
         sections.mkdir()
         (sections / "a.tex").write_text("nanoparticle synthesis\n")
 
-        result = json.loads(server._search_all(
-            "nanoparticle", "exact", "", "", "", "", False, False, 10,
-        ))
+        result = json.loads(
+            server._search_all(
+                "nanoparticle",
+                "exact",
+                "",
+                "",
+                "",
+                "",
+                False,
+                False,
+                10,
+            )
+        )
         assert result["scope"] == "all"
         assert result["mode"] == "exact"
         assert "papers" in result
@@ -376,6 +439,7 @@ class TestGetPaper:
 
     def test_notes_included(self, fake_project):
         import yaml
+
         notes_dir = fake_project / "tome" / "notes"
         notes_dir.mkdir(exist_ok=True)
         (notes_dir / "xu2022.yaml").write_text(yaml.dump({"summary": "A test paper"}))
@@ -413,7 +477,6 @@ class TestReindexRouting:
 
     def test_default_scope_is_all(self, mock_store):
         mock_store["get_indexed_files"] = MagicMock(return_value={})
-        monkeypatch_attr = None  # mock_store handles chromadb
         result = self._call()
         assert result["scope"] == "all"
         assert "corpus" in result
@@ -476,7 +539,6 @@ class TestNotesFileSummary:
         assert "last_summarized" in result["summary"]
 
     def test_read_returns_summary(self, fake_project, monkeypatch):
-        from tome import summaries
         sections = fake_project / "sections"
         sections.mkdir(exist_ok=True)
         tex = sections / "test.tex"
@@ -488,7 +550,7 @@ class TestNotesFileSummary:
             file="sections/test.tex",
             summary="A summary",
             short="Short",
-            sections='[]',
+            sections="[]",
         )
         # Read back
         result = self._call(file="sections/test.tex")
@@ -497,7 +559,6 @@ class TestNotesFileSummary:
         assert "summary_status" in result
 
     def test_clear_star_removes_summary(self, fake_project, monkeypatch):
-        from tome import summaries
         sections = fake_project / "sections"
         sections.mkdir(exist_ok=True)
         tex = sections / "test.tex"
@@ -505,7 +566,7 @@ class TestNotesFileSummary:
         monkeypatch.setattr(server.summaries, "git_file_is_dirty", lambda *a: False)
 
         # Write summary
-        self._call(file="sections/test.tex", summary="A summary", short="Short", sections='[]')
+        self._call(file="sections/test.tex", summary="A summary", short="Short", sections="[]")
         # Clear all
         result = self._call(file="sections/test.tex", clear="*")
         assert result["status"] == "cleared"
@@ -522,7 +583,7 @@ class TestNotesFileSummary:
         tex.write_text("\\section{Test}\n")
         monkeypatch.setattr(server.summaries, "git_file_is_dirty", lambda *a: False)
 
-        self._call(file="sections/test.tex", summary="A summary", short="Short", sections='[]')
+        self._call(file="sections/test.tex", summary="A summary", short="Short", sections="[]")
         result = self._call(file="sections/test.tex", clear="summary")
         assert result["status"] == "cleared"
         assert "summary" in result["cleared"]
@@ -553,7 +614,7 @@ class TestNotesFileSummary:
             file="sections/test.tex",
             summary="Should fail",
             short="fail",
-            sections='[]',
+            sections="[]",
         )
         assert "error" in result
         assert "uncommitted" in result["error"].lower()
@@ -569,7 +630,7 @@ class TestNotesFileSummary:
             intent="Establish context",
             summary="A summary",
             short="Short",
-            sections='[]',
+            sections="[]",
         )
         assert result["status"] == "updated"
         assert result["meta"]["intent"] == "Establish context"
@@ -585,7 +646,7 @@ class TestNotesFileSummary:
             file="sections/test.tex",
             summary="A summary",
             short="Short",
-            sections='[]',
+            sections="[]",
         )
         assert "message" in result
         assert "Done:" in result["message"]
@@ -624,7 +685,8 @@ class TestDiscoverRouting:
     def test_scope_stats(self, monkeypatch):
         # Mock S2AG
         monkeypatch.setattr(
-            server, "_discover_stats",
+            server,
+            "_discover_stats",
             lambda: {"scope": "stats", "papers": 100, "citations": 500},
         )
         result = self._call(scope="stats")
@@ -632,7 +694,8 @@ class TestDiscoverRouting:
 
     def test_scope_refresh(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_refresh",
+            server,
+            "_discover_refresh",
             lambda key, min_year: {"scope": "refresh", "cite_tree": {"status": "all_fresh"}},
         )
         result = self._call(scope="refresh")
@@ -640,9 +703,12 @@ class TestDiscoverRouting:
 
     def test_scope_shared_citers(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_shared_citers",
+            server,
+            "_discover_shared_citers",
             lambda min_shared, min_year, n: {
-                "scope": "shared_citers", "count": 0, "candidates": [],
+                "scope": "shared_citers",
+                "count": 0,
+                "candidates": [],
             },
         )
         result = self._call(scope="shared_citers")
@@ -650,7 +716,8 @@ class TestDiscoverRouting:
 
     def test_doi_routes_to_lookup(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_lookup",
+            server,
+            "_discover_lookup",
             lambda doi, s2_id: {"scope": "lookup", "found": True, "doi": doi},
         )
         result = self._call(doi="10.1038/nature08016")
@@ -659,9 +726,12 @@ class TestDiscoverRouting:
 
     def test_key_routes_to_graph(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_graph",
+            server,
+            "_discover_graph",
             lambda key, doi, s2_id: {
-                "scope": "graph", "citations_count": 5, "references_count": 10,
+                "scope": "graph",
+                "citations_count": 5,
+                "references_count": 10,
             },
         )
         result = self._call(key="xu2022")
@@ -669,7 +739,8 @@ class TestDiscoverRouting:
 
     def test_scope_lookup_explicit(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_lookup",
+            server,
+            "_discover_lookup",
             lambda doi, s2_id: {"scope": "lookup", "found": False},
         )
         result = self._call(scope="lookup", doi="10.1234/fake")
@@ -687,9 +758,11 @@ class TestExploreRouting:
 
     def test_no_args_routes_to_list(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_explore_list",
+            server,
+            "_explore_list",
             lambda relevance, seed, expandable: {
-                "action": "list", "status": "empty",
+                "action": "list",
+                "status": "empty",
                 "message": "No explorations yet.",
             },
         )
@@ -698,7 +771,8 @@ class TestExploreRouting:
 
     def test_action_clear(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_explore_clear",
+            server,
+            "_explore_clear",
             lambda: {"action": "clear", "status": "cleared", "removed": 0},
         )
         result = self._call(action="clear")
@@ -707,7 +781,8 @@ class TestExploreRouting:
 
     def test_action_dismiss(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_explore_dismiss",
+            server,
+            "_explore_dismiss",
             lambda s2_id: {"action": "dismiss", "status": "dismissed", "s2_id": s2_id},
         )
         result = self._call(action="dismiss", s2_id="abc123")
@@ -716,10 +791,13 @@ class TestExploreRouting:
 
     def test_s2_id_with_relevance_routes_to_mark(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_explore_mark",
+            server,
+            "_explore_mark",
             lambda s2_id, relevance, note: {
-                "action": "mark", "status": "marked",
-                "s2_id": s2_id, "relevance": relevance,
+                "action": "mark",
+                "status": "marked",
+                "s2_id": s2_id,
+                "relevance": relevance,
             },
         )
         result = self._call(s2_id="abc123", relevance="relevant", note="good paper")
@@ -728,10 +806,13 @@ class TestExploreRouting:
 
     def test_key_routes_to_fetch(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_explore_fetch",
+            server,
+            "_explore_fetch",
             lambda key, s2_id, limit, parent_s2_id, depth: {
-                "action": "fetch", "status": "ok",
-                "citing_count": 5, "cited_by": [],
+                "action": "fetch",
+                "status": "ok",
+                "citing_count": 5,
+                "cited_by": [],
             },
         )
         result = self._call(key="xu2022")
@@ -739,9 +820,11 @@ class TestExploreRouting:
 
     def test_action_expandable(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_explore_list",
+            server,
+            "_explore_list",
             lambda relevance, seed, expandable: {
-                "action": "list", "status": "empty",
+                "action": "list",
+                "status": "empty",
                 "message": "No expandable nodes.",
             },
         )
@@ -750,10 +833,13 @@ class TestExploreRouting:
 
     def test_action_list_explicit(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_explore_list",
+            server,
+            "_explore_list",
             lambda relevance, seed, expandable: {
-                "action": "list", "status": "ok",
-                "total_explored": 3, "counts": {"relevant": 1, "irrelevant": 2},
+                "action": "list",
+                "status": "ok",
+                "total_explored": 3,
+                "counts": {"relevant": 1, "irrelevant": 2},
             },
         )
         result = self._call(action="list")
@@ -772,7 +858,8 @@ class TestPaperRouting:
 
     def test_no_args_routes_to_stats(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_paper_stats",
+            server,
+            "_paper_stats",
             lambda: json.dumps({"total_papers": 42, "with_pdf": 30}),
         )
         result = self._call()
@@ -813,13 +900,13 @@ class TestPaperRouting:
 
     def test_action_request(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_paper_request",
+            server,
+            "_paper_request",
             lambda key, doi, reason, tentative_title: json.dumps(
                 {"status": "requested", "key": key}
             ),
         )
-        result = self._call(action="request", key="smith2024",
-                            reason="need it")
+        result = self._call(action="request", key="smith2024", reason="need it")
         assert result["status"] == "requested"
 
     def test_action_request_no_key(self):
@@ -828,7 +915,8 @@ class TestPaperRouting:
 
     def test_action_requests(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_paper_list_requests",
+            server,
+            "_paper_list_requests",
             lambda: json.dumps({"count": 0, "requests": []}),
         )
         result = self._call(action="requests")
@@ -849,8 +937,7 @@ class TestPaperRouting:
         assert result["status"] == "updated"
 
     def test_key_with_raw_field_routes_to_set(self):
-        result = self._call(key="xu2022", raw_field="note",
-                            raw_value="test note")
+        result = self._call(key="xu2022", raw_field="note", raw_value="test note")
         assert result["status"] == "updated"
 
     def test_key_with_year_routes_to_set(self):
@@ -862,8 +949,7 @@ class TestPaperRouting:
         assert result["status"] == "updated"
 
     def test_multiple_write_fields(self):
-        result = self._call(key="xu2022", title="New", author="A, B",
-                            year="2023")
+        result = self._call(key="xu2022", title="New", author="A, B", year="2023")
         assert result["status"] == "updated"
 
     # --- Edge cases ---
@@ -871,7 +957,8 @@ class TestPaperRouting:
     def test_no_key_with_write_fields_routes_to_stats(self, monkeypatch):
         """Write fields without key can't route to set; falls through to stats."""
         monkeypatch.setattr(
-            server, "_paper_stats",
+            server,
+            "_paper_stats",
             lambda: json.dumps({"total_papers": 0}),
         )
         result = self._call(title="orphan title")
@@ -881,14 +968,14 @@ class TestPaperRouting:
         """action='list' takes priority over key-based routing."""
         captured = {}
         monkeypatch.setattr(
-            server, "_paper_list",
+            server,
+            "_paper_list",
             lambda tags, status, page: (
                 captured.update({"tags": tags, "status": status, "page": page}),
                 json.dumps({"total": 0, "papers": []}),
             )[-1],
         )
-        result = self._call(action="list", key="xu2022", tags="mof",
-                            status="valid")
+        result = self._call(action="list", key="xu2022", tags="mof", status="valid")
         assert result["total"] == 0
         assert captured["tags"] == "mof"
         assert captured["status"] == "valid"
@@ -897,7 +984,8 @@ class TestPaperRouting:
         """page param passes through to list (not used as get page)."""
         captured = {}
         monkeypatch.setattr(
-            server, "_paper_list",
+            server,
+            "_paper_list",
             lambda tags, status, page: (
                 captured.update({"page": page}),
                 json.dumps({"total": 0, "papers": []}),
@@ -910,7 +998,8 @@ class TestPaperRouting:
         """page=0 (default) becomes page=1 for list."""
         captured = {}
         monkeypatch.setattr(
-            server, "_paper_list",
+            server,
+            "_paper_list",
             lambda tags, status, page: (
                 captured.update({"page": page}),
                 json.dumps({"total": 0, "papers": []}),
@@ -921,13 +1010,13 @@ class TestPaperRouting:
 
     def test_action_rename_success(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_paper_rename",
+            server,
+            "_paper_rename",
             lambda old_key, new_key: json.dumps(
                 {"status": "renamed", "old_key": old_key, "new_key": new_key}
             ),
         )
-        result = self._call(key="xu2022", action="rename",
-                            new_key="xu2022mof")
+        result = self._call(key="xu2022", action="rename", new_key="xu2022mof")
         assert result["status"] == "renamed"
         assert result["old_key"] == "xu2022"
         assert result["new_key"] == "xu2022mof"
@@ -939,15 +1028,22 @@ class TestPaperRouting:
     def test_request_passes_all_fields(self, monkeypatch):
         captured = {}
         monkeypatch.setattr(
-            server, "_paper_request",
+            server,
+            "_paper_request",
             lambda key, doi, reason, tentative_title: (
-                captured.update({"key": key, "doi": doi, "reason": reason,
-                                 "tentative_title": tentative_title}),
+                captured.update(
+                    {"key": key, "doi": doi, "reason": reason, "tentative_title": tentative_title}
+                ),
                 json.dumps({"status": "requested"}),
             )[-1],
         )
-        self._call(action="request", key="s2024", doi="10.1/x",
-                   reason="need it", tentative_title="Smith 2024")
+        self._call(
+            action="request",
+            key="s2024",
+            doi="10.1/x",
+            reason="need it",
+            tentative_title="Smith 2024",
+        )
         assert captured["key"] == "s2024"
         assert captured["doi"] == "10.1/x"
         assert captured["reason"] == "need it"
@@ -971,7 +1067,8 @@ class TestDoiRouting:
 
     def test_no_args_routes_to_batch_check(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_doi_check",
+            server,
+            "_doi_check",
             lambda key: json.dumps({"checked": 0, "results": []}),
         )
         result = self._call()
@@ -979,7 +1076,8 @@ class TestDoiRouting:
 
     def test_key_routes_to_check(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_doi_check",
+            server,
+            "_doi_check",
             lambda key: json.dumps({"checked": 1, "results": [{"key": key}]}),
         )
         result = self._call(key="xu2022")
@@ -987,7 +1085,8 @@ class TestDoiRouting:
 
     def test_action_rejected(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_doi_list_rejected",
+            server,
+            "_doi_list_rejected",
             lambda: json.dumps({"count": 0, "rejected": []}),
         )
         result = self._call(action="rejected")
@@ -995,13 +1094,11 @@ class TestDoiRouting:
 
     def test_action_reject(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_doi_reject",
-            lambda doi, key, reason: json.dumps(
-                {"status": "rejected", "entry": {"doi": doi}}
-            ),
+            server,
+            "_doi_reject",
+            lambda doi, key, reason: json.dumps({"status": "rejected", "entry": {"doi": doi}}),
         )
-        result = self._call(action="reject", doi="10.1234/fake",
-                            reason="hallucinated")
+        result = self._call(action="reject", doi="10.1234/fake", reason="hallucinated")
         assert result["status"] == "rejected"
 
     def test_action_reject_no_doi(self):
@@ -1010,7 +1107,8 @@ class TestDoiRouting:
 
     def test_action_fetch(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_doi_fetch",
+            server,
+            "_doi_fetch",
             lambda key: json.dumps({"status": "fetched", "key": key}),
         )
         result = self._call(action="fetch", key="xu2022")
@@ -1023,14 +1121,14 @@ class TestDoiRouting:
     def test_reject_passes_key_and_reason(self, monkeypatch):
         captured = {}
         monkeypatch.setattr(
-            server, "_doi_reject",
+            server,
+            "_doi_reject",
             lambda doi, key, reason: (
                 captured.update({"doi": doi, "key": key, "reason": reason}),
                 json.dumps({"status": "rejected"}),
             )[-1],
         )
-        self._call(action="reject", doi="10.1/x", key="xu2022",
-                   reason="hallucinated")
+        self._call(action="reject", doi="10.1/x", key="xu2022", reason="hallucinated")
         assert captured["doi"] == "10.1/x"
         assert captured["key"] == "xu2022"
         assert captured["reason"] == "hallucinated"
@@ -1039,7 +1137,8 @@ class TestDoiRouting:
         """doi param without action='reject' doesn't interfere with check."""
         captured = {}
         monkeypatch.setattr(
-            server, "_doi_check",
+            server,
+            "_doi_check",
             lambda key: (
                 captured.update({"key": key}),
                 json.dumps({"checked": 1, "results": []}),
@@ -1053,7 +1152,8 @@ class TestDoiRouting:
         """No args passes empty key to _doi_check for batch mode."""
         captured = {}
         monkeypatch.setattr(
-            server, "_doi_check",
+            server,
+            "_doi_check",
             lambda key: (
                 captured.update({"key": key}),
                 json.dumps({"checked": 0, "results": []}),

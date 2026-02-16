@@ -12,7 +12,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import yaml
 
@@ -36,14 +35,19 @@ class TrackedPattern:
             try:
                 self._compiled = re.compile(self.pattern)
             except re.error as e:
-                raise TomeError(
-                    f"Invalid regex in tracked pattern '{self.name}': {e}"
-                ) from e
+                raise TomeError(f"Invalid regex in tracked pattern '{self.name}': {e}") from e
         return self._compiled
 
 
 # Default note field sets — used when config.yaml omits note_fields.
-DEFAULT_PAPER_FIELDS: list[str] = ["summary", "claims", "relevance", "limitations", "quality", "tags"]
+DEFAULT_PAPER_FIELDS: list[str] = [
+    "summary",
+    "claims",
+    "relevance",
+    "limitations",
+    "quality",
+    "tags",
+]
 DEFAULT_FILE_FIELDS: list[str] = ["intent", "status", "depends", "claims", "open"]
 
 
@@ -218,12 +222,14 @@ def load_config(tome_dir: Path) -> TomeConfig:
         name = entry.get("name", "")
         if not name:
             raise TomeError(f"Needful entry missing 'name': {entry}")
-        needful_tasks.append(NeedfulTask(
-            name=str(name),
-            description=str(entry.get("description", "")),
-            globs=[str(g) for g in entry.get("globs", ["sections/*.tex"])],
-            cadence_hours=float(entry.get("cadence_hours", 168)),
-        ))
+        needful_tasks.append(
+            NeedfulTask(
+                name=str(name),
+                description=str(entry.get("description", "")),
+                globs=[str(g) for g in entry.get("globs", ["sections/*.tex"])],
+                cadence_hours=float(entry.get("cadence_hours", 168)),
+            )
+        )
 
     # Parse note_fields
     nf = data.get("note_fields", {})
@@ -236,7 +242,9 @@ def load_config(tome_dir: Path) -> TomeConfig:
 
     return TomeConfig(
         roots=roots,
-        tex_globs=[str(g) for g in data.get("tex_globs", ["sections/*.tex", "appendix/*.tex", "main.tex"])],
+        tex_globs=[
+            str(g) for g in data.get("tex_globs", ["sections/*.tex", "appendix/*.tex", "main.tex"])
+        ],
         track=tracked,
         needful_tasks=needful_tasks,
         paper_note_fields=paper_nf,

@@ -10,28 +10,29 @@ Designed for verifying copypasted quotes against source PDFs.
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
-import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 # Smart quotes and related characters → ASCII equivalents
-_QUOTE_MAP = str.maketrans({
-    "\u2018": "'",   # '
-    "\u2019": "'",   # '
-    "\u201c": '"',   # "
-    "\u201d": '"',   # "
-    "\u2013": "-",   # –  en dash
-    "\u2014": "-",   # —  em dash
-    "\u00ad": "",    # soft hyphen
-    "\ufb01": "fi",  # ﬁ ligature (backup for NFKC miss)
-    "\ufb02": "fl",  # ﬂ ligature
-    "\ufb00": "ff",  # ﬀ ligature
-    "\ufb03": "ffi", # ﬃ ligature
-    "\ufb04": "ffl", # ﬄ ligature
-})
+_QUOTE_MAP = str.maketrans(
+    {
+        "\u2018": "'",  # '
+        "\u2019": "'",  # '
+        "\u201c": '"',  # "
+        "\u201d": '"',  # "
+        "\u2013": "-",  # –  en dash
+        "\u2014": "-",  # —  em dash
+        "\u00ad": "",  # soft hyphen
+        "\ufb01": "fi",  # ﬁ ligature (backup for NFKC miss)
+        "\ufb02": "fl",  # ﬂ ligature
+        "\ufb00": "ff",  # ﬀ ligature
+        "\ufb03": "ffi",  # ﬃ ligature
+        "\ufb04": "ffl",  # ﬄ ligature
+    }
+)
 
 # Regex for hyphen at end of line (word broken across lines)
 _HYPHEN_BREAK = re.compile(r"-\s*\n\s*")
@@ -65,8 +66,8 @@ class GrepMatch:
 
     key: str
     page: int
-    offset: int          # character offset in normalized text
-    context: str         # surrounding raw text (not normalized)
+    offset: int  # character offset in normalized text
+    context: str  # surrounding raw text (not normalized)
     raw_page_text: str = field(repr=False, default="")
 
 
@@ -127,13 +128,15 @@ def grep_paper(
             raw_end = min(len(raw_text), int((idx + len(norm_query)) * ratio) + context_chars // 2)
             context = raw_text[raw_start:raw_end].strip()
 
-            matches.append(GrepMatch(
-                key=key,
-                page=page_num,
-                offset=idx,
-                context=context,
-                raw_page_text=raw_text,
-            ))
+            matches.append(
+                GrepMatch(
+                    key=key,
+                    page=page_num,
+                    offset=idx,
+                    context=context,
+                    raw_page_text=raw_text,
+                )
+            )
 
             start = idx + 1  # advance past this match
 
@@ -155,11 +158,11 @@ _ZERO_WIDTH = re.compile(r"[\u200b\u200c\u200d\u2060\ufeff]")
 class Paragraph:
     """A paragraph extracted from raw PDF text."""
 
-    text_raw: str      # original with internal line breaks
-    text_clean: str    # hyphens rejoined, whitespace collapsed, case preserved
-    text_norm: str     # fully normalized (lowered) for matching
+    text_raw: str  # original with internal line breaks
+    text_clean: str  # hyphens rejoined, whitespace collapsed, case preserved
+    text_norm: str  # fully normalized (lowered) for matching
     page: int
-    index: int         # paragraph index within the page
+    index: int  # paragraph index within the page
 
 
 def clean_for_quote(raw_para: str) -> str:
@@ -194,13 +197,15 @@ def segment_paragraphs(raw_text: str, page: int) -> list[Paragraph]:
         if alpha_count < len(chunk) * 0.4:
             continue
 
-        paragraphs.append(Paragraph(
-            text_raw=chunk,
-            text_clean=clean_for_quote(chunk),
-            text_norm=normalize(chunk),
-            page=page,
-            index=i,
-        ))
+        paragraphs.append(
+            Paragraph(
+                text_raw=chunk,
+                text_clean=clean_for_quote(chunk),
+                text_norm=normalize(chunk),
+                page=page,
+                index=i,
+            )
+        )
 
     return paragraphs
 
@@ -287,7 +292,7 @@ class ParagraphMatch:
     key: str
     page: int
     score: float
-    text: str          # cleaned, quote-ready
+    text: str  # cleaned, quote-ready
 
 
 def _load_page_text(raw_dir: Path, key: str, page: int) -> str:
@@ -405,12 +410,14 @@ def grep_paper_paragraphs(
             text = page_texts  # will be serialized as dict
             page = all_paras[idx].page
 
-        results.append(ParagraphMatch(
-            key=key,
-            page=page,
-            score=round(score, 3),
-            text=text,
-        ))
+        results.append(
+            ParagraphMatch(
+                key=key,
+                page=page,
+                score=round(score, 3),
+                text=text,
+            )
+        )
 
     return results
 

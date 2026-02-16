@@ -1,7 +1,6 @@
 """Tests for tome.index — LaTeX index parsing and search."""
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -17,7 +16,6 @@ from tome.index import (
     save_index,
     search_index,
 )
-
 
 # ---------------------------------------------------------------------------
 # .idx line parsing
@@ -77,11 +75,16 @@ class TestParseIdxFile:
     def test_parse_file(self, tmp_path):
         idx = tmp_path / "main.idx"
         idx.write_text(
-            r"\indexentry{MOF}{12}" "\n"
-            r"\indexentry{MOF}{42}" "\n"
-            r"\indexentry{MOF!unit cell}{15}" "\n"
-            r"\indexentry{DNA}{88}" "\n"
-            r"\indexentry{boxel|see{MOF}}{0}" "\n",
+            r"\indexentry{MOF}{12}"
+            "\n"
+            r"\indexentry{MOF}{42}"
+            "\n"
+            r"\indexentry{MOF!unit cell}{15}"
+            "\n"
+            r"\indexentry{DNA}{88}"
+            "\n"
+            r"\indexentry{boxel|see{MOF}}{0}"
+            "\n",
             encoding="utf-8",
         )
         entries = parse_idx_file(idx)
@@ -184,8 +187,10 @@ class TestRebuildIndex:
         dot_tome.mkdir()
         idx = tmp_path / "main.idx"
         idx.write_text(
-            r"\indexentry{MOF}{12}" "\n"
-            r"\indexentry{DNA}{88}" "\n",
+            r"\indexentry{MOF}{12}"
+            "\n"
+            r"\indexentry{DNA}{88}"
+            "\n",
             encoding="utf-8",
         )
         index = rebuild_index(idx, dot_tome)
@@ -257,11 +262,13 @@ class TestSearch:
 
 class TestListAllTerms:
     def test_list(self):
-        index = build_index([
-            IndexEntry(term="Zebra", page=1),
-            IndexEntry(term="alpha", page=2),
-            IndexEntry(term="MOF", page=3),
-        ])
+        index = build_index(
+            [
+                IndexEntry(term="Zebra", page=1),
+                IndexEntry(term="alpha", page=2),
+                IndexEntry(term="MOF", page=3),
+            ]
+        )
         terms = list_all_terms(index)
         assert terms == ["alpha", "MOF", "Zebra"]
 
@@ -284,6 +291,7 @@ class TestIsStale:
 
     def test_cache_newer_than_idx(self, tmp_path):
         import time
+
         dot_tome = tmp_path / ".tome"
         dot_tome.mkdir()
         idx = tmp_path / "main.idx"
@@ -295,6 +303,7 @@ class TestIsStale:
 
     def test_idx_newer_than_cache(self, tmp_path):
         import time
+
         dot_tome = tmp_path / ".tome"
         dot_tome.mkdir()
         idx = tmp_path / "main.idx"

@@ -27,7 +27,7 @@ import json
 import shutil
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -138,7 +138,7 @@ def mark_done(
     record = {
         "task": task_name,
         "file": file_path,
-        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "completed_at": datetime.now(UTC).isoformat(),
         "file_sha256": file_sha256,
         "note": note,
     }
@@ -148,9 +148,7 @@ def mark_done(
     return record
 
 
-def get_completion(
-    data: dict[str, Any], task_name: str, file_path: str
-) -> dict[str, Any] | None:
+def get_completion(data: dict[str, Any], task_name: str, file_path: str) -> dict[str, Any] | None:
     """Get the last completion record for a (task, file) pair."""
     key = _completion_key(task_name, file_path)
     return data.get("completions", {}).get(key)
@@ -195,7 +193,7 @@ def score_item(
     - Hash-only tasks (cadence == 0): 0.0 if hash matches, 100.0 if changed
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
     if completion is None:
         return NeedfulItem(
@@ -216,7 +214,7 @@ def score_item(
     try:
         done_dt = datetime.fromisoformat(last_done)
         if done_dt.tzinfo is None:
-            done_dt = done_dt.replace(tzinfo=timezone.utc)
+            done_dt = done_dt.replace(tzinfo=UTC)
         hours_elapsed = (now - done_dt).total_seconds() / 3600.0
     except (ValueError, TypeError):
         # Corrupt timestamp — treat as never done
@@ -318,7 +316,7 @@ def rank_needful(
 
             try:
                 current_sha = sha256_file(abs_path)
-            except (OSError, IOError):
+            except OSError:
                 continue
 
             completion = get_completion(state, task.name, file_path)

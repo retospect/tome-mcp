@@ -7,10 +7,9 @@ from __future__ import annotations
 
 import json
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
 
 MANIFEST_VERSION = 1
 
@@ -104,7 +103,7 @@ def resolve_request(data: dict[str, Any], key: str) -> bool:
     req = get_request(data, key)
     if req is None:
         return False
-    req["resolved"] = datetime.now(timezone.utc).isoformat()
+    req["resolved"] = datetime.now(UTC).isoformat()
     return True
 
 
@@ -115,4 +114,4 @@ def list_open_requests(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 def now_iso() -> str:
     """Current UTC timestamp in ISO format."""
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()

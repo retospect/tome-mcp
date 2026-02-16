@@ -12,13 +12,12 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
 from tome.checksum import sha256_bytes, sha256_file
 from tome.config import TomeConfig, TrackedPattern
-from tome.errors import TomeError
 
 # ── Built-in regex patterns ──────────────────────────────────────────────
 
@@ -182,34 +181,40 @@ def analyze_file(
                         for gi, gname in enumerate(tp.groups):
                             if gi + 1 <= len(m.groups()):
                                 groups[gname] = m.group(gi + 1)
-                        result.tracked.append(TrackedMatch(
-                            name=tp.name,
-                            line=i + 1,
-                            groups=groups,
-                            raw_match=m.group(0),
-                        ))
+                        result.tracked.append(
+                            TrackedMatch(
+                                name=tp.name,
+                                line=i + 1,
+                                groups=groups,
+                                raw_match=m.group(0),
+                            )
+                        )
             continue
 
         # Labels
         for m in LABEL_RE.finditer(line):
             label = m.group(1)
             nearest_label = label
-            result.labels.append(Label(
-                name=label,
-                label_type=_infer_label_type(label),
-                line=i + 1,
-                snippet=_get_context(lines, i),
-            ))
+            result.labels.append(
+                Label(
+                    name=label,
+                    label_type=_infer_label_type(label),
+                    line=i + 1,
+                    snippet=_get_context(lines, i),
+                )
+            )
 
         # Refs
         for m in REF_RE.finditer(line):
             ref_type = m.group(1) or "bare"
-            result.refs.append(Ref(
-                target=m.group(2),
-                ref_type=ref_type,
-                line=i + 1,
-                nearest_label=nearest_label,
-            ))
+            result.refs.append(
+                Ref(
+                    target=m.group(2),
+                    ref_type=ref_type,
+                    line=i + 1,
+                    nearest_label=nearest_label,
+                )
+            )
 
         # Citations
         for m in CITE_RE.finditer(line):
@@ -219,21 +224,25 @@ def analyze_file(
             for key in keys_str.split(","):
                 key = key.strip()
                 if key:
-                    result.cites.append(Citation(
-                        key=key,
-                        macro=macro,
-                        line=i + 1,
-                        is_deep=is_deep,
-                        nearest_label=nearest_label,
-                    ))
+                    result.cites.append(
+                        Citation(
+                            key=key,
+                            macro=macro,
+                            line=i + 1,
+                            is_deep=is_deep,
+                            nearest_label=nearest_label,
+                        )
+                    )
 
         # Section headings
         for m in SECTION_RE.finditer(line):
-            result.sections.append(SectionHeading(
-                level=m.group(1),
-                title=m.group(2),
-                line=i + 1,
-            ))
+            result.sections.append(
+                SectionHeading(
+                    level=m.group(1),
+                    title=m.group(2),
+                    line=i + 1,
+                )
+            )
 
         # \input / \include
         for m in INPUT_RE.finditer(line):
@@ -254,12 +263,14 @@ def analyze_file(
                     for gi, gname in enumerate(tp.groups):
                         if gi + 1 <= len(m.groups()):
                             groups[gname] = m.group(gi + 1)
-                    result.tracked.append(TrackedMatch(
-                        name=tp.name,
-                        line=i + 1,
-                        groups=groups,
-                        raw_match=m.group(0),
-                    ))
+                    result.tracked.append(
+                        TrackedMatch(
+                            name=tp.name,
+                            line=i + 1,
+                            groups=groups,
+                            raw_match=m.group(0),
+                        )
+                    )
 
     result.word_count = _strip_latex_for_wordcount(text)
     return result
@@ -399,10 +410,15 @@ class DocAnalysis:
         out: list[dict[str, Any]] = []
         for fa in self.files.values():
             for c in fa.cites:
-                out.append({
-                    "key": c.key, "macro": c.macro, "file": fa.file,
-                    "line": c.line, "is_deep": c.is_deep,
-                })
+                out.append(
+                    {
+                        "key": c.key,
+                        "macro": c.macro,
+                        "file": fa.file,
+                        "line": c.line,
+                        "is_deep": c.is_deep,
+                    }
+                )
         return out
 
 
@@ -440,30 +456,42 @@ def analyze_document(
         for ref in fa.refs:
             all_ref_targets.add(ref.target)
             if ref.target not in all_labels:
-                doc.undefined_refs.append({
-                    "file": fa.file, "line": ref.line,
-                    "target": ref.target, "ref_type": ref.ref_type,
-                })
+                doc.undefined_refs.append(
+                    {
+                        "file": fa.file,
+                        "line": ref.line,
+                        "target": ref.target,
+                        "ref_type": ref.ref_type,
+                    }
+                )
 
     for label, info in all_labels.items():
         if label not in all_ref_targets:
-            doc.orphan_labels.append({
-                "label": label, "file": info["file"],
-                "line": info["line"], "type": info["type"],
-            })
+            doc.orphan_labels.append(
+                {
+                    "label": label,
+                    "file": info["file"],
+                    "line": info["line"],
+                    "type": info["type"],
+                }
+            )
 
     # Shallow high-use cites: cited ≥3× with no deep quote
     from collections import defaultdict
+
     by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for c in doc.all_cites:
         by_key[c["key"]].append(c)
     for key, cs in by_key.items():
         if len(cs) >= 3 and not any(c["is_deep"] for c in cs):
             files = sorted(set(c["file"] for c in cs))
-            doc.shallow_high_use.append({
-                "key": key, "count": len(cs),
-                "files": files,
-            })
+            doc.shallow_high_use.append(
+                {
+                    "key": key,
+                    "count": len(cs),
+                    "files": files,
+                }
+            )
 
     # Orphan .tex files: on disk but not in the \input tree
     doc.orphan_files = find_orphan_files(tree, project_root)
@@ -547,7 +575,7 @@ def _dict_to_file_analysis(d: dict[str, Any]) -> FileAnalysis:
     return FileAnalysis(
         file=d["file"],
         file_sha256=d["file_sha256"],
-        labels=[Label(**l) for l in d.get("labels", [])],
+        labels=[Label(**lb) for lb in d.get("labels", [])],
         refs=[Ref(**r) for r in d.get("refs", [])],
         cites=[Citation(**c) for c in d.get("cites", [])],
         sections=[SectionHeading(**s) for s in d.get("sections", [])],

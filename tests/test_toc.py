@@ -8,14 +8,14 @@ from pathlib import Path
 import pytest
 
 from tome.toc import (
-    FloatEntry,
     TocEntry,
     _clean_latex,
+    _compute_matched,
     _extract_brace_arg,
     _normalize_file,
     _parse_contentsline,
-    _parse_title,
     _parse_float_title,
+    _parse_title,
     attach_floats,
     attach_labels,
     build_hierarchy,
@@ -24,9 +24,7 @@ from tome.toc import (
     parse_labels,
     parse_toc,
     render_toc,
-    _compute_matched,
 )
-
 
 # ── Fixtures ────────────────────────────────────────────────────────────
 
@@ -156,7 +154,9 @@ class TestParseContentsline:
         assert "tomeinfo" in raw_title
 
     def test_unnumbered_section(self):
-        line = r"\contentsline {section}{Executive Overview\tomeinfo {main.tex}{10}}{2}{Doc-Start}%"
+        line = (
+            r"\contentsline {section}{Executive Overview\tomeinfo {main.tex}{10}}{2}{Doc-Start}%"
+        )
         result = _parse_contentsline(line)
         assert result is not None
         assert result[0] == "section"
@@ -252,7 +252,7 @@ class TestParseToc:
         assert entries == []
 
     def test_skips_figure_table_levels(self, tmp_path: Path):
-        toc = r'\contentsline {figure}{\numberline {1}Caption}{5}{fig.1}%'
+        toc = r"\contentsline {figure}{\numberline {1}Caption}{5}{fig.1}%"
         (tmp_path / "main.toc").write_text(toc, encoding="utf-8")
         entries = parse_toc(tmp_path / "main.toc")
         assert entries == []  # figure level not in LEVEL_DEPTH
@@ -369,7 +369,9 @@ class TestFiltering:
 
     def test_file_filter(self, toc_project: Path):
         roots = self._roots(toc_project)
-        matched = _compute_matched(roots, query="", file_filter="arch.tex", page_lo=0, page_hi=999_999)
+        matched = _compute_matched(
+            roots, query="", file_filter="arch.tex", page_lo=0, page_hi=999_999
+        )
         assert matched is not None
 
         arch = roots[1].children[1]  # §2 Architecture (arch.tex)
@@ -460,10 +462,10 @@ class TestRender:
         output = render_toc(roots, max_depth=5, show_figures=False)
         lines = output.split("\n")
         # §1 Background shows full path
-        bg_line = [l for l in lines if "Background" in l][0]
+        bg_line = [ln for ln in lines if "Background" in ln][0]
         assert "sections/bg.tex" in bg_line
         # §1.1 should show just :line (same file)
-        mof_line = [l for l in lines if "Metal-Organic" in l][0]
+        mof_line = [ln for ln in lines if "Metal-Organic" in ln][0]
         assert "sections/bg.tex" not in mof_line
         assert ":10" in mof_line
 

@@ -1,16 +1,14 @@
 """Tests for tome.needful — recurring task tracking and scoring."""
 
 import json
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from tome.needful import (
-    NeedfulTask,
-    NeedfulItem,
     SCORE_FILE_CHANGED,
     SCORE_NEVER_DONE,
+    NeedfulTask,
     get_completion,
     load_state,
     mark_done,
@@ -114,7 +112,7 @@ class TestMarkDone:
 
 
 class TestScoring:
-    NOW = datetime(2026, 2, 14, 12, 0, 0, tzinfo=timezone.utc)
+    NOW = datetime(2026, 2, 14, 12, 0, 0, tzinfo=UTC)
 
     def _task(self, name="review", cadence=168.0):
         return NeedfulTask(name=name, description=f"Do {name}", cadence_hours=cadence)
@@ -190,7 +188,7 @@ class TestScoring:
 
 
 class TestRanking:
-    NOW = datetime(2026, 2, 14, 12, 0, 0, tzinfo=timezone.utc)
+    NOW = datetime(2026, 2, 14, 12, 0, 0, tzinfo=UTC)
 
     def test_rank_never_done_files(self, project):
         tasks = [NeedfulTask(name="review", globs=["sections/*.tex"], cadence_hours=168)]
@@ -203,6 +201,7 @@ class TestRanking:
         tasks = [NeedfulTask(name="sync", globs=["sections/*.tex"], cadence_hours=0)]
         # Mark both files as done with current hash
         from tome.checksum import sha256_file
+
         state = {"completions": {}}
         for name in ["sections/alpha.tex", "sections/beta.tex"]:
             sha = sha256_file(project / name)
@@ -220,6 +219,7 @@ class TestRanking:
         tasks = [NeedfulTask(name="review", globs=["sections/*.tex"], cadence_hours=168)]
         # alpha done recently (1h ago relative to NOW), beta never done
         from tome.checksum import sha256_file
+
         state = {"completions": {}}
         sha = sha256_file(project / "sections" / "alpha.tex")
         state["completions"]["review::sections/alpha.tex"] = {

@@ -16,7 +16,6 @@ from rapidfuzz import fuzz
 from tome.checksum import sha256_file
 from tome.vault import catalog_get, catalog_get_by_doi
 
-
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
@@ -94,15 +93,15 @@ def check_pdf_integrity(pdf_path: Path) -> GateResult:
         page_count = len(doc)
         doc.close()
     except Exception as e:
-        return GateResult(
-            gate="pdf_integrity", passed=False, message=f"Cannot open PDF: {e}"
-        )
+        return GateResult(gate="pdf_integrity", passed=False, message=f"Cannot open PDF: {e}")
 
     if page_count == 0:
         return GateResult(gate="pdf_integrity", passed=False, message="PDF has 0 pages")
 
     return GateResult(
-        gate="pdf_integrity", passed=True, message=f"{page_count} pages",
+        gate="pdf_integrity",
+        passed=True,
+        message=f"{page_count} pages",
         data={"page_count": page_count},
     )
 
@@ -121,7 +120,9 @@ def check_dedup(pdf_path: Path, catalog_db: Path | None = None) -> GateResult:
         )
 
     return GateResult(
-        gate="dedup", passed=True, message="No duplicate found",
+        gate="dedup",
+        passed=True,
+        message="No duplicate found",
         data={"content_hash": content_hash},
     )
 
@@ -132,15 +133,11 @@ def check_text_extractable(pdf_path: Path, min_chars: int = 50) -> GateResult:
         doc = fitz.open(str(pdf_path))
         if len(doc) == 0:
             doc.close()
-            return GateResult(
-                gate="text_extractable", passed=False, message="PDF has 0 pages"
-            )
+            return GateResult(gate="text_extractable", passed=False, message="PDF has 0 pages")
         text = doc[0].get_text().strip()
         doc.close()
     except Exception as e:
-        return GateResult(
-            gate="text_extractable", passed=False, message=f"Extraction error: {e}"
-        )
+        return GateResult(gate="text_extractable", passed=False, message=f"Extraction error: {e}")
 
     if len(text) < min_chars:
         return GateResult(
@@ -151,7 +148,8 @@ def check_text_extractable(pdf_path: Path, min_chars: int = 50) -> GateResult:
         )
 
     return GateResult(
-        gate="text_extractable", passed=True,
+        gate="text_extractable",
+        passed=True,
         message=f"First page: {len(text)} chars",
         data={"chars": len(text)},
     )
@@ -160,9 +158,7 @@ def check_text_extractable(pdf_path: Path, min_chars: int = 50) -> GateResult:
 def check_text_quality(page_text: str, min_quality: float = 0.5) -> GateResult:
     """Gate: Text is not garbled (reasonable ASCII ratio)."""
     if not page_text:
-        return GateResult(
-            gate="text_quality", passed=False, message="Empty text"
-        )
+        return GateResult(gate="text_quality", passed=False, message="Empty text")
 
     ascii_count = sum(1 for c in page_text if c.isascii())
     quality = ascii_count / len(page_text)
@@ -176,7 +172,8 @@ def check_text_quality(page_text: str, min_quality: float = 0.5) -> GateResult:
         )
 
     return GateResult(
-        gate="text_quality", passed=True,
+        gate="text_quality",
+        passed=True,
         message=f"Text quality: {quality:.2f}",
         data={"quality": round(quality, 3)},
     )
@@ -203,16 +200,14 @@ def check_doi_title_match(
             },
         )
 
-    score = fuzz.token_set_ratio(
-        extracted_title.lower(), crossref_title.lower()
-    ) / 100.0
+    score = fuzz.token_set_ratio(extracted_title.lower(), crossref_title.lower()) / 100.0
 
     if score < threshold:
         return GateResult(
             gate="doi_title_match",
             passed=False,
             message=f"Title mismatch (score {score:.2f}): "
-                    f"PDF='{extracted_title[:80]}' vs CrossRef='{crossref_title[:80]}'",
+            f"PDF='{extracted_title[:80]}' vs CrossRef='{crossref_title[:80]}'",
             data={
                 "score": round(score, 3),
                 "extracted_title": extracted_title,
@@ -221,7 +216,8 @@ def check_doi_title_match(
         )
 
     return GateResult(
-        gate="doi_title_match", passed=True,
+        gate="doi_title_match",
+        passed=True,
         message=f"Title match score: {score:.2f}",
         data={"score": round(score, 3)},
     )
@@ -230,9 +226,7 @@ def check_doi_title_match(
 def check_doi_duplicate(doi: str | None, catalog_db: Path | None = None) -> GateResult:
     """Gate: DOI not already in vault (different PDF, same DOI)."""
     if not doi:
-        return GateResult(
-            gate="doi_duplicate", passed=True, message="No DOI to check"
-        )
+        return GateResult(gate="doi_duplicate", passed=True, message="No DOI to check")
 
     existing = catalog_get_by_doi(doi, catalog_db)
     if existing:
@@ -244,7 +238,9 @@ def check_doi_duplicate(doi: str | None, catalog_db: Path | None = None) -> Gate
         )
 
     return GateResult(
-        gate="doi_duplicate", passed=True, message="DOI not in vault",
+        gate="doi_duplicate",
+        passed=True,
+        message="DOI not in vault",
         data={"doi": doi},
     )
 
@@ -259,9 +255,7 @@ def check_title_fuzzy_dedup(
     Catches same-paper-different-PDF-source duplicates.
     """
     if not title:
-        return GateResult(
-            gate="title_dedup", passed=True, message="No title to check"
-        )
+        return GateResult(gate="title_dedup", passed=True, message="No title to check")
 
     from tome.vault import catalog_list
 
@@ -283,9 +277,7 @@ def check_title_fuzzy_dedup(
                 },
             )
 
-    return GateResult(
-        gate="title_dedup", passed=True, message="No similar titles found"
-    )
+    return GateResult(gate="title_dedup", passed=True, message="No similar titles found")
 
 
 # ---------------------------------------------------------------------------

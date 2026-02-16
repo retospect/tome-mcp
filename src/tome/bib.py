@@ -63,6 +63,7 @@ def get_entry(library: bibtexparser.Library, key: str) -> Entry:
     entries_dict = {e.key: e for e in library.entries}
     if key not in entries_dict:
         import difflib
+
         near = difflib.get_close_matches(key, entries_dict.keys(), n=5, cutoff=0.5)
         raise PaperNotFound(key, near=near)
     return entries_dict[key]
@@ -187,6 +188,7 @@ def rename_key(library: bibtexparser.Library, old_key: str, new_key: str) -> Ent
     existing_keys = {e.key for e in library.entries}
     if old_key not in existing_keys:
         import difflib
+
         near = difflib.get_close_matches(old_key, existing_keys, n=5, cutoff=0.5)
         raise PaperNotFound(old_key, near=near)
     if new_key in existing_keys:
@@ -263,8 +265,7 @@ def _check_roundtrip(
     if gained:
         raise BibWriteError(
             path.name,
-            f"Roundtrip gained {len(gained)} unexpected entries: "
-            f"{', '.join(sorted(gained)[:5])}",
+            f"Roundtrip gained {len(gained)} unexpected entries: {', '.join(sorted(gained)[:5])}",
         )
 
     # Check field counts per entry

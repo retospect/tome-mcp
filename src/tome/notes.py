@@ -11,12 +11,13 @@ Default fields: summary, claims, relevance, limitations, quality, tags.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import yaml
 
 # Legacy default — kept for backward compat; use config for the real set.
-DEFAULT_PAPER_FIELDS = frozenset({"summary", "claims", "relevance", "limitations", "quality", "tags"})
+DEFAULT_PAPER_FIELDS = frozenset(
+    {"summary", "claims", "relevance", "limitations", "quality", "tags"}
+)
 
 
 def notes_dir(tome_dir: Path) -> Path:

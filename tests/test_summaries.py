@@ -1,7 +1,6 @@
 """Tests for tome.summaries."""
 
 import json
-from pathlib import Path
 
 import pytest
 
@@ -79,7 +78,9 @@ class TestSetGet:
 
     def test_partial_update_preserves_existing(self):
         data = {}
-        set_summary(data, "a.tex", "full summary", "short", [{"lines": "1-10", "description": "intro"}])
+        set_summary(
+            data, "a.tex", "full summary", "short", [{"lines": "1-10", "description": "intro"}]
+        )
         # Update only summary, keep short and sections
         set_summary(data, "a.tex", "updated summary", "", None)
         assert data["a.tex"]["summary"] == "updated summary"

@@ -30,11 +30,16 @@ def test_rapid_fire_single_process(shared_bib: Path) -> None:
     """50 sequential writes from one process — no corruption."""
     for i in range(50):
         lib = parse_bib(shared_bib)
-        add_entry(lib, f"rapid{i}", "article", {
-            "title": f"Rapid fire entry {i}",
-            "author": "Fast, Writer",
-            "year": "2025",
-        })
+        add_entry(
+            lib,
+            f"rapid{i}",
+            "article",
+            {
+                "title": f"Rapid fire entry {i}",
+                "author": "Fast, Writer",
+                "year": "2025",
+            },
+        )
         write_bib(lib, shared_bib)
 
     lib = parse_bib(shared_bib)

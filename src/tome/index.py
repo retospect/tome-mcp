@@ -19,19 +19,16 @@ from __future__ import annotations
 import json
 import re
 import shutil
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
 
 # ── .idx line parser ─────────────────────────────────────────────────────
 
 # Matches: \indexentry{TERM|FORMAT}{PAGE}  or  \indexentry{TERM}{PAGE}
 # The format field may contain nested braces (e.g. see{target}),
 # so we match greedily up to the last }{digits} boundary.
-_IDX_RE = re.compile(
-    r"\\indexentry\{(.+)\}\{(\d+)\}"
-)
+_IDX_RE = re.compile(r"\\indexentry\{(.+)\}\{(\d+)\}")
 
 # \index{} in .tex source (for analysis.py / corpus tracking)
 INDEX_TEX_RE = re.compile(r"\\index\{([^}]+)\}")
@@ -72,7 +69,7 @@ def parse_idx_line(line: str) -> IndexEntry | None:
             depth -= 1
         elif ch == "|" and depth == 0:
             raw_term = raw_content[:ci]
-            fmt = raw_content[ci + 1:]
+            fmt = raw_content[ci + 1 :]
             break
 
     # Split on ! for subterms (LaTeX index convention)
@@ -263,10 +260,12 @@ def search_index(
         matching_subterms: list[dict[str, Any]] = []
         for sub, sub_data in data.get("subterms", {}).items():
             if query_lower in sub.lower():
-                matching_subterms.append({
-                    "subterm": sub,
-                    "pages": sub_data["pages"],
-                })
+                matching_subterms.append(
+                    {
+                        "subterm": sub,
+                        "pages": sub_data["pages"],
+                    }
+                )
                 matched = True
 
         if matched:
@@ -276,12 +275,11 @@ def search_index(
             }
             if data.get("subterms"):
                 result["subterms"] = [
-                    {"subterm": s, "pages": sd["pages"]}
-                    for s, sd in data["subterms"].items()
+                    {"subterm": s, "pages": sd["pages"]} for s, sd in data["subterms"].items()
                 ]
             if data.get("see"):
                 result["see"] = data["see"]
-            if matching_subterms and not (query_lower in term_lower):
+            if matching_subterms and query_lower not in term_lower:
                 # Only specific subterms matched, highlight them
                 result["matched_subterms"] = matching_subterms
             results.append(result)

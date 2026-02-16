@@ -30,7 +30,6 @@ from tome.errors import (
     UnsafeInput,
 )
 
-
 # ---------------------------------------------------------------------------
 # Hierarchy
 # ---------------------------------------------------------------------------
@@ -39,19 +38,35 @@ from tome.errors import (
 class TestHierarchy:
     def test_all_inherit_tome_error(self):
         classes = [
-            PaperNotFound, PageOutOfRange, DuplicateKey, DOIResolutionFailed,
-            IngestFailed, BibParseError, BibWriteError, FigureNotFound,
-            TextNotExtracted, APIError, UnsafeInput,
-            ConfigError, RootNotFound, RootFileNotFound,
-            NoBibFile, NoTexFiles, ChromaDBError, UnpaywallNotConfigured,
+            PaperNotFound,
+            PageOutOfRange,
+            DuplicateKey,
+            DOIResolutionFailed,
+            IngestFailed,
+            BibParseError,
+            BibWriteError,
+            FigureNotFound,
+            TextNotExtracted,
+            APIError,
+            UnsafeInput,
+            ConfigError,
+            RootNotFound,
+            RootFileNotFound,
+            NoBibFile,
+            NoTexFiles,
+            ChromaDBError,
+            UnpaywallNotConfigured,
         ]
         for cls in classes:
             assert issubclass(cls, TomeError), f"{cls.__name__} not a TomeError subclass"
 
     def test_config_subtypes(self):
         config_classes = [
-            RootNotFound, RootFileNotFound,
-            NoBibFile, NoTexFiles, UnpaywallNotConfigured,
+            RootNotFound,
+            RootFileNotFound,
+            NoBibFile,
+            NoTexFiles,
+            UnpaywallNotConfigured,
         ]
         for cls in config_classes:
             assert issubclass(cls, ConfigError), f"{cls.__name__} not a ConfigError subclass"
@@ -325,37 +340,43 @@ class TestUnpaywallNotConfigured:
 class TestCatchAll:
     """Verify every exception can be raised/caught in a single handler."""
 
-    @pytest.mark.parametrize("exc", [
-        PaperNotFound("k"),
-        PageOutOfRange("k", 5, 3),
-        DuplicateKey("k"),
-        DOIResolutionFailed("10.1/x", 404),
-        IngestFailed("p.pdf", "reason"),
-        BibParseError("f.bib", "detail"),
-        BibWriteError("f.bib", "detail"),
-        FigureNotFound("k", "fig1"),
-        TextNotExtracted("k"),
-        APIError("svc", 500),
-        UnsafeInput("field", "val", "reason"),
-        ConfigError("detail"),
-        RootNotFound("r", []),
-        RootFileNotFound("r", "f.tex", "/root"),
-        NoBibFile("/bib"),
-        NoTexFiles(["*.tex"]),
-        ChromaDBError("detail"),
-        UnpaywallNotConfigured(),
-    ])
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            PaperNotFound("k"),
+            PageOutOfRange("k", 5, 3),
+            DuplicateKey("k"),
+            DOIResolutionFailed("10.1/x", 404),
+            IngestFailed("p.pdf", "reason"),
+            BibParseError("f.bib", "detail"),
+            BibWriteError("f.bib", "detail"),
+            FigureNotFound("k", "fig1"),
+            TextNotExtracted("k"),
+            APIError("svc", 500),
+            UnsafeInput("field", "val", "reason"),
+            ConfigError("detail"),
+            RootNotFound("r", []),
+            RootFileNotFound("r", "f.tex", "/root"),
+            NoBibFile("/bib"),
+            NoTexFiles(["*.tex"]),
+            ChromaDBError("detail"),
+            UnpaywallNotConfigured(),
+        ],
+    )
     def test_caught_as_tome_error(self, exc):
         with pytest.raises(TomeError):
             raise exc
 
-    @pytest.mark.parametrize("exc", [
-        RootNotFound("r", []),
-        RootFileNotFound("r", "f.tex", "/root"),
-        NoBibFile("/bib"),
-        NoTexFiles(["*.tex"]),
-        UnpaywallNotConfigured(),
-    ])
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            RootNotFound("r", []),
+            RootFileNotFound("r", "f.tex", "/root"),
+            NoBibFile("/bib"),
+            NoTexFiles(["*.tex"]),
+            UnpaywallNotConfigured(),
+        ],
+    )
     def test_caught_as_config_error(self, exc):
         with pytest.raises(ConfigError):
             raise exc

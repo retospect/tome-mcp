@@ -8,7 +8,7 @@ boundary detection, returning chunks with char offsets for traceability.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 # Sentence-ending pattern: period/question/exclamation followed by whitespace

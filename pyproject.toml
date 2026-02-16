@@ -103,6 +103,10 @@ line-length = 99
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W", "UP"]
+ignore = ["E501"]  # line length managed by ruff format
+
+[tool.ruff.lint.per-file-ignores]
+"tests/test_git_diff.py" = ["W293"]  # intentional trailing whitespace in diff fixtures
 
 [tool.bumpversion]
 current_version = "0.1.0"

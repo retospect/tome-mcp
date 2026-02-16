@@ -15,14 +15,12 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 import chromadb
 from chromadb.api.types import EmbeddingFunction
-
-from tome.chunk import chunk_text
 
 # Collection names
 PAPER_CHUNKS = "paper_chunks"
@@ -414,10 +412,17 @@ def search_all(
         List of result dicts sorted by distance (best first).
     """
     paper_results = search_papers(
-        vault_client, query, n=n, keys=keys, embed_fn=embed_fn,
+        vault_client,
+        query,
+        n=n,
+        keys=keys,
+        embed_fn=embed_fn,
     )
     corpus_results = search_corpus(
-        project_client, query, n=n, embed_fn=embed_fn,
+        project_client,
+        query,
+        n=n,
+        embed_fn=embed_fn,
     )
 
     merged = paper_results + corpus_results

@@ -214,9 +214,7 @@ class APIError(TomeError):
                 f"Check your network connection. {detail}"
             )
         else:
-            msg = (
-                f"{service} returned HTTP {status_code}. {detail}"
-            )
+            msg = f"{service} returned HTTP {status_code}. {detail}"
         super().__init__(msg.strip())
         self.service = service
         self.status_code = status_code

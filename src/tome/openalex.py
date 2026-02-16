@@ -61,7 +61,7 @@ def _parse_work(data: dict[str, Any]) -> OAWork:
 
     doi = data.get("doi")
     if doi and doi.startswith("https://doi.org/"):
-        doi = doi[len("https://doi.org/"):]
+        doi = doi[len("https://doi.org/") :]
 
     oa = data.get("open_access", {})
     oa_url = oa.get("oa_url")
@@ -142,7 +142,7 @@ def get_work_by_doi(doi: str) -> OAWork | None:
     try:
         resp = get_with_retry(url, params=params, timeout=REQUEST_TIMEOUT)
     except (httpx.ConnectError, httpx.TimeoutException):
-        raise APIError("OpenAlex", 0, f"DOI lookup timed out.")
+        raise APIError("OpenAlex", 0, "DOI lookup timed out.")
     if resp.status_code == 429 or resp.status_code >= 500:
         raise APIError("OpenAlex", resp.status_code)
     if resp.status_code != 200:
@@ -151,9 +151,7 @@ def get_work_by_doi(doi: str) -> OAWork | None:
     return _parse_work(resp.json())
 
 
-def flag_in_library(
-    works: list[OAWork], library_dois: set[str]
-) -> list[tuple[OAWork, bool]]:
+def flag_in_library(works: list[OAWork], library_dois: set[str]) -> list[tuple[OAWork, bool]]:
     """Mark which OpenAlex works are already in the local library.
 
     Args:

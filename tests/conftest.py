@@ -1,7 +1,6 @@
 """Shared test fixtures for Tome."""
 
 import json
-import shutil
 import textwrap
 from pathlib import Path
 

@@ -16,7 +16,6 @@ from tome.git_diff import (
     git_root,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures — real git repos in tmp_path
 # ---------------------------------------------------------------------------
@@ -28,11 +27,15 @@ def git_repo(tmp_path):
     subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
     subprocess.run(
         ["git", "config", "user.email", "test@test.com"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     subprocess.run(
         ["git", "config", "user.name", "Test"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
 
     sections = tmp_path / "sections"
@@ -52,7 +55,9 @@ def git_repo(tmp_path):
     subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True, check=True)
     subprocess.run(
         ["git", "commit", "-m", "initial"],
-        cwd=tmp_path, capture_output=True, check=True,
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
     )
     return tmp_path
 
@@ -61,7 +66,10 @@ def _commit_sha(repo: Path) -> str:
     """Get current HEAD short SHA."""
     result = subprocess.run(
         ["git", "rev-parse", "--short", "HEAD"],
-        cwd=repo, capture_output=True, text=True, check=True,
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return result.stdout.strip()
 
@@ -218,8 +226,11 @@ class TestDiffResultFormat:
 
     def test_no_baseline(self):
         r = DiffResult(
-            file="test.tex", status="no_baseline",
-            head_sha="abc1234", line_count=100, task="review_pass_a",
+            file="test.tex",
+            status="no_baseline",
+            head_sha="abc1234",
+            line_count=100,
+            task="review_pass_a",
         )
         text = r.format()
         assert "No baseline" in text
@@ -228,16 +239,20 @@ class TestDiffResultFormat:
 
     def test_no_changes(self):
         r = DiffResult(
-            file="test.tex", status="no_changes",
-            base_sha="abc1234", head_sha="def5678",
+            file="test.tex",
+            status="no_changes",
+            base_sha="abc1234",
+            head_sha="def5678",
         )
         text = r.format()
         assert "No changes" in text
 
     def test_error(self):
         r = DiffResult(
-            file="test.tex", status="error",
-            base_sha="abc1234", message="Base commit not found",
+            file="test.tex",
+            status="error",
+            base_sha="abc1234",
+            message="Base commit not found",
         )
         text = r.format()
         assert "Error:" in text
@@ -245,15 +260,27 @@ class TestDiffResultFormat:
 
     def test_ok_with_hunks(self):
         hunks = [
-            Hunk(old_start=4, old_count=4, new_start=4, new_count=6,
-                 heading="§§ Background", lines_added=2, lines_removed=0,
-                 diff_text="@@ -4,4 +4,6 @@\n+new line"),
+            Hunk(
+                old_start=4,
+                old_count=4,
+                new_start=4,
+                new_count=6,
+                heading="§§ Background",
+                lines_added=2,
+                lines_removed=0,
+                diff_text="@@ -4,4 +4,6 @@\n+new line",
+            ),
         ]
         r = DiffResult(
-            file="sections/demo.tex", status="ok",
-            base_sha="abc1234", head_sha="def5678",
-            task="review_pass_a", last_done="2026-02-12T14:30:00Z",
-            total_added=2, total_removed=0, hunks=hunks,
+            file="sections/demo.tex",
+            status="ok",
+            base_sha="abc1234",
+            head_sha="def5678",
+            task="review_pass_a",
+            last_done="2026-02-12T14:30:00Z",
+            total_added=2,
+            total_removed=0,
+            hunks=hunks,
         )
         text = r.format()
         assert "file: sections/demo.tex" in text
@@ -266,14 +293,33 @@ class TestDiffResultFormat:
 
     def test_multiple_regions_pluralized(self):
         hunks = [
-            Hunk(old_start=1, old_count=1, new_start=1, new_count=2,
-                 heading="§ A", lines_added=1, diff_text=""),
-            Hunk(old_start=10, old_count=1, new_start=11, new_count=2,
-                 heading="§ B", lines_added=1, diff_text=""),
+            Hunk(
+                old_start=1,
+                old_count=1,
+                new_start=1,
+                new_count=2,
+                heading="§ A",
+                lines_added=1,
+                diff_text="",
+            ),
+            Hunk(
+                old_start=10,
+                old_count=1,
+                new_start=11,
+                new_count=2,
+                heading="§ B",
+                lines_added=1,
+                diff_text="",
+            ),
         ]
         r = DiffResult(
-            file="t.tex", status="ok", base_sha="x", head_sha="y",
-            total_added=2, total_removed=0, hunks=hunks,
+            file="t.tex",
+            status="ok",
+            base_sha="x",
+            head_sha="y",
+            total_added=2,
+            total_removed=0,
+            hunks=hunks,
         )
         assert "2 regions" in r.format()
 
@@ -301,7 +347,8 @@ class TestFileDiffIntegration:
         subprocess.run(["git", "add", "."], cwd=git_repo, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "add results"],
-            cwd=git_repo, capture_output=True,
+            cwd=git_repo,
+            capture_output=True,
         )
 
         r = file_diff(git_repo, "sections/demo.tex", base_sha=base)
@@ -341,7 +388,8 @@ class TestFileDiffIntegration:
     def test_task_and_last_done_in_output(self, git_repo):
         base = _commit_sha(git_repo)
         r = file_diff(
-            git_repo, "sections/demo.tex",
+            git_repo,
+            "sections/demo.tex",
             base_sha=base,
             task="review_pass_a",
             last_done="2026-02-12T00:00:00Z",
@@ -355,7 +403,8 @@ class TestFileDiffIntegration:
         tex = git_repo / "sections" / "demo.tex"
         content = tex.read_text()
         tex.write_text(
-            content + "\n" * 10
+            content
+            + "\n" * 10
             + "\\section{Results}\n"
             + "Results paragraph one.\n"
             + "Results paragraph two.\n",
@@ -364,7 +413,8 @@ class TestFileDiffIntegration:
         subprocess.run(["git", "add", "."], cwd=git_repo, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "add results section"],
-            cwd=git_repo, capture_output=True,
+            cwd=git_repo,
+            capture_output=True,
         )
 
         r = file_diff(git_repo, "sections/demo.tex", base_sha=base)
@@ -383,7 +433,8 @@ class TestFileDiffIntegration:
         subprocess.run(["git", "add", "."], cwd=git_repo, capture_output=True)
         subprocess.run(
             ["git", "commit", "-m", "subproject"],
-            cwd=git_repo, capture_output=True,
+            cwd=git_repo,
+            capture_output=True,
         )
         base = _commit_sha(git_repo)
 

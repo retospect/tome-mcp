@@ -16,7 +16,6 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 # ── Section heading detection ────────────────────────────────────────────
 
 _HEADING_RE = re.compile(
@@ -42,9 +41,14 @@ def _section_map(file_path: Path) -> list[tuple[int, str]]:
         if m:
             level, title = m.group(1), m.group(2)
             # Use § prefix with level abbreviation
-            abbr = {"part": "Part", "chapter": "Ch", "section": "§",
-                     "subsection": "§§", "subsubsection": "§§§",
-                     "paragraph": "¶"}.get(level, "§")
+            abbr = {
+                "part": "Part",
+                "chapter": "Ch",
+                "section": "§",
+                "subsection": "§§",
+                "subsubsection": "§§§",
+                "paragraph": "¶",
+            }.get(level, "§")
             headings.append((i, f"{abbr} {title}"))
     return headings
 
@@ -130,9 +134,9 @@ def _git_diff_raw(
 def _file_line_count(project_root: Path, file_rel: str) -> int:
     """Return number of lines in the file, or 0 if unreadable."""
     try:
-        return len((project_root / file_rel).read_text(
-            encoding="utf-8", errors="replace"
-        ).splitlines())
+        return len(
+            (project_root / file_rel).read_text(encoding="utf-8", errors="replace").splitlines()
+        )
     except OSError:
         return 0
 

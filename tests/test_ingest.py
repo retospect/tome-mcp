@@ -3,10 +3,9 @@
 from pathlib import Path
 
 import fitz
-import pytest
 
-from tome.ingest import IngestResult, ingest_pdf
-from tome.vault import catalog_get, catalog_get_by_key, init_catalog
+from tome.ingest import ingest_pdf
+from tome.vault import catalog_get, init_catalog
 
 
 def _make_pdf(
@@ -43,6 +42,7 @@ class TestIngestAutoAccept:
 
         # Monkey-patch vault paths for isolation
         import tome.vault as vault_mod
+
         monkeypatch.setattr(vault_mod, "vault_dir", lambda: v_dir)
         monkeypatch.setattr(vault_mod, "catalog_path", lambda: db)
         monkeypatch.setattr(vault_mod, "ensure_vault_dirs", lambda: None)
@@ -71,7 +71,6 @@ class TestIngestAutoAccept:
         assert row["status"] == "verified"
 
 
-
 class TestIngestReject:
     """Papers without CrossRef verification are rejected."""
 
@@ -83,6 +82,7 @@ class TestIngestReject:
         v_dir.mkdir()
 
         import tome.vault as vault_mod
+
         monkeypatch.setattr(vault_mod, "vault_dir", lambda: v_dir)
         monkeypatch.setattr(vault_mod, "catalog_path", lambda: db)
         monkeypatch.setattr(vault_mod, "ensure_vault_dirs", lambda: None)
@@ -113,6 +113,7 @@ class TestIngestDuplicate:
         v_dir.mkdir()
 
         import tome.vault as vault_mod
+
         monkeypatch.setattr(vault_mod, "vault_dir", lambda: v_dir)
         monkeypatch.setattr(vault_mod, "catalog_path", lambda: db)
         monkeypatch.setattr(vault_mod, "ensure_vault_dirs", lambda: None)
@@ -122,8 +123,9 @@ class TestIngestDuplicate:
         assert r1.status == "rejected"
 
         # Promote it manually by inserting into catalog
-        from tome.vault import PaperMeta, catalog_upsert
         from tome.checksum import sha256_file
+        from tome.vault import PaperMeta, catalog_upsert
+
         h = sha256_file(pdf)
         meta = PaperMeta(content_hash=h, key="test2024dup", title="Dup", first_author="test")
         catalog_upsert(meta, db)
@@ -150,6 +152,7 @@ class TestIngestMetadata:
         v_dir.mkdir()
 
         import tome.vault as vault_mod
+
         monkeypatch.setattr(vault_mod, "vault_dir", lambda: v_dir)
         monkeypatch.setattr(vault_mod, "catalog_path", lambda: db)
         monkeypatch.setattr(vault_mod, "ensure_vault_dirs", lambda: None)

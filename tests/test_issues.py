@@ -1,6 +1,6 @@
 """Tests for tome.issues — LLM-reported tool issue tracking."""
 
-from tome.issues import append_issue, count_open, report_issue_guide, issues_path, load_issues
+from tome.issues import append_issue, count_open, issues_path, load_issues, report_issue_guide
 
 
 class TestReportIssueGuide:

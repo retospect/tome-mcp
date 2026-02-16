@@ -8,10 +8,10 @@ import pytest
 
 from tome import file_meta
 
-
 # ---------------------------------------------------------------------------
 # Parse
 # ---------------------------------------------------------------------------
+
 
 class TestParseMeta:
     def test_empty_file(self):
@@ -95,6 +95,7 @@ Some content here.
 # Render
 # ---------------------------------------------------------------------------
 
+
 class TestRenderMeta:
     def test_empty(self):
         assert file_meta.render_meta({}) == ""
@@ -110,14 +111,14 @@ class TestRenderMeta:
         rendered = file_meta.render_meta(data, field_order=file_meta.DEFAULT_FIELD_ORDER)
         lines = rendered.strip().split("\n")
         assert lines[0] == file_meta.META_HEADER
-        keys = [l.split(":")[0].replace("% ", "") for l in lines[1:]]
+        keys = [ln.split(":")[0].replace("% ", "") for ln in lines[1:]]
         assert keys == ["intent", "status", "depends", "claims", "open"]
 
     def test_field_order_sorted_without_order(self):
         data = {"open": "q?", "intent": "t"}
         rendered = file_meta.render_meta(data)
         lines = rendered.strip().split("\n")
-        keys = [l.split(":")[0].replace("% ", "") for l in lines[1:]]
+        keys = [ln.split(":")[0].replace("% ", "") for ln in lines[1:]]
         assert keys == sorted(keys)  # alphabetical without explicit order
 
     def test_skips_empty_values(self):
@@ -149,6 +150,7 @@ class TestRenderMeta:
 # ---------------------------------------------------------------------------
 # Strip + Write
 # ---------------------------------------------------------------------------
+
 
 class TestStripAndWrite:
     def test_strip_no_meta(self):
@@ -202,6 +204,7 @@ class TestStripAndWrite:
 # ---------------------------------------------------------------------------
 # Flatten
 # ---------------------------------------------------------------------------
+
 
 class TestFlatten:
     def test_flatten(self):

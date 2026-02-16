@@ -1,16 +1,11 @@
 """Tests for tome.config — YAML config loading, validation, and defaults."""
 
-import re
-
 import pytest
 
 from tome.config import (
-    TomeConfig,
     TrackedPattern,
-    config_path,
     create_default,
     load_config,
-    _DEFAULT_CONFIG,
 )
 from tome.errors import TomeError
 
@@ -127,18 +122,14 @@ class TestLoadConfig:
     def test_track_missing_name_raises(self, tmp_path):
         tome_dir = tmp_path / "tome"
         tome_dir.mkdir()
-        (tome_dir / "config.yaml").write_text(
-            "track:\n  - pattern: '\\\\foo'\n"
-        )
+        (tome_dir / "config.yaml").write_text("track:\n  - pattern: '\\\\foo'\n")
         with pytest.raises(TomeError, match="missing 'name' or 'pattern'"):
             load_config(tome_dir)
 
     def test_track_bad_regex_raises(self, tmp_path):
         tome_dir = tmp_path / "tome"
         tome_dir.mkdir()
-        (tome_dir / "config.yaml").write_text(
-            "track:\n  - name: bad\n    pattern: '[invalid'\n"
-        )
+        (tome_dir / "config.yaml").write_text("track:\n  - name: bad\n    pattern: '[invalid'\n")
         with pytest.raises(TomeError, match="Invalid regex"):
             load_config(tome_dir)
 

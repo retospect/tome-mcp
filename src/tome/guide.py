@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
-
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _DESC_RE = re.compile(r'^description:\s*["\']?(.*?)["\']?\s*$', re.MULTILINE)
@@ -47,7 +45,7 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
         return {}, text
 
     front = m.group(1)
-    body = text[m.end():]
+    body = text[m.end() :]
 
     meta: dict[str, str] = {}
     dm = _DESC_RE.search(front)

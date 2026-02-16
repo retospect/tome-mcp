@@ -3,12 +3,12 @@
 All tests mock httpx to avoid hitting Unpaywall API.
 """
 
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from tome.errors import APIError
-from tome.unpaywall import UnpaywallResult, download_pdf, lookup
+from tome.unpaywall import download_pdf, lookup
 
 SAMPLE_RESPONSE = {
     "doi": "10.1038/s41586-022-04435-4",

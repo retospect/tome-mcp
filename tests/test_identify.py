@@ -1,7 +1,5 @@
 """Tests for tome.identify."""
 
-import pytest
-
 from tome.identify import (
     _clean_doi,
     _extract_title_from_text,

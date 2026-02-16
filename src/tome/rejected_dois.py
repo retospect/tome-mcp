@@ -7,11 +7,11 @@ re-requested or re-ingested.
 
 from __future__ import annotations
 
-import yaml
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import yaml
 
 _FILENAME = "rejected-dois.yaml"
 
@@ -76,7 +76,7 @@ def add(
         "doi": doi.strip(),
         "key": key or "",
         "reason": reason or "DOI does not resolve",
-        "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "date": datetime.now(UTC).strftime("%Y-%m-%d"),
     }
     entries.append(new_entry)
     save(tome_dir, entries)

@@ -91,10 +91,10 @@ def _comment_ratio(text: str) -> float:
 
     Returns 0.0 for empty text. Lines that are purely whitespace are ignored.
     """
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
     if not lines:
         return 0.0
-    comment_lines = sum(1 for l in lines if l.startswith("%"))
+    comment_lines = sum(1 for ln in lines if ln.startswith("%"))
     return comment_lines / len(lines)
 
 

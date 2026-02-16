@@ -41,7 +41,9 @@ class TestSlugFromTitle:
         assert slug == "foldingdna"
 
     def test_real_title_qian(self):
-        slug = slug_from_title("Scaling Up Digital Circuit Computation with DNA Strand Displacement Cascades")
+        slug = slug_from_title(
+            "Scaling Up Digital Circuit Computation with DNA Strand Displacement Cascades"
+        )
         assert slug == "scalingdigital"
 
     def test_real_title_collier(self):

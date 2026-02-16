@@ -7,11 +7,11 @@ Extracts figure captions and in-text citation contexts from raw text.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from tome.errors import FigureNotFound, PaperNotFound
+from tome.errors import PaperNotFound
 from tome.manifest import get_paper, now_iso, set_paper
 
 # Pattern for figure captions: "Figure N.", "Fig. N:", "FIG. N", "Scheme N."

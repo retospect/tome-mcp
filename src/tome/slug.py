@@ -14,13 +14,33 @@ from stop_words import get_stop_words
 _ENGLISH_STOPS = frozenset(get_stop_words("en"))
 
 # Academic/technical filler words not in stop-words
-_ACADEMIC_FILLER = frozenset({
-    "advances", "analysis", "based", "efficient", "highly",
-    "improved", "investigation", "review", "study",
-    "comprehensive", "overview", "approach", "method", "methods",
-    "preliminary", "experimental", "theoretical", "computational",
-    "proposed", "systematic", "comparative", "general", "applied",
-})
+_ACADEMIC_FILLER = frozenset(
+    {
+        "advances",
+        "analysis",
+        "based",
+        "efficient",
+        "highly",
+        "improved",
+        "investigation",
+        "review",
+        "study",
+        "comprehensive",
+        "overview",
+        "approach",
+        "method",
+        "methods",
+        "preliminary",
+        "experimental",
+        "theoretical",
+        "computational",
+        "proposed",
+        "systematic",
+        "comparative",
+        "general",
+        "applied",
+    }
+)
 
 STOPWORDS = _ENGLISH_STOPS | _ACADEMIC_FILLER
 

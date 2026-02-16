@@ -4,10 +4,8 @@ import json
 import zipfile
 
 import numpy as np
-import pytest
 
 from tome.vault import (
-    ARCHIVE_EXTENSION,
     ARCHIVE_FORMAT_VERSION,
     PaperMeta,
     catalog_delete,
@@ -27,7 +25,6 @@ from tome.vault import (
     unlink_paper,
     write_archive,
 )
-
 
 # ---------------------------------------------------------------------------
 # PaperMeta
@@ -240,16 +237,26 @@ class TestCatalog:
 
     def test_list_all(self, tmp_path):
         db = tmp_path / "test.db"
-        catalog_upsert(self._meta(content_hash="h1", key="a2024x", title="A", first_author="a"), db)
-        catalog_upsert(self._meta(content_hash="h2", key="b2024y", title="B", first_author="b"), db)
+        catalog_upsert(
+            self._meta(content_hash="h1", key="a2024x", title="A", first_author="a"), db
+        )
+        catalog_upsert(
+            self._meta(content_hash="h2", key="b2024y", title="B", first_author="b"), db
+        )
 
         papers = catalog_list(path=db)
         assert len(papers) == 2
 
     def test_list_filtered(self, tmp_path):
         db = tmp_path / "test.db"
-        catalog_upsert(self._meta(content_hash="h1", key="a", title="A", first_author="a", status="verified"), db)
-        catalog_upsert(self._meta(content_hash="h2", key="b", title="B", first_author="b", status="review"), db)
+        catalog_upsert(
+            self._meta(content_hash="h1", key="a", title="A", first_author="a", status="verified"),
+            db,
+        )
+        catalog_upsert(
+            self._meta(content_hash="h2", key="b", title="B", first_author="b", status="review"),
+            db,
+        )
 
         verified = catalog_list(status="verified", path=db)
         assert len(verified) == 1
@@ -257,9 +264,25 @@ class TestCatalog:
 
     def test_stats(self, tmp_path):
         db = tmp_path / "test.db"
-        catalog_upsert(self._meta(content_hash="h1", key="a", title="A", first_author="a", status="verified", doi="10.1/a"), db)
-        catalog_upsert(self._meta(content_hash="h2", key="b", title="B", first_author="b", status="manual"), db)
-        catalog_upsert(self._meta(content_hash="h3", key="c", title="C", first_author="c", status="review"), db)
+        catalog_upsert(
+            self._meta(
+                content_hash="h1",
+                key="a",
+                title="A",
+                first_author="a",
+                status="verified",
+                doi="10.1/a",
+            ),
+            db,
+        )
+        catalog_upsert(
+            self._meta(content_hash="h2", key="b", title="B", first_author="b", status="manual"),
+            db,
+        )
+        catalog_upsert(
+            self._meta(content_hash="h3", key="c", title="C", first_author="c", status="review"),
+            db,
+        )
 
         stats = catalog_stats(db)
         assert stats["total"] == 3
@@ -281,19 +304,21 @@ class TestCatalog:
 
     def test_title_sources(self, tmp_path):
         db = tmp_path / "test.db"
-        meta = self._meta(title_sources={
-            "pdf_meta": "Some Title",
-            "xmp": "Some Title (XMP)",
-            "crossref": "Some Title (CrossRef)",
-        })
+        meta = self._meta(
+            title_sources={
+                "pdf_meta": "Some Title",
+                "xmp": "Some Title (XMP)",
+                "crossref": "Some Title (CrossRef)",
+            }
+        )
         catalog_upsert(meta, db)
 
         import sqlite3
+
         conn = sqlite3.connect(str(db))
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT * FROM title_sources WHERE content_hash = ?",
-            ("sha256:test123",)
+            "SELECT * FROM title_sources WHERE content_hash = ?", ("sha256:test123",)
         ).fetchall()
         conn.close()
 
@@ -314,6 +339,7 @@ class TestCatalog:
 
         # Monkey-patch vault_dir to point to tmp
         import tome.vault as vault_mod
+
         orig = vault_mod.vault_dir
         vault_mod.vault_dir = lambda: v
 
@@ -336,9 +362,7 @@ class TestCatalog:
 class TestProjectLinkage:
     def test_link_and_list(self, tmp_path):
         db = tmp_path / "test.db"
-        meta = PaperMeta(
-            content_hash="h1", key="smith2024dna", title="DNA", first_author="smith"
-        )
+        meta = PaperMeta(content_hash="h1", key="smith2024dna", title="DNA", first_author="smith")
         catalog_upsert(meta, db)
 
         link_paper("project_a", "h1", "smith2024dna", db)
@@ -350,9 +374,7 @@ class TestProjectLinkage:
 
     def test_unlink(self, tmp_path):
         db = tmp_path / "test.db"
-        meta = PaperMeta(
-            content_hash="h1", key="smith2024dna", title="DNA", first_author="smith"
-        )
+        meta = PaperMeta(content_hash="h1", key="smith2024dna", title="DNA", first_author="smith")
         catalog_upsert(meta, db)
         link_paper("project_a", "h1", "smith2024dna", db)
 
@@ -366,9 +388,7 @@ class TestProjectLinkage:
 
     def test_multiple_projects(self, tmp_path):
         db = tmp_path / "test.db"
-        meta = PaperMeta(
-            content_hash="h1", key="smith2024dna", title="DNA", first_author="smith"
-        )
+        meta = PaperMeta(content_hash="h1", key="smith2024dna", title="DNA", first_author="smith")
         catalog_upsert(meta, db)
 
         link_paper("project_a", "h1", "smith2024dna", db)

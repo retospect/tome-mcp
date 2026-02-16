@@ -37,21 +37,19 @@ def get_with_retry(
             after all retries exhausted.
     """
     kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
-    last_exc: Exception | None = None
-
     for attempt in range(max_retries + 1):
         try:
             resp = httpx.get(url, **kwargs)
-        except (httpx.ConnectError, httpx.TimeoutException) as e:
-            last_exc = e
+        except (httpx.ConnectError, httpx.TimeoutException):
+            last_exc = None  # noqa: F841
             if attempt < max_retries:
-                time.sleep(backoff_base * (2 ** attempt))
+                time.sleep(backoff_base * (2**attempt))
                 continue
             raise
 
         if resp.status_code == 429 or resp.status_code >= 500:
             if attempt < max_retries:
-                wait = backoff_base * (2 ** attempt)
+                wait = backoff_base * (2**attempt)
                 # Respect Retry-After header
                 retry_after = resp.headers.get("retry-after", "")
                 if retry_after.isdigit():

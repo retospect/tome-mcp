@@ -7,24 +7,22 @@ Auto-accepts when DOI cross-check passes. Otherwise rejects with issues.
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
+import tome.vault as _vault
 from tome.checksum import sha256_file
 from tome.extract import (
-    TextMetrics,
     XMPMetadata,
     compute_text_metrics,
     extract_pdf_metadata,
     extract_title_by_font_size,
     extract_xmp,
 )
-from tome.identify import IdentifyResult, identify_pdf, surname_from_author
+from tome.identify import identify_pdf, surname_from_author
 from tome.slug import make_key
 from tome.validate_vault import ValidationReport, validate_for_vault
-import tome.vault as _vault
 from tome.vault import (
     PaperMeta,
     catalog_upsert,
@@ -199,7 +197,7 @@ def ingest_pdf(
             "prism_cover_date": xmp.prism_cover_date,
         },
         title_sources=title_sources,
-        ingested_at=datetime.now(timezone.utc).isoformat(),
+        ingested_at=datetime.now(UTC).isoformat(),
         chunk_params={"method": "semantic_v1"},
     )
 
@@ -207,7 +205,7 @@ def ingest_pdf(
     if validation.auto_accept:
         # Auto-accept: directly to vault
         meta.status = "verified"
-        meta.verified_at = datetime.now(timezone.utc).isoformat()
+        meta.verified_at = datetime.now(UTC).isoformat()
 
         v_dir = _vault.vault_dir()
         v_dir.mkdir(parents=True, exist_ok=True)

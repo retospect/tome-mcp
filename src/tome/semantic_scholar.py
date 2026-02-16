@@ -201,7 +201,10 @@ def get_citation_graph_api(paper_id: str, limit: int = 100) -> CitationGraph | N
 
 
 def _get_connected(
-    s2_id: str, direction: str, limit: int, fields: str = CITATION_FIELDS,
+    s2_id: str,
+    direction: str,
+    limit: int,
+    fields: str = CITATION_FIELDS,
 ) -> list[S2Paper]:
     """Get citations or references for a paper.
 
@@ -223,7 +226,7 @@ def _get_connected(
     try:
         resp = get_with_retry(url, params=params, headers=_get_headers(), timeout=REQUEST_TIMEOUT)
     except (httpx.ConnectError, httpx.TimeoutException):
-        raise APIError("Semantic Scholar", 0, f"Citation graph request timed out.")
+        raise APIError("Semantic Scholar", 0, "Citation graph request timed out.")
     if resp.status_code == 429 or resp.status_code >= 500:
         raise APIError("Semantic Scholar", resp.status_code)
     if resp.status_code != 200:
@@ -240,7 +243,8 @@ def _get_connected(
 
 
 def get_citations_with_abstracts(
-    paper_id: str, limit: int = 50,
+    paper_id: str,
+    limit: int = 50,
 ) -> tuple[S2Paper | None, list[S2Paper]]:
     """Get citing papers with abstracts for LLM-guided exploration.
 
@@ -297,7 +301,8 @@ def _get_s2ag():
     if _s2ag_db is not None:
         return _s2ag_db
     try:
-        from tome.s2ag import S2AGLocal, DB_PATH
+        from tome.s2ag import DB_PATH, S2AGLocal
+
         if DB_PATH.exists():
             _s2ag_db = S2AGLocal()
             return _s2ag_db

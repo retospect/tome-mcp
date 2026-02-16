@@ -11,7 +11,6 @@ import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import fitz  # PyMuPDF
 
@@ -330,9 +329,8 @@ def _parse_xmp_xml(xml_str: str) -> XMPMetadata:
     result.prism_publication = _xmp_simple(root, "prism:publicationName")
 
     # prism:coverDate or prism:coverDisplayDate
-    result.prism_cover_date = (
-        _xmp_simple(root, "prism:coverDate")
-        or _xmp_simple(root, "prism:coverDisplayDate")
+    result.prism_cover_date = _xmp_simple(root, "prism:coverDate") or _xmp_simple(
+        root, "prism:coverDisplayDate"
     )
 
     return result

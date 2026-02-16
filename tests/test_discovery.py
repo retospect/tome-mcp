@@ -1,13 +1,9 @@
 """Tests for file discovery and exclusion helpers in server.py."""
 
-from pathlib import Path
-
 import pytest
 
 # Import the helpers directly from server module
 from tome.server import (
-    EXCLUDE_DIRS,
-    _FILE_TYPE_MAP,
     _SCAFFOLD_DIRS,
     _discover_files,
     _file_type,
@@ -108,7 +104,9 @@ class TestDiscoverFiles:
         (tmp_path / ".git").mkdir()
         (tmp_path / ".git" / "config").write_text("[core]", encoding="utf-8")
         (tmp_path / "code" / "__pycache__").mkdir()
-        (tmp_path / "code" / "__pycache__" / "sim.cpython-313.pyc").write_text("", encoding="utf-8")
+        (tmp_path / "code" / "__pycache__" / "sim.cpython-313.pyc").write_text(
+            "", encoding="utf-8"
+        )
         (tmp_path / "build").mkdir()
         (tmp_path / "build" / "main.log").write_text("log", encoding="utf-8")
 

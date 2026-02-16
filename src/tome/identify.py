@@ -7,7 +7,7 @@ All identification is best-effort; the LLM makes the final decision.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from tome.extract import PDFMetadata, extract_first_page_text, extract_pdf_metadata

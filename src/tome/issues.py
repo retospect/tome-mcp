@@ -8,9 +8,8 @@ Open issue count is surfaced on set_root and doc_lint.
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
 
 _ISSUE_RE = re.compile(r"^## (?!\[RESOLVED\])", re.MULTILINE)
 _RESOLVED_RE = re.compile(r"^## \[RESOLVED\]", re.MULTILINE)
@@ -137,7 +136,9 @@ def append_issue(
     # Find next issue number
     if p.exists():
         text = p.read_text(encoding="utf-8")
-        numbers = [int(m) for m in re.findall(r"^## (?:\[RESOLVED\] )?ISSUE-(\d+)", text, re.MULTILINE)]
+        numbers = [
+            int(m) for m in re.findall(r"^## (?:\[RESOLVED\] )?ISSUE-(\d+)", text, re.MULTILINE)
+        ]
         next_num = max(numbers) + 1 if numbers else 1
     else:
         text = ""
@@ -145,7 +146,7 @@ def append_issue(
         # Write header on first issue
         text = "# Tome Issues\n\nTool issues reported by the LLM during use. Resolve by deleting the entry or prefixing the heading with `[RESOLVED] `.\n\n"
 
-    date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    date = datetime.now(UTC).strftime("%Y-%m-%d")
     entry = (
         f"## ISSUE-{next_num:03d}: {description[:80]}\n"
         f"- **Tool**: {tool}\n"

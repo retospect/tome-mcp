@@ -36,7 +36,6 @@ def test_lock_works_for_nonexistent_target(tmp_path: Path) -> None:
     assert target.read_text() == "{}"
 
 
-
 def test_lock_released_on_exception(tmp_path: Path) -> None:
     """Lock is released even if the block raises."""
     target = tmp_path / "data.json"

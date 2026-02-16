@@ -3,9 +3,6 @@
 Uses in-memory ChromaDB client (built-in embeddings, no external server needed).
 """
 
-from pathlib import Path
-from unittest.mock import MagicMock
-
 import chromadb
 import pytest
 
@@ -84,8 +81,13 @@ class TestUpsertPaperChunks:
 
     def test_char_offsets(self, chunks_col):
         upsert_paper_chunks(
-            chunks_col, "xu2022", ["chunk0", "chunk1"], [1, 1], "sha_x",
-            char_starts=[0, 100], char_ends=[99, 200],
+            chunks_col,
+            "xu2022",
+            ["chunk0", "chunk1"],
+            [1, 1],
+            "sha_x",
+            char_starts=[0, 100],
+            char_ends=[99, 200],
         )
         data = chunks_col.get(ids=["xu2022::chunk_0", "xu2022::chunk_1"], include=["metadatas"])
         assert data["metadatas"][0]["char_start"] == 0
@@ -245,7 +247,7 @@ class TestGetAllLabels:
         upsert_corpus_chunks(col, "a.tex", ["c0", "c1", "c2"], "sha1", chunk_markers=markers)
         # Monkey-patch: get_all_labels expects CORPUS_CHUNKS collection name
         # We use a direct approach instead
-        from tome.store import get_collection, CORPUS_CHUNKS
+        from tome.store import CORPUS_CHUNKS
 
         labels = get_all_labels(client, embed_fn=dummy_embed_fn)
         # No results because collection name is different
@@ -253,7 +255,7 @@ class TestGetAllLabels:
         col2 = client.get_or_create_collection(CORPUS_CHUNKS, embedding_function=dummy_embed_fn)
         upsert_corpus_chunks(col2, "b.tex", ["c0", "c1"], "sha2", chunk_markers=markers[:2])
         labels = get_all_labels(client, embed_fn=dummy_embed_fn)
-        label_names = [l["label"] for l in labels]
+        label_names = [lb["label"] for lb in labels]
         assert "sec:intro" in label_names
         assert "fig:one" in label_names
         assert "fig:two" in label_names
@@ -278,7 +280,7 @@ class TestGetAllLabels:
         upsert_corpus_chunks(col2, "d1.tex", ["c0"], "sha_d1", chunk_markers=markers)
         upsert_corpus_chunks(col2, "d2.tex", ["c0"], "sha_d2", chunk_markers=markers)
         labels = get_all_labels(client, embed_fn=dummy_embed_fn)
-        label_names = [l["label"] for l in labels]
+        label_names = [lb["label"] for lb in labels]
         assert label_names.count("sec:dedup") == 1
 
     def test_no_labels_excluded(self, client, dummy_embed_fn):
@@ -295,7 +297,7 @@ class TestGetAllLabels:
         ]
         upsert_corpus_chunks(col, "nolabel.tex", ["c0"], "sha_nl", chunk_markers=markers)
         labels = get_all_labels(client, embed_fn=dummy_embed_fn)
-        files = [l["file"] for l in labels]
+        files = [lb["file"] for lb in labels]
         assert "nolabel.tex" not in files
 
     def test_prefix_filter_in_tool(self, client, dummy_embed_fn):
@@ -311,7 +313,7 @@ class TestGetAllLabels:
         ]
         upsert_corpus_chunks(col, "pfx.tex", ["c0"], "sha_pfx", chunk_markers=markers)
         labels = get_all_labels(client, embed_fn=dummy_embed_fn)
-        fig_labels = [l for l in labels if l["label"].startswith("fig:pfx")]
+        fig_labels = [lb for lb in labels if lb["label"].startswith("fig:pfx")]
         assert len(fig_labels) == 1
         assert fig_labels[0]["label"] == "fig:pfx_one"
 
@@ -323,7 +325,12 @@ class TestUpsertPaperChunksEdgeCases:
 
     def test_doc_type_in_metadata(self, chunks_col):
         upsert_paper_chunks(
-            chunks_col, "pat2024", ["chunk"], [1], "sha_p", doc_type="patent",
+            chunks_col,
+            "pat2024",
+            ["chunk"],
+            [1],
+            "sha_p",
+            doc_type="patent",
         )
         data = chunks_col.get(ids=["pat2024::chunk_0"], include=["metadatas"])
         assert data["metadatas"][0]["doc_type"] == "patent"
@@ -341,7 +348,11 @@ class TestUpsertCorpusChunksEdgeCases:
 
     def test_file_type_in_metadata(self, corpus_col):
         upsert_corpus_chunks(
-            corpus_col, "code.py", ["def foo(): pass"], "sha_c", file_type="python",
+            corpus_col,
+            "code.py",
+            ["def foo(): pass"],
+            "sha_c",
+            file_type="python",
         )
         data = corpus_col.get(ids=["code.py::chunk_0"], include=["metadatas"])
         assert data["metadatas"][0]["file_type"] == "python"
@@ -372,7 +383,11 @@ class TestSearchPapers:
         upsert_paper_chunks(col, "c2024", ["text c"], [1], "sha_c")
 
         results = search_papers(
-            client, "text", n=10, keys=["a2022", "b2023"], embed_fn=dummy_embed_fn,
+            client,
+            "text",
+            n=10,
+            keys=["a2022", "b2023"],
+            embed_fn=dummy_embed_fn,
         )
         keys = {r["bib_key"] for r in results}
         assert "c2024" not in keys
@@ -393,7 +408,11 @@ class TestSearchCorpus:
         upsert_corpus_chunks(col, "b.tex", ["text b"], "sha_b", chunk_markers=markers)
 
         results = search_corpus(
-            client, "text", n=10, source_file="a.tex", embed_fn=dummy_embed_fn,
+            client,
+            "text",
+            n=10,
+            source_file="a.tex",
+            embed_fn=dummy_embed_fn,
         )
         assert all(r.get("source_file") == "a.tex" for r in results)
 
@@ -405,7 +424,11 @@ class TestSearchCorpus:
         upsert_corpus_chunks(col, "b.tex", ["unlabeled"], "sha_b", chunk_markers=markers_without)
 
         results = search_corpus(
-            client, "text", n=10, labels_only=True, embed_fn=dummy_embed_fn,
+            client,
+            "text",
+            n=10,
+            labels_only=True,
+            embed_fn=dummy_embed_fn,
         )
         assert all(r.get("has_label") is True for r in results)
 
@@ -417,7 +440,11 @@ class TestSearchCorpus:
         upsert_corpus_chunks(col, "b.tex", ["not cited"], "sha_b", chunk_markers=markers_without)
 
         results = search_corpus(
-            client, "text", n=10, cites_only=True, embed_fn=dummy_embed_fn,
+            client,
+            "text",
+            n=10,
+            cites_only=True,
+            embed_fn=dummy_embed_fn,
         )
         assert all(r.get("has_cite") is True for r in results)
 

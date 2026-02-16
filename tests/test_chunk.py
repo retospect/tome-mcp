@@ -43,7 +43,7 @@ class TestChunkText:
         for i in range(len(result) - 1):
             words_a = set(result[i].split())
             words_b = set(result[i + 1].split())
-            assert words_a & words_b, f"Chunks {i} and {i+1} share no words"
+            assert words_a & words_b, f"Chunks {i} and {i + 1} share no words"
 
     def test_very_long_sentence_emitted_alone(self):
         long = "x" * 600

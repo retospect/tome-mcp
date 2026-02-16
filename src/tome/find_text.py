@@ -45,8 +45,8 @@ _DROP_WITH_ARGS = re.compile(
     r"|gls[p]?|Gls[p]?|acrshort|acrlong|acrfull"
     r"|hyperref|hyperlink|hypertarget"
     r")"
-    r"(?:\[[^\]]*\])*"   # optional [...] args
-    r"(?:\{[^}]*\})*"    # one or more {...} args
+    r"(?:\[[^\]]*\])*"  # optional [...] args
+    r"(?:\{[^}]*\})*"  # one or more {...} args
 )
 
 # Simple commands to drop (no args): \par, \\, \newline, \noindent, etc.
@@ -113,14 +113,15 @@ def normalize_tex(text: str) -> str:
 
 # ── Search ───────────────────────────────────────────────────────────────
 
+
 @dataclass
 class TextMatch:
     """A match from normalized .tex search."""
 
-    file: str          # relative path
-    line_start: int    # 1-indexed
-    line_end: int      # 1-indexed
-    context: str       # raw .tex source lines around the match
+    file: str  # relative path
+    line_start: int  # 1-indexed
+    line_end: int  # 1-indexed
+    context: str  # raw .tex source lines around the match
 
 
 def _line_at_offset(text: str, offset: int) -> int:
@@ -167,12 +168,14 @@ def find_in_file(
         ctx_end = min(len(lines), line_end + context_lines)
         context = "".join(lines[ctx_start:ctx_end]).strip()
 
-        matches.append(TextMatch(
-            file=rel_path,
-            line_start=line_num,
-            line_end=line_end,
-            context=context,
-        ))
+        matches.append(
+            TextMatch(
+                file=rel_path,
+                line_start=line_num,
+                line_end=line_end,
+                context=context,
+            )
+        )
 
         start = idx + 1
 

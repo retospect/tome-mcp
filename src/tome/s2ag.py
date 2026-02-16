@@ -32,9 +32,10 @@ import json
 import os
 import sqlite3
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import httpx
 
@@ -54,6 +55,7 @@ API_SLEEP = 0.7  # seconds between individual citation fetches
 
 
 # ── Data class ───────────────────────────────────────────────────────
+
 
 @dataclass
 class S2Paper:
@@ -98,6 +100,7 @@ CREATE TABLE IF NOT EXISTS meta (
 
 # ── Database class ───────────────────────────────────────────────────
 
+
 class S2AGLocal:
     """Local S2AG SQLite database."""
 
@@ -139,17 +142,13 @@ class S2AGLocal:
 
     def lookup_s2id(self, paper_id: str) -> S2Paper | None:
         conn = self._connect(readonly=True)
-        row = conn.execute(
-            f"{self._SELECT} WHERE paper_id = ?", (paper_id,)
-        ).fetchone()
+        row = conn.execute(f"{self._SELECT} WHERE paper_id = ?", (paper_id,)).fetchone()
         conn.close()
         return self._row_to_paper(row) if row else None
 
     def get_paper(self, corpus_id: int) -> S2Paper | None:
         conn = self._connect(readonly=True)
-        row = conn.execute(
-            f"{self._SELECT} WHERE corpus_id = ?", (corpus_id,)
-        ).fetchone()
+        row = conn.execute(f"{self._SELECT} WHERE corpus_id = ?", (corpus_id,)).fetchone()
         conn.close()
         return self._row_to_paper(row) if row else None
 
@@ -158,9 +157,7 @@ class S2AGLocal:
             return []
         conn = self._connect(readonly=True)
         ph = ",".join("?" * len(corpus_ids))
-        rows = conn.execute(
-            f"{self._SELECT} WHERE corpus_id IN ({ph})", corpus_ids
-        ).fetchall()
+        rows = conn.execute(f"{self._SELECT} WHERE corpus_id IN ({ph})", corpus_ids).fetchall()
         conn.close()
         return [self._row_to_paper(r) for r in rows]
 
@@ -316,7 +313,9 @@ class S2AGLocal:
         return headers
 
     def _batch_lookup(
-        self, paper_ids: list[str], headers: dict[str, str],
+        self,
+        paper_ids: list[str],
+        headers: dict[str, str],
     ) -> list[dict | None]:
         url = f"{GRAPH_API}/paper/batch"
         params = {"fields": PAPER_FIELDS}
@@ -331,8 +330,11 @@ class S2AGLocal:
             if resp.status_code == 429:
                 time.sleep(5)
                 resp = httpx.post(
-                    url, params=params, json={"ids": paper_ids},
-                    headers=headers, timeout=30.0,
+                    url,
+                    params=params,
+                    json={"ids": paper_ids},
+                    headers=headers,
+                    timeout=30.0,
                 )
             if resp.status_code != 200:
                 return [None] * len(paper_ids)
@@ -481,11 +483,17 @@ class S2AGLocal:
                 continue
 
             if idx > 0 and idx % 50 == 0:
-                log(f"    [{idx}/{len(corpus_ids)}] +{results['new_edges']} edges, +{results['new_papers']} papers")
+                log(
+                    f"    [{idx}/{len(corpus_ids)}] +{results['new_edges']} edges, +{results['new_papers']} papers"
+                )
 
             try:
                 new_edges, new_papers = self._fetch_new_citers(
-                    conn, pid, cid, headers, min_year=min_year,
+                    conn,
+                    pid,
+                    cid,
+                    headers,
+                    min_year=min_year,
                 )
                 results["new_edges"] += new_edges
                 results["new_papers"] += new_papers
@@ -505,9 +513,11 @@ class S2AGLocal:
         conn.commit()
         conn.close()
 
-        log(f"  Done: checked {results['checked']}, "
+        log(
+            f"  Done: checked {results['checked']}, "
             f"+{results['new_edges']} edges, +{results['new_papers']} papers, "
-            f"{results['errors']} errors")
+            f"{results['errors']} errors"
+        )
         return results
 
     def _fetch_new_citers(
@@ -702,10 +712,18 @@ class S2AGLocal:
     # ── bulk helpers ─────────────────────────────────────────────────
 
     def _download_file(
-        self, url: str, dest: Path, headers: dict[str, str], log,
+        self,
+        url: str,
+        dest: Path,
+        headers: dict[str, str],
+        log,
     ) -> None:
         with httpx.stream(
-            "GET", url, headers=headers, timeout=600.0, follow_redirects=True,
+            "GET",
+            url,
+            headers=headers,
+            timeout=600.0,
+            follow_redirects=True,
         ) as resp:
             resp.raise_for_status()
             total = int(resp.headers.get("content-length", 0))
@@ -734,14 +752,16 @@ class S2AGLocal:
             # use the URL tail or the paper-ids dataset for mapping.
             pid = (rec.get("url") or "").rsplit("/", 1)[-1] or None
 
-            batch.append((
-                cid,
-                pid,
-                doi.lower() if doi else None,
-                rec.get("title"),
-                rec.get("year"),
-                rec.get("citationcount", 0),
-            ))
+            batch.append(
+                (
+                    cid,
+                    pid,
+                    doi.lower() if doi else None,
+                    rec.get("title"),
+                    rec.get("year"),
+                    rec.get("citationcount", 0),
+                )
+            )
             count += 1
 
             if len(batch) >= 50_000:
@@ -783,14 +803,16 @@ class S2AGLocal:
 
             if len(batch) >= 100_000:
                 conn.executemany(
-                    "INSERT OR IGNORE INTO citations VALUES (?, ?, ?)", batch,
+                    "INSERT OR IGNORE INTO citations VALUES (?, ?, ?)",
+                    batch,
                 )
                 conn.commit()
                 batch.clear()
 
         if batch:
             conn.executemany(
-                "INSERT OR IGNORE INTO citations VALUES (?, ?, ?)", batch,
+                "INSERT OR IGNORE INTO citations VALUES (?, ?, ?)",
+                batch,
             )
             conn.commit()
 
@@ -801,7 +823,9 @@ class S2AGLocal:
     def _get_release_id(self, headers: dict[str, str]) -> str:
         try:
             resp = httpx.get(
-                f"{DATASETS_API}/release/latest", headers=headers, timeout=15.0,
+                f"{DATASETS_API}/release/latest",
+                headers=headers,
+                timeout=15.0,
             )
             if resp.status_code == 200:
                 return resp.json().get("release_id", "unknown")
@@ -811,6 +835,7 @@ class S2AGLocal:
 
 
 # ── Module-level helpers ─────────────────────────────────────────────
+
 
 def _iter_jsonl_gz(filepath: Path) -> Iterator[dict]:
     """Iterate records from a gzipped JSONL file."""

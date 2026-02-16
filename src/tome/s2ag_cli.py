@@ -18,18 +18,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
-import os
 from pathlib import Path
 
-from tome.s2ag import S2AGLocal, DB_PATH
+from tome.s2ag import S2AGLocal
 
 
 def _extract_dois_from_bib(bib_path: str) -> list[str]:
     """Extract DOI values from a .bib file."""
     text = Path(bib_path).read_text(encoding="utf-8")
-    dois = re.findall(r'^\s*doi\s*=\s*\{([^}]+)\}', text, re.MULTILINE | re.IGNORECASE)
+    dois = re.findall(r"^\s*doi\s*=\s*\{([^}]+)\}", text, re.MULTILINE | re.IGNORECASE)
     # Clean up whitespace and braces
     return [d.strip().strip("{}") for d in dois if d.strip()]
 
@@ -53,7 +53,7 @@ def cmd_sync_library(args: argparse.Namespace) -> None:
         api_key=args.api_key or "",
     )
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Resolved: {result['resolved']}")
     print(f"  Failed:   {result['failed']}")
     if not args.no_citations:
@@ -202,8 +202,14 @@ def main() -> None:
 
     # incremental-update
     p5 = sub.add_parser("incremental-update", help="Sweep library papers for new citers via API")
-    p5.add_argument("--bib-file", default="", help="Path to references.bib (optional, uses all DB papers if omitted)")
-    p5.add_argument("--min-year", type=int, default=0, help="Only record citers from this year onwards")
+    p5.add_argument(
+        "--bib-file",
+        default="",
+        help="Path to references.bib (optional, uses all DB papers if omitted)",
+    )
+    p5.add_argument(
+        "--min-year", type=int, default=0, help="Only record citers from this year onwards"
+    )
     p5.add_argument("--api-key", default="", help="S2 API key (optional, higher rate limit)")
     p5.set_defaults(func=cmd_incremental)
 

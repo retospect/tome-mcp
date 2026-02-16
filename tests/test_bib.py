@@ -15,12 +15,12 @@ from tome.bib import (
     list_keys,
     parse_bib,
     remove_entry,
-    rename_key,
     remove_field,
+    rename_key,
     set_field,
     write_bib,
 )
-from tome.errors import BibParseError, DuplicateKey, PaperNotFound
+from tome.errors import DuplicateKey, PaperNotFound
 
 
 @pytest.fixture

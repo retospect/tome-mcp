@@ -251,9 +251,7 @@ def parse_floats(path: Path, kind: str) -> list[FloatEntry]:
     return entries
 
 
-NEWLABEL_RE = re.compile(
-    r"\\newlabel\{([^}]+)\}\{\{([^}]*)\}\{(\d+)\}\{[^}]*\}\{([^}]*)\}"
-)
+NEWLABEL_RE = re.compile(r"\\newlabel\{([^}]+)\}\{\{([^}]*)\}\{(\d+)\}\{[^}]*\}\{([^}]*)\}")
 
 
 def parse_labels(aux_path: Path) -> dict[str, str]:
@@ -276,8 +274,17 @@ def parse_labels(aux_path: Path) -> dict[str, str]:
         if "@" in label_name:
             continue
         # Only keep heading-like anchors
-        if any(anchor.startswith(p) for p in ("section.", "subsection.", "subsubsection.",
-                                               "paragraph.", "part.", "Doc-Start")):
+        if any(
+            anchor.startswith(p)
+            for p in (
+                "section.",
+                "subsection.",
+                "subsubsection.",
+                "paragraph.",
+                "part.",
+                "Doc-Start",
+            )
+        ):
             anchor_to_label[anchor] = label_name
     return anchor_to_label
 
@@ -382,9 +389,7 @@ def _mark_file(entries: list[TocEntry], filt: str, out: set[int]) -> bool:
     return hit
 
 
-def _mark_pages(
-    entries: list[TocEntry], lo: int, hi: int, out: set[int]
-) -> bool:
+def _mark_pages(entries: list[TocEntry], lo: int, hi: int, out: set[int]) -> bool:
     """Mark entries within page range + ancestors."""
     hit = False
     for e in entries:
@@ -480,25 +485,27 @@ def render_toc(
     effective_roots = roots
     if part_filter:
         # Exact number match first (avoids "V" matching "Vision")
-        by_num = [
-            r for r in roots
-            if r.level == "part" and r.number == part_filter
-        ]
+        by_num = [r for r in roots if r.level == "part" and r.number == part_filter]
         if by_num:
             effective_roots = by_num
         else:
             # Fallback: title substring
             pf = part_filter.lower()
-            effective_roots = [
-                r for r in roots
-                if r.level == "part" and pf in r.title.lower()
-            ]
+            effective_roots = [r for r in roots if r.level == "part" and pf in r.title.lower()]
     # Cache file meta to avoid re-reading the same file
     meta_cache: dict[str, dict[str, str]] = {}
-    _render(effective_roots, lines, max_depth=max_depth, indent=0,
-            parent_file="", show_figures=show_figures, matched=matched,
-            note_fields=note_fields, project_root=project_root,
-            meta_cache=meta_cache)
+    _render(
+        effective_roots,
+        lines,
+        max_depth=max_depth,
+        indent=0,
+        parent_file="",
+        show_figures=show_figures,
+        matched=matched,
+        note_fields=note_fields,
+        project_root=project_root,
+        meta_cache=meta_cache,
+    )
     return "\n".join(lines)
 
 
@@ -547,8 +554,13 @@ def _render(
         lines.append(f"{pad}{title}{lbl}{loc}{pg}")
 
         # File meta notes (only when heading introduces a new source file)
-        if (note_fields and project_root and meta_cache is not None
-                and entry.file and entry.file != parent_file):
+        if (
+            note_fields
+            and project_root
+            and meta_cache is not None
+            and entry.file
+            and entry.file != parent_file
+        ):
             meta = _get_file_meta(entry.file, note_fields, project_root, meta_cache)
             if meta:
                 for mk, mv in meta.items():

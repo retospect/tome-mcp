@@ -16,15 +16,16 @@ import json
 import logging
 import sqlite3
 import zipfile
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterator
-
-logger = logging.getLogger(__name__)
+from typing import Any
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -95,11 +96,20 @@ def vault_write_lock() -> Iterator[None]:
 # ---------------------------------------------------------------------------
 
 # Valid doc_type values
-DOC_TYPES = frozenset({
-    "article", "review", "letter", "preprint",
-    "patent", "datasheet",
-    "book", "thesis", "standard", "report",
-})
+DOC_TYPES = frozenset(
+    {
+        "article",
+        "review",
+        "letter",
+        "preprint",
+        "patent",
+        "datasheet",
+        "book",
+        "thesis",
+        "standard",
+        "report",
+    }
+)
 
 
 @dataclass
@@ -166,8 +176,7 @@ class DocumentMeta:
     def __post_init__(self) -> None:
         if self.doc_type not in DOC_TYPES:
             raise ValueError(
-                f"Invalid doc_type '{self.doc_type}'. "
-                f"Valid types: {sorted(DOC_TYPES)}"
+                f"Invalid doc_type '{self.doc_type}'. Valid types: {sorted(DOC_TYPES)}"
             )
 
     def to_json(self) -> str:
@@ -271,7 +280,9 @@ def read_archive_meta(archive_path: Path) -> PaperMeta:
 def read_archive_pages(archive_path: Path) -> list[str]:
     """Read all page texts from a .tome archive."""
     with zipfile.ZipFile(archive_path, "r") as zf:
-        page_files = sorted(n for n in zf.namelist() if n.startswith("pages/") and n.endswith(".txt"))
+        page_files = sorted(
+            n for n in zf.namelist() if n.startswith("pages/") and n.endswith(".txt")
+        )
         return [zf.read(f).decode("utf-8") for f in page_files]
 
 
@@ -467,35 +478,35 @@ def catalog_upsert(meta: DocumentMeta, path: Path | None = None) -> None:
                     verified_at=excluded.verified_at
                 """,
                 {
-                "content_hash": meta.content_hash,
-                "key": meta.key,
-                "doi": meta.doi,
-                "external_id": meta.external_id,
-                "external_id_type": meta.external_id_type,
-                "title": meta.title,
-                "first_author": meta.first_author,
-                "year": meta.year,
-                "journal": meta.journal,
-                "entry_type": meta.entry_type,
-                "status": meta.status,
-                "doi_verified": 1 if meta.doi_verified else 0,
-                "title_match_score": meta.title_match_score,
-                "page_count": meta.page_count,
-                "word_count": meta.word_count,
-                "ref_count": meta.ref_count,
-                "figure_count": meta.figure_count,
-                "table_count": meta.table_count,
-                "language": meta.language,
-                "text_quality": meta.text_quality,
-                "has_abstract": 1 if meta.has_abstract else 0,
-                "doc_type": meta.doc_type,
-                "parent_hash": meta.parent_hash,
-                "supplement_index": meta.supplement_index,
-                "vault_path": meta.key + ARCHIVE_EXTENSION,
-                "ingested_at": meta.ingested_at or datetime.now(timezone.utc).isoformat(),
-                "verified_at": meta.verified_at,
-            },
-        )
+                    "content_hash": meta.content_hash,
+                    "key": meta.key,
+                    "doi": meta.doi,
+                    "external_id": meta.external_id,
+                    "external_id_type": meta.external_id_type,
+                    "title": meta.title,
+                    "first_author": meta.first_author,
+                    "year": meta.year,
+                    "journal": meta.journal,
+                    "entry_type": meta.entry_type,
+                    "status": meta.status,
+                    "doi_verified": 1 if meta.doi_verified else 0,
+                    "title_match_score": meta.title_match_score,
+                    "page_count": meta.page_count,
+                    "word_count": meta.word_count,
+                    "ref_count": meta.ref_count,
+                    "figure_count": meta.figure_count,
+                    "table_count": meta.table_count,
+                    "language": meta.language,
+                    "text_quality": meta.text_quality,
+                    "has_abstract": 1 if meta.has_abstract else 0,
+                    "doc_type": meta.doc_type,
+                    "parent_hash": meta.parent_hash,
+                    "supplement_index": meta.supplement_index,
+                    "vault_path": meta.key + ARCHIVE_EXTENSION,
+                    "ingested_at": meta.ingested_at or datetime.now(UTC).isoformat(),
+                    "verified_at": meta.verified_at,
+                },
+            )
         except sqlite3.IntegrityError as exc:
             # TOCTOU fallback: constraint violated despite pre-flight check
             msg = str(exc).lower()
@@ -533,9 +544,7 @@ def catalog_get(content_hash: str, path: Path | None = None) -> dict[str, Any] |
 def catalog_get_by_key(key: str, path: Path | None = None) -> dict[str, Any] | None:
     """Look up a document by bib key."""
     with _db(path) as conn:
-        row = conn.execute(
-            "SELECT * FROM documents WHERE key = ?", (key,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM documents WHERE key = ?", (key,)).fetchone()
         if row is None:
             return None
         return dict(row)
@@ -544,9 +553,7 @@ def catalog_get_by_key(key: str, path: Path | None = None) -> dict[str, Any] | N
 def catalog_get_by_doi(doi: str, path: Path | None = None) -> dict[str, Any] | None:
     """Look up a document by DOI."""
     with _db(path) as conn:
-        row = conn.execute(
-            "SELECT * FROM documents WHERE doi = ?", (doi,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM documents WHERE doi = ?", (doi,)).fetchone()
         if row is None:
             return None
         return dict(row)
@@ -579,15 +586,15 @@ def catalog_stats(path: Path | None = None) -> dict[str, Any]:
         verified = conn.execute(
             "SELECT COUNT(*) FROM documents WHERE status = 'verified'"
         ).fetchone()[0]
-        manual = conn.execute(
-            "SELECT COUNT(*) FROM documents WHERE status = 'manual'"
-        ).fetchone()[0]
-        review = conn.execute(
-            "SELECT COUNT(*) FROM documents WHERE status = 'review'"
-        ).fetchone()[0]
-        with_doi = conn.execute(
-            "SELECT COUNT(*) FROM documents WHERE doi IS NOT NULL"
-        ).fetchone()[0]
+        manual = conn.execute("SELECT COUNT(*) FROM documents WHERE status = 'manual'").fetchone()[
+            0
+        ]
+        review = conn.execute("SELECT COUNT(*) FROM documents WHERE status = 'review'").fetchone()[
+            0
+        ]
+        with_doi = conn.execute("SELECT COUNT(*) FROM documents WHERE doi IS NOT NULL").fetchone()[
+            0
+        ]
         return {
             "total": total,
             "verified": verified,
@@ -600,15 +607,11 @@ def catalog_stats(path: Path | None = None) -> dict[str, Any]:
 def catalog_delete(content_hash: str, path: Path | None = None) -> bool:
     """Remove a document from catalog.db. Returns True if found and deleted."""
     with _db(path) as conn:
-        cursor = conn.execute(
-            "DELETE FROM documents WHERE content_hash = ?", (content_hash,)
-        )
+        cursor = conn.execute("DELETE FROM documents WHERE content_hash = ?", (content_hash,))
         return cursor.rowcount > 0
 
 
-def catalog_update_key(
-    old_key: str, new_key: str, path: Path | None = None
-) -> bool:
+def catalog_update_key(old_key: str, new_key: str, path: Path | None = None) -> bool:
     """Rename a document's key and vault_path in catalog.db.
 
     Returns True if the document was found and updated.
@@ -671,7 +674,7 @@ def link_paper(
             INSERT OR REPLACE INTO project_documents (project_id, content_hash, local_key, added_at)
             VALUES (?, ?, ?, ?)
             """,
-            (project_id, content_hash, local_key, datetime.now(timezone.utc).isoformat()),
+            (project_id, content_hash, local_key, datetime.now(UTC).isoformat()),
         )
 
 

@@ -21,9 +21,9 @@ import errno
 import fcntl
 import logging
 import time
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 logger = logging.getLogger("tome")
 
@@ -78,10 +78,7 @@ def file_lock(
                     raise  # unexpected OS error — propagate immediately
                 if time.monotonic() >= deadline:
                     detail = f" ({timeout_msg})" if timeout_msg else ""
-                    msg = (
-                        f"Could not acquire lock on {lock_path} within "
-                        f"{timeout:.1f}s{detail}"
-                    )
+                    msg = f"Could not acquire lock on {lock_path} within {timeout:.1f}s{detail}"
                     logger.warning(msg)
                     raise LockTimeout(msg) from exc
                 time.sleep(_POLL_INTERVAL)

@@ -9,9 +9,9 @@ from __future__ import annotations
 import functools
 import json
 import logging
-import re
 import logging.handlers
 import os
+import re
 import shutil
 import sys
 import time
@@ -24,39 +24,48 @@ from mcp.server.fastmcp import FastMCP
 from tome import (
     analysis,
     bib,
-    slug as slug_mod,
     checksum,
     chunk,
-    config as tome_config,
     crossref,
     extract,
     figures,
-    git_diff as git_diff_mod,
     identify,
     latex,
     manifest,
-    cite_tree as cite_tree_mod,
-    index as index_mod,
-    needful as needful_mod,
+    openalex,
+    store,
     summaries,
+    unpaywall,
     validate,
 )
-from tome import guide as guide_mod
-from tome import rejected_dois as rejected_dois_mod
-from tome import issues as issues_mod
+from tome import (
+    cite_tree as cite_tree_mod,
+)
+from tome import (
+    config as tome_config,
+)
 from tome import file_meta as file_meta_mod
+from tome import (
+    git_diff as git_diff_mod,
+)
+from tome import guide as guide_mod
+from tome import (
+    index as index_mod,
+)
+from tome import issues as issues_mod
+from tome import (
+    needful as needful_mod,
+)
 from tome import notes as notes_mod
-from tome import toc as toc_mod
-from tome import openalex
+from tome import rejected_dois as rejected_dois_mod
 from tome import semantic_scholar as s2
-from tome import store
-from tome import unpaywall
+from tome import (
+    slug as slug_mod,
+)
+from tome import toc as toc_mod
 from tome.errors import (
     APIError,
-    BibParseError,
     ChromaDBError,
-    DuplicateKey,
-    IngestFailed,
     NoBibFile,
     NoTexFiles,
     PaperNotFound,
@@ -65,7 +74,6 @@ from tome.errors import (
     TextNotExtracted,
     TomeError,
     UnpaywallNotConfigured,
-    UnsafeInput,
 )
 
 mcp_server = FastMCP("Tome")
@@ -80,9 +88,11 @@ logger.setLevel(logging.DEBUG)
 # Stderr handler (WARNING+) — visible in MCP client logs
 _stderr_handler = logging.StreamHandler(sys.stderr)
 _stderr_handler.setLevel(logging.WARNING)
-_stderr_handler.setFormatter(logging.Formatter(
-    "%(asctime)s [%(process)d] %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S"
-))
+_stderr_handler.setFormatter(
+    logging.Formatter(
+        "%(asctime)s [%(process)d] %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S"
+    )
+)
 logger.addHandler(_stderr_handler)
 
 _file_handler: logging.Handler | None = None
@@ -96,12 +106,15 @@ def _attach_file_log(dot_tome: Path) -> None:
     dot_tome.mkdir(parents=True, exist_ok=True)
     log_path = dot_tome / "server.log"
     fh = logging.handlers.RotatingFileHandler(
-        log_path, maxBytes=2_000_000, backupCount=3, encoding="utf-8",
+        log_path,
+        maxBytes=2_000_000,
+        backupCount=3,
+        encoding="utf-8",
     )
     fh.setLevel(logging.DEBUG)
-    fh.setFormatter(logging.Formatter(
-        "%(asctime)s [%(process)d] %(levelname)s %(name)s: %(message)s"
-    ))
+    fh.setFormatter(
+        logging.Formatter("%(asctime)s [%(process)d] %(levelname)s %(name)s: %(message)s")
+    )
     logger.addHandler(fh)
     _file_handler = fh
     logger.info("Tome server started — log attached to %s", log_path)
@@ -131,11 +144,12 @@ def _cap_response(result: str, name: str) -> str:
         return result
     logger.warning(
         "TOOL %s response truncated: %d → %d bytes",
-        name, len(result), _MAX_RESPONSE_BYTES,
+        name,
+        len(result),
+        _MAX_RESPONSE_BYTES,
     )
     return (
-        result[:_MAX_RESPONSE_BYTES]
-        + f"\n\n… (truncated from {len(result)} bytes — "
+        result[:_MAX_RESPONSE_BYTES] + f"\n\n… (truncated from {len(result)} bytes — "
         "use pagination or narrower filters)"
     )
 
@@ -197,9 +211,7 @@ def _logging_tool(**kwargs):
                 result = fn(*args, **kw)
                 dt = time.monotonic() - t0
                 rsize = len(result) if isinstance(result, str) else 0
-                logger.info(
-                    "TOOL %s completed in %.2fs (%d bytes)", name, dt, rsize
-                )
+                logger.info("TOOL %s completed in %.2fs (%d bytes)", name, dt, rsize)
                 return _cap_response(result, name) if isinstance(result, str) else result
             except TomeError as exc:
                 dt = time.monotonic() - t0
@@ -208,14 +220,19 @@ def _logging_tool(**kwargs):
                     exc.args = (str(exc) + hint,)
                 logger.warning(
                     "TOOL %s failed (%s) after %.2fs: %s",
-                    name, type(exc).__name__, dt, exc,
+                    name,
+                    type(exc).__name__,
+                    dt,
+                    exc,
                 )
                 raise
             except Exception as exc:
                 dt = time.monotonic() - t0
                 logger.error(
                     "TOOL %s crashed after %.2fs:\n%s",
-                    name, dt, traceback.format_exc(),
+                    name,
+                    dt,
+                    traceback.format_exc(),
                 )
                 # Wrap raw exceptions so LLM gets actionable message,
                 # not raw traceback with system paths.
@@ -295,6 +312,7 @@ def _chroma_dir() -> Path:
 def _vault_chroma() -> Path:
     """Vault-level ChromaDB (paper chunks). Lives at ~/.tome/chroma/."""
     from tome.vault import vault_chroma_dir
+
     return vault_chroma_dir()
 
 
@@ -338,7 +356,6 @@ def _save_manifest(data):
 # ---------------------------------------------------------------------------
 
 
-
 def _resolve_keys(
     key: str = "",
     keys: str = "",
@@ -367,11 +384,23 @@ def _resolve_keys(
 # File discovery helpers
 # ---------------------------------------------------------------------------
 
-EXCLUDE_DIRS = frozenset({
-    ".tome", ".git", "__pycache__", ".venv", "venv", "node_modules",
-    "build", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox",
-    "tome/pdf", "tome/inbox",  # PDFs handled separately by paper tools
-})
+EXCLUDE_DIRS = frozenset(
+    {
+        ".tome",
+        ".git",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "node_modules",
+        "build",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".tox",
+        "tome/pdf",
+        "tome/inbox",  # PDFs handled separately by paper tools
+    }
+)
 
 _FILE_TYPE_MAP: dict[str, str] = {
     ".tex": "tex",
@@ -476,12 +505,14 @@ def ingest(
         # Scan inbox
         pdfs = sorted(inbox.glob("*.pdf"))
         if not pdfs:
-            return json.dumps({
-                "status": "empty",
-                "message": "No PDFs in tome/inbox/.",
-                "hint": "Drop PDF files into tome/inbox/ then call ingest() again. "
-                         "See guide('paper-workflow') for the full pipeline.",
-            })
+            return json.dumps(
+                {
+                    "status": "empty",
+                    "message": "No PDFs in tome/inbox/.",
+                    "hint": "Drop PDF files into tome/inbox/ then call ingest() again. "
+                    "See guide('paper-workflow') for the full pipeline.",
+                }
+            )
         results = []
         for pdf in pdfs:
             results.append(_propose_ingest(pdf))
@@ -552,9 +583,11 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
         api_authors = crossref_result.authors
         year = crossref_result.year or 2024
         surname = (
-            api_authors[0].split(",")[0].strip() if api_authors
+            api_authors[0].split(",")[0].strip()
+            if api_authors
             else identify.surname_from_author(result.authors_from_pdf)
-            if result.authors_from_pdf else "unknown"
+            if result.authors_from_pdf
+            else "unknown"
         )
     elif s2_result:
         api_title = s2_result.title
@@ -651,7 +684,9 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
 def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     """Phase 2: Commit — extract, embed, write bib, move file."""
     if not key:
-        return {"error": "Key is required for commit. Provide key='authorYYYYslug' (e.g. 'xu2022interference')."}
+        return {
+            "error": "Key is required for commit. Provide key='authorYYYYslug' (e.g. 'xu2022interference')."
+        }
 
     lib = _load_bib()
     existing_keys = set(bib.list_keys(lib))
@@ -798,7 +833,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
 
     doi_status = fields.get("x-doi-status", "missing")
     doi_hint = (
-        f"DOI verified via CrossRef. "
+        "DOI verified via CrossRef. "
         if doi_status == "verified"
         else f"Verify: doi(key='{key}'). "
         if doi_status == "unchecked"
@@ -1043,7 +1078,10 @@ def _paper_rename(old_key: str, new_key: str) -> str:
         new_pdf = pdf_dir / f"{new_key}.pdf"
         if new_pdf.exists():
             ext_result = extract.extract_pdf_pages(
-                new_pdf, _raw_dir(), new_key, force=True,
+                new_pdf,
+                _raw_dir(),
+                new_key,
+                force=True,
             )
             pages = []
             for page_num in range(1, ext_result.pages + 1):
@@ -1053,7 +1091,11 @@ def _paper_rename(old_key: str, new_key: str) -> str:
             chunks = chunk.chunk_text("\n".join(pages))
             page_indices = list(range(len(chunks)))
             store.upsert_paper_chunks(
-                col, new_key, chunks, page_indices, sha,
+                col,
+                new_key,
+                chunks,
+                page_indices,
+                sha,
             )
             renamed.append("chromadb")
 
@@ -1208,21 +1250,23 @@ def paper(
 
     if action == "request":
         if not key:
-            return json.dumps({"error": "key is required for action='request'."
-                               + _guide_hint("paper")})
-        return _paper_request(key=key, doi=doi, reason=reason,
-                              tentative_title=tentative_title)
+            return json.dumps(
+                {"error": "key is required for action='request'." + _guide_hint("paper")}
+            )
+        return _paper_request(key=key, doi=doi, reason=reason, tentative_title=tentative_title)
 
     if action == "rename":
         if not key or not new_key:
-            return json.dumps({"error": "Both key and new_key are required for rename."
-                               + _guide_hint("paper")})
+            return json.dumps(
+                {"error": "Both key and new_key are required for rename." + _guide_hint("paper")}
+            )
         return _paper_rename(key, new_key)
 
     if action == "remove":
         if not key:
-            return json.dumps({"error": "key is required for action='remove'."
-                               + _guide_hint("paper")})
+            return json.dumps(
+                {"error": "key is required for action='remove'." + _guide_hint("paper")}
+            )
         return _paper_remove(key)
 
     # --- No action specified ---
@@ -1235,9 +1279,16 @@ def paper(
     write_fields = (title, author, year, journal, doi, tags, raw_field)
     if any(write_fields):
         return _paper_set(
-            key=key, title=title, author=author, year=year,
-            journal=journal, doi=doi, tags=tags, entry_type=entry_type,
-            raw_field=raw_field, raw_value=raw_value,
+            key=key,
+            title=title,
+            author=author,
+            year=year,
+            journal=journal,
+            doi=doi,
+            tags=tags,
+            entry_type=entry_type,
+            raw_field=raw_field,
+            raw_value=raw_value,
         )
 
     # key only → get
@@ -1270,11 +1321,16 @@ def notes(
     Named params and 'fields' JSON are merged (named params take priority).
     """
     if not key and not file:
-        return json.dumps({"error": "Provide key (paper) or file (tex file).",
-                           "hint": "See guide('notes') for usage."})
+        return json.dumps(
+            {
+                "error": "Provide key (paper) or file (tex file).",
+                "hint": "See guide('notes') for usage.",
+            }
+        )
     if key and file:
-        return json.dumps({"error": "Provide key OR file, not both.",
-                           "hint": "See guide('notes') for usage."})
+        return json.dumps(
+            {"error": "Provide key OR file, not both.", "hint": "See guide('notes') for usage."}
+        )
 
     # Parse generic fields JSON
     extra: dict[str, str] = {}
@@ -1282,23 +1338,47 @@ def notes(
         try:
             extra = json.loads(fields)
             if not isinstance(extra, dict):
-                return json.dumps({"error": "fields must be a JSON object.",
-                                   "hint": "Pass a JSON object, e.g. fields='{\"my_field\": \"value\"}'. See guide('notes')."})
+                return json.dumps(
+                    {
+                        "error": "fields must be a JSON object.",
+                        "hint": "Pass a JSON object, e.g. fields='{\"my_field\": \"value\"}'. See guide('notes').",
+                    }
+                )
             extra = {str(k): str(v) for k, v in extra.items()}
         except json.JSONDecodeError as e:
-            return json.dumps({"error": f"Invalid JSON in fields: {e}",
-                               "hint": "See guide('notes') for usage."})
+            return json.dumps(
+                {"error": f"Invalid JSON in fields: {e}", "hint": "See guide('notes') for usage."}
+            )
 
     if key:
-        return _notes_paper(key, summary, claims, relevance, limitations, quality, tags, clear, extra)
+        return _notes_paper(
+            key, summary, claims, relevance, limitations, quality, tags, clear, extra
+        )
     else:
-        return _notes_file(file, intent, status, claims, depends, open, clear, extra,
-                           summary=summary, short=short, sections_json=sections)
+        return _notes_file(
+            file,
+            intent,
+            status,
+            claims,
+            depends,
+            open,
+            clear,
+            extra,
+            summary=summary,
+            short=short,
+            sections_json=sections,
+        )
 
 
 def _notes_paper(
-    key: str, summary: str, claims: str, relevance: str,
-    limitations: str, quality: str, tags: str, clear: str,
+    key: str,
+    summary: str,
+    claims: str,
+    relevance: str,
+    limitations: str,
+    quality: str,
+    tags: str,
+    clear: str,
     extra: dict[str, str] | None = None,
 ) -> str:
     """Paper notes — read, write, or clear."""
@@ -1306,8 +1386,12 @@ def _notes_paper(
     cfg = _load_config()
     allowed = set(cfg.paper_note_fields)
     paper_fields = {
-        "summary": summary, "claims": claims, "relevance": relevance,
-        "limitations": limitations, "quality": quality, "tags": tags,
+        "summary": summary,
+        "claims": claims,
+        "relevance": relevance,
+        "limitations": limitations,
+        "quality": quality,
+        "tags": tags,
     }
     # Merge extra fields
     if extra:
@@ -1317,8 +1401,12 @@ def _notes_paper(
     # Validate against config
     bad = {k for k in paper_fields if paper_fields[k] and k not in allowed}
     if bad:
-        return json.dumps({"error": f"Unknown paper note fields: {sorted(bad)}. "
-                           f"Allowed: {cfg.paper_note_fields}"})
+        return json.dumps(
+            {
+                "error": f"Unknown paper note fields: {sorted(bad)}. "
+                f"Allowed: {cfg.paper_note_fields}"
+            }
+        )
     writing = any(paper_fields.values())
     existing = notes_mod.load_note(_tome_dir(), key, allowed)
 
@@ -1342,20 +1430,31 @@ def _notes_paper(
         try:
             _, _, col = _vault_paper_col()
             if updated:
-                col.upsert(ids=[f"{key}::note"], documents=[flat_text],
-                           metadatas=[{"bib_key": key, "source_type": "note"}])
+                col.upsert(
+                    ids=[f"{key}::note"],
+                    documents=[flat_text],
+                    metadatas=[{"bib_key": key, "source_type": "note"}],
+                )
             else:
                 col.delete(ids=[f"{key}::note"])
         except Exception:
             pass  # best-effort: ChromaDB note re-index non-fatal
-        return json.dumps({"key": key, "status": "cleared", "cleared": sorted(to_clear), "notes": updated}, indent=2)
+        return json.dumps(
+            {"key": key, "status": "cleared", "cleared": sorted(to_clear), "notes": updated},
+            indent=2,
+        )
 
     if not writing:
         # Read mode
         if not existing:
-            return json.dumps({"key": key, "notes": None,
-                               "fields": cfg.paper_note_fields,
-                               "hint": "No notes yet."})
+            return json.dumps(
+                {
+                    "key": key,
+                    "notes": None,
+                    "fields": cfg.paper_note_fields,
+                    "hint": "No notes yet.",
+                }
+            )
         return json.dumps({"key": key, "notes": existing}, indent=2)
 
     # Write mode — overwrite non-empty fields
@@ -1381,10 +1480,17 @@ def _notes_paper(
 
 
 def _notes_file(
-    file: str, intent: str, status: str, claims: str,
-    depends: str, open_q: str, clear: str,
+    file: str,
+    intent: str,
+    status: str,
+    claims: str,
+    depends: str,
+    open_q: str,
+    clear: str,
     extra: dict[str, str] | None = None,
-    summary: str = "", short: str = "", sections_json: str = "",
+    summary: str = "",
+    short: str = "",
+    sections_json: str = "",
 ) -> str:
     """File meta notes — read, write, or clear.
 
@@ -1399,8 +1505,11 @@ def _notes_file(
     cfg = _load_config()
     allowed = set(cfg.file_note_fields)
     file_fields = {
-        "intent": intent, "status": status, "claims": claims,
-        "depends": depends, "open": open_q,
+        "intent": intent,
+        "status": status,
+        "claims": claims,
+        "depends": depends,
+        "open": open_q,
     }
     # Merge extra fields
     if extra:
@@ -1410,8 +1519,9 @@ def _notes_file(
     # Validate against config
     bad = {k for k in file_fields if file_fields[k] and k not in allowed}
     if bad:
-        return json.dumps({"error": f"Unknown file note fields: {sorted(bad)}. "
-                           f"Allowed: {cfg.file_note_fields}"})
+        return json.dumps(
+            {"error": f"Unknown file note fields: {sorted(bad)}. Allowed: {cfg.file_note_fields}"}
+        )
 
     # Parse sections JSON if provided
     section_list: list | None = None
@@ -1419,11 +1529,19 @@ def _notes_file(
         try:
             section_list = json.loads(sections_json)
             if not isinstance(section_list, list):
-                return json.dumps({"error": "sections must be a JSON array.",
-                                   "hint": "See guide('notes') for usage."})
+                return json.dumps(
+                    {
+                        "error": "sections must be a JSON array.",
+                        "hint": "See guide('notes') for usage.",
+                    }
+                )
         except json.JSONDecodeError as e:
-            return json.dumps({"error": f"Invalid JSON in sections: {e}",
-                               "hint": "See guide('notes') for usage."})
+            return json.dumps(
+                {
+                    "error": f"Invalid JSON in sections: {e}",
+                    "hint": "See guide('notes') for usage.",
+                }
+            )
 
     writing_meta = any(file_fields.values())
     writing_summary = bool(summary or short or section_list is not None)
@@ -1435,7 +1553,7 @@ def _notes_file(
 
     if clear:
         # Clear mode
-        clear_summary = clear.strip() == "*" or "summary" in clear
+        _clear_summary = clear.strip() == "*" or "summary" in clear  # noqa: F841
         if clear.strip() == "*":
             file_meta_mod.write_meta(file_path, {})
             try:
@@ -1449,7 +1567,9 @@ def _notes_file(
             if file in sum_data:
                 del sum_data[file]
                 summaries.save_summaries(_dot_tome(), sum_data)
-            return json.dumps({"file": file, "status": "cleared", "meta": None, "summary_cleared": True})
+            return json.dumps(
+                {"file": file, "status": "cleared", "meta": None, "summary_cleared": True}
+            )
         to_clear = {f.strip() for f in clear.split(",") if f.strip()}
         # Clear summary fields from sidecar
         summary_fields = to_clear & {"summary", "short", "sections"}
@@ -1472,16 +1592,27 @@ def _notes_file(
         try:
             _, _, col = _corpus_col()
             if updated:
-                col.upsert(ids=[f"{file}::meta"], documents=[flat_text],
-                           metadatas=[{"source_file": file, "source_type": "file_meta",
-                                       "file_type": file_path.suffix.lstrip(".")}])
+                col.upsert(
+                    ids=[f"{file}::meta"],
+                    documents=[flat_text],
+                    metadatas=[
+                        {
+                            "source_file": file,
+                            "source_type": "file_meta",
+                            "file_type": file_path.suffix.lstrip("."),
+                        }
+                    ],
+                )
             else:
                 col.delete(ids=[f"{file}::meta"])
             if summary_fields:
                 col.delete(ids=[f"{file}::summary"])
         except Exception:
             pass  # best-effort: ChromaDB meta re-index non-fatal
-        return json.dumps({"file": file, "status": "cleared", "cleared": sorted(to_clear), "meta": updated}, indent=2)
+        return json.dumps(
+            {"file": file, "status": "cleared", "cleared": sorted(to_clear), "meta": updated},
+            indent=2,
+        )
 
     if not writing:
         # Read mode — merge file meta + summary sidecar
@@ -1536,11 +1667,13 @@ def _notes_file(
             col.upsert(
                 ids=[f"{file}::meta"],
                 documents=[flat_text],
-                metadatas=[{
-                    "source_file": file,
-                    "source_type": "file_meta",
-                    "file_type": file_path.suffix.lstrip("."),
-                }],
+                metadatas=[
+                    {
+                        "source_file": file,
+                        "source_type": "file_meta",
+                        "file_type": file_path.suffix.lstrip("."),
+                    }
+                ],
             )
         except Exception:
             pass  # best-effort: meta saved to file regardless
@@ -1552,19 +1685,24 @@ def _notes_file(
         # last_summarized meaningless — the date would anchor to a commit
         # that doesn't contain the current file content.
         if summaries.git_file_is_dirty(_project_root(), file):
-            return json.dumps({
-                "error": f"File '{file}' has uncommitted changes. "
-                         "Commit first, then store the summary.",
-                "hint": (
-                    "Summary staleness is tracked by git commits since "
-                    "last_summarized. Storing against dirty state would make "
-                    "the date unreliable — the next read would immediately "
-                    "show 'stale' once you commit."
-                ),
-            })
+            return json.dumps(
+                {
+                    "error": f"File '{file}' has uncommitted changes. "
+                    "Commit first, then store the summary.",
+                    "hint": (
+                        "Summary staleness is tracked by git commits since "
+                        "last_summarized. Storing against dirty state would make "
+                        "the date unreliable — the next read would immediately "
+                        "show 'stale' once you commit."
+                    ),
+                }
+            )
         sum_data = summaries.load_summaries(_dot_tome())
         sum_entry_out = summaries.set_summary(
-            sum_data, file, summary, short,
+            sum_data,
+            file,
+            summary,
+            short,
             section_list if section_list is not None else [],
         )
         summaries.save_summaries(_dot_tome(), sum_data)
@@ -1578,10 +1716,12 @@ def _notes_file(
             col.upsert(
                 ids=[f"{file}::summary"],
                 documents=[flat_text],
-                metadatas=[{
-                    "source_file": file,
-                    "source_type": "summary",
-                }],
+                metadatas=[
+                    {
+                        "source_file": file,
+                        "source_type": "summary",
+                    }
+                ],
             )
         except Exception:
             pass  # best-effort: summary saved to sidecar regardless
@@ -1593,7 +1733,9 @@ def _notes_file(
         actions.append("file meta updated")
     if sum_entry_out:
         result_data["summary"] = sum_entry_out
-        actions.append(f"summary stored (last_summarized: {sum_entry_out.get('last_summarized', '?')})")
+        actions.append(
+            f"summary stored (last_summarized: {sum_entry_out.get('last_summarized', '?')})"
+        )
         # Auto-mark 'summarize' needful task as done — file is committed
         # (dirty guard passed above), so we can safely snapshot the git SHA.
         try:
@@ -1606,14 +1748,21 @@ def _notes_file(
                 git_sha = needful_mod._git_head_sha(_project_root())
                 state = needful_mod.load_state(_dot_tome())
                 for t in summ_tasks:
-                    needful_mod.mark_done(state, t, file, file_sha,
-                                         note="auto: summary stored via notes()",
-                                         git_sha=git_sha)
+                    needful_mod.mark_done(
+                        state,
+                        t,
+                        file,
+                        file_sha,
+                        note="auto: summary stored via notes()",
+                        git_sha=git_sha,
+                    )
                 needful_mod.save_state(_dot_tome(), state)
                 result_data["needful_marked_done"] = summ_tasks
                 if git_sha:
                     result_data["git_sha"] = git_sha
-                actions.append(f"needful task(s) {summ_tasks} marked done at git {git_sha[:8] if git_sha else '?'}")
+                actions.append(
+                    f"needful task(s) {summ_tasks} marked done at git {git_sha[:8] if git_sha else '?'}"
+                )
         except Exception:
             pass  # needful auto-mark is best-effort
     result_data["message"] = "Done: " + "; ".join(actions) + "."
@@ -1663,7 +1812,7 @@ def _paper_list(tags: str = "", status: str = "", page: int = 1) -> str:
 
     total = len(all_matching)
     start = (max(1, page) - 1) * _LIST_PAGE_SIZE
-    page_items = all_matching[start:start + _LIST_PAGE_SIZE]
+    page_items = all_matching[start : start + _LIST_PAGE_SIZE]
     total_pages = (total + _LIST_PAGE_SIZE - 1) // _LIST_PAGE_SIZE
     result: dict[str, Any] = {
         "total": total,
@@ -1796,8 +1945,7 @@ def search(
     context: int = 0,
     paragraphs: int = 0,
 ) -> str:
-    """Search papers, project files, or notes. Returns ranked results.
-    """
+    """Search papers, project files, or notes. Returns ranked results."""
     if scope == "papers":
         return _search_papers(query, mode, key, keys, tags, n, context, paragraphs)
     elif scope == "corpus":
@@ -1805,14 +1953,18 @@ def search(
     elif scope == "notes":
         return _search_notes(query, mode, key, keys, tags, n)
     else:  # "all"
-        return _search_all(query, mode, key, keys, tags, paths,
-                           labels_only, cites_only, n)
+        return _search_all(query, mode, key, keys, tags, paths, labels_only, cites_only, n)
 
 
 def _search_papers(
-    query: str, mode: str,
-    key: str, keys: str, tags: str,
-    n: int, context: int, paragraphs: int,
+    query: str,
+    mode: str,
+    key: str,
+    keys: str,
+    tags: str,
+    n: int,
+    context: int,
+    paragraphs: int,
 ) -> str:
     """Search papers — semantic or exact."""
     validate.validate_key_if_given(key)
@@ -1826,22 +1978,35 @@ def _search_papers(
         client, embed_fn, _ = _vault_paper_col()
         if resolved and len(resolved) == 1:
             results = store.search_papers(
-                client, query, n=n, key=resolved[0], embed_fn=embed_fn,
+                client,
+                query,
+                n=n,
+                key=resolved[0],
+                embed_fn=embed_fn,
             )
         elif resolved:
             results = store.search_papers(
-                client, query, n=n, keys=resolved, embed_fn=embed_fn,
+                client,
+                query,
+                n=n,
+                keys=resolved,
+                embed_fn=embed_fn,
             )
         else:
             results = store.search_papers(
-                client, query, n=n, embed_fn=embed_fn,
+                client,
+                query,
+                n=n,
+                embed_fn=embed_fn,
             )
     except Exception as e:
         raise ChromaDBError(_sanitize_exc(e))
 
     response: dict[str, Any] = {
-        "scope": "papers", "mode": "semantic",
-        "count": len(results), "results": results,
+        "scope": "papers",
+        "mode": "semantic",
+        "count": len(results),
+        "results": results,
     }
     if not results:
         response["hint"] = (
@@ -1852,31 +2017,41 @@ def _search_papers(
 
 
 def _search_papers_exact(
-    query: str, resolved: list[str] | None,
-    n: int, context: int, paragraphs: int,
+    query: str,
+    resolved: list[str] | None,
+    n: int,
+    context: int,
+    paragraphs: int,
 ) -> str:
     """Exact (normalized grep) search across raw PDF text."""
     from tome import grep_raw as gr
 
     raw_dir = _dot_tome() / "raw"
     if not raw_dir.is_dir():
-        return json.dumps({
-            "error": "No raw text directory (.tome/raw/) found. "
-            "No papers have been ingested yet, or the cache was deleted. "
-            "Use ingest to add papers, or run reindex(scope='papers') to regenerate from tome/pdf/."
-        })
+        return json.dumps(
+            {
+                "error": "No raw text directory (.tome/raw/) found. "
+                "No papers have been ingested yet, or the cache was deleted. "
+                "Use ingest to add papers, or run reindex(scope='papers') to regenerate from tome/pdf/."
+            }
+        )
 
     context_chars = context if context > 0 else 200
 
     # Paragraph mode: single-paper, cleaned output
     if paragraphs > 0:
         if not resolved or len(resolved) != 1:
-            return json.dumps({
-                "error": "paragraphs mode requires exactly one paper "
-                "(use key= for a single bib key).",
-            })
+            return json.dumps(
+                {
+                    "error": "paragraphs mode requires exactly one paper "
+                    "(use key= for a single bib key).",
+                }
+            )
         matches = gr.grep_paper_paragraphs(
-            query, raw_dir, resolved[0], paragraphs=paragraphs,
+            query,
+            raw_dir,
+            resolved[0],
+            paragraphs=paragraphs,
         )
         results = []
         for m in matches:
@@ -1890,37 +2065,51 @@ def _search_papers_exact(
                 entry["text"] = m.text
             results.append(entry)
 
-        return json.dumps({
-            "scope": "papers", "mode": "exact",
-            "query": query,
-            "match_count": len(results),
-            **_truncate(results),
-        }, indent=2)
+        return json.dumps(
+            {
+                "scope": "papers",
+                "mode": "exact",
+                "query": query,
+                "match_count": len(results),
+                **_truncate(results),
+            },
+            indent=2,
+        )
 
     # Character-context mode
     matches = gr.grep_all(query, raw_dir, keys=resolved, context_chars=context_chars)
 
     results = []
     for m in matches:
-        results.append({
-            "key": m.key,
-            "page": m.page,
-            "context": m.context,
-        })
+        results.append(
+            {
+                "key": m.key,
+                "page": m.page,
+                "context": m.context,
+            }
+        )
 
-    return json.dumps({
-        "scope": "papers", "mode": "exact",
-        "query": query,
-        "normalized_query": gr.normalize(query),
-        "match_count": len(results),
-        **_truncate(results),
-    }, indent=2)
+    return json.dumps(
+        {
+            "scope": "papers",
+            "mode": "exact",
+            "query": query,
+            "normalized_query": gr.normalize(query),
+            "match_count": len(results),
+            **_truncate(results),
+        },
+        indent=2,
+    )
 
 
 def _search_corpus(
-    query: str, mode: str, paths: str,
-    labels_only: bool, cites_only: bool,
-    n: int, context: int,
+    query: str,
+    mode: str,
+    paths: str,
+    labels_only: bool,
+    cites_only: bool,
+    n: int,
+    context: int,
 ) -> str:
     """Search corpus (.tex/.py) — semantic or exact."""
     if mode == "exact":
@@ -1942,8 +2131,10 @@ def _search_corpus(
         raise ChromaDBError(_sanitize_exc(e))
 
     response: dict[str, Any] = {
-        "scope": "corpus", "mode": "semantic",
-        "count": len(results), "results": results,
+        "scope": "corpus",
+        "mode": "semantic",
+        "count": len(results),
+        "results": results,
     }
     if not results:
         response["hint"] = (
@@ -1965,6 +2156,7 @@ def _search_corpus_exact(query: str, paths: str, context: int) -> str:
     tex_files: list[str] = []
     if paths:
         import glob as globmod
+
         for pattern in [p.strip() for p in paths.split(",") if p.strip()]:
             for f in sorted(globmod.glob(str(proj / pattern), recursive=True)):
                 fp = Path(f)
@@ -1986,24 +2178,34 @@ def _search_corpus_exact(query: str, paths: str, context: int) -> str:
 
     results = []
     for m in matches:
-        results.append({
-            "file": m.file,
-            "line_start": m.line_start,
-            "line_end": m.line_end,
-            "context": m.context,
-        })
+        results.append(
+            {
+                "file": m.file,
+                "line_start": m.line_start,
+                "line_end": m.line_end,
+                "context": m.context,
+            }
+        )
 
-    return json.dumps({
-        "scope": "corpus", "mode": "exact",
-        "query": query[:200],
-        "match_count": len(results),
-        **_truncate(results),
-    }, indent=2)
+    return json.dumps(
+        {
+            "scope": "corpus",
+            "mode": "exact",
+            "query": query[:200],
+            "match_count": len(results),
+            **_truncate(results),
+        },
+        indent=2,
+    )
 
 
 def _search_notes(
-    query: str, mode: str,
-    key: str, keys: str, tags: str, n: int,
+    query: str,
+    mode: str,
+    key: str,
+    keys: str,
+    tags: str,
+    n: int,
 ) -> str:
     """Search notes only — semantic over note chunks in paper_chunks."""
     validate.validate_key_if_given(key)
@@ -2025,23 +2227,33 @@ def _search_notes(
             where_filter = {"$and": where_clauses}
 
         results = col.query(
-            query_texts=[query], n_results=n, where=where_filter,
+            query_texts=[query],
+            n_results=n,
+            where=where_filter,
         )
         formatted = store._format_results(results)
     except Exception as e:
         raise ChromaDBError(_sanitize_exc(e))
 
     response: dict[str, Any] = {
-        "scope": "notes", "mode": "semantic",
-        "count": len(formatted), "results": formatted,
+        "scope": "notes",
+        "mode": "semantic",
+        "count": len(formatted),
+        "results": formatted,
     }
     return json.dumps(response, indent=2)
 
 
 def _search_all(
-    query: str, mode: str,
-    key: str, keys: str, tags: str, paths: str,
-    labels_only: bool, cites_only: bool, n: int,
+    query: str,
+    mode: str,
+    key: str,
+    keys: str,
+    tags: str,
+    paths: str,
+    labels_only: bool,
+    cites_only: bool,
+    n: int,
 ) -> str:
     """Search across both papers and corpus, merge by distance."""
     validate.validate_key_if_given(key)
@@ -2052,13 +2264,17 @@ def _search_all(
         corpus_json = _search_corpus(query, "exact", paths, False, False, n, 0)
         papers_data = json.loads(papers_json)
         corpus_data = json.loads(corpus_json)
-        return json.dumps({
-            "scope": "all", "mode": "exact",
-            "papers": papers_data.get("results", []),
-            "papers_count": papers_data.get("match_count", 0),
-            "corpus": corpus_data.get("results", []),
-            "corpus_count": corpus_data.get("match_count", 0),
-        }, indent=2)
+        return json.dumps(
+            {
+                "scope": "all",
+                "mode": "exact",
+                "papers": papers_data.get("results", []),
+                "papers_count": papers_data.get("match_count", 0),
+                "corpus": corpus_data.get("results", []),
+                "corpus_count": corpus_data.get("match_count", 0),
+            },
+            indent=2,
+        )
 
     # Semantic mode: query both collections, merge by distance
     resolved = _resolve_keys(key=key, keys=keys, tags=tags)
@@ -2069,15 +2285,26 @@ def _search_all(
         vault_client, embed_fn, _ = _vault_paper_col()
         if resolved and len(resolved) == 1:
             paper_hits = store.search_papers(
-                vault_client, query, n=n, key=resolved[0], embed_fn=embed_fn,
+                vault_client,
+                query,
+                n=n,
+                key=resolved[0],
+                embed_fn=embed_fn,
             )
         elif resolved:
             paper_hits = store.search_papers(
-                vault_client, query, n=n, keys=resolved, embed_fn=embed_fn,
+                vault_client,
+                query,
+                n=n,
+                keys=resolved,
+                embed_fn=embed_fn,
             )
         else:
             paper_hits = store.search_papers(
-                vault_client, query, n=n, embed_fn=embed_fn,
+                vault_client,
+                query,
+                n=n,
+                embed_fn=embed_fn,
             )
         for r in paper_hits:
             r["_source"] = "papers"
@@ -2086,7 +2313,9 @@ def _search_all(
         # Corpus — project ChromaDB
         corpus_client, corpus_embed_fn, _ = _corpus_col()
         corpus_hits = store.search_corpus(
-            corpus_client, query, n=n,
+            corpus_client,
+            query,
+            n=n,
             source_file=paths or None,
             labels_only=labels_only,
             cites_only=cites_only,
@@ -2103,12 +2332,15 @@ def _search_all(
     all_results.sort(key=lambda r: r.get("distance", float("inf")))
     top = all_results[:n]
 
-    return json.dumps({
-        "scope": "all", "mode": "semantic",
-        "count": len(top),
-        "results": top,
-    }, indent=2)
-
+    return json.dumps(
+        {
+            "scope": "all",
+            "mode": "semantic",
+            "count": len(top),
+            "results": top,
+        },
+        indent=2,
+    )
 
 
 # list_labels and find_cites have been folded into the unified toc() tool.
@@ -2198,13 +2430,21 @@ def _reindex_corpus(paths: str) -> dict[str, Any]:
         if f.endswith(".tex") or f.endswith(".sty") or f.endswith(".cls"):
             markers = [latex.extract_markers(c).to_metadata() for c in chunks]
         store.upsert_corpus_chunks(
-            col, f, chunks, current_files[f],
-            chunk_markers=markers, file_type=ft,
+            col,
+            f,
+            chunks,
+            current_files[f],
+            chunk_markers=markers,
+            file_type=ft,
         )
 
     # Detect orphaned .tex/.sty/.cls files (exist on disk but not referenced)
     orphans: list[str] = []
-    tex_files_indexed = [f for f in current_files if current_files[f] == "tex" or f.endswith((".tex", ".sty", ".cls"))]
+    tex_files_indexed = [
+        f
+        for f in current_files
+        if current_files[f] == "tex" or f.endswith((".tex", ".sty", ".cls"))
+    ]
     if tex_files_indexed:
         try:
             cfg = tome_config.load_config(_tome_dir())
@@ -2258,16 +2498,13 @@ def _reindex_corpus(paths: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-
 # rebuild_doc_index has been folded into toc(locate="index").
 # The index auto-rebuilds from .idx when stale (mtime check).
-
 
 
 # search_doc_index and list_doc_index have been folded into toc(locate="index").
 # Use toc(locate="index", query="term") for search_doc_index behavior.
 # Use toc(locate="index") with no query for list_doc_index behavior.
-
 
 
 # summarize_file and get_summary have been folded into notes(file=...).
@@ -2312,17 +2549,19 @@ def _discover_search(query: str, n: int) -> dict[str, Any]:
         if s2_results:
             flagged = s2.flag_in_library(s2_results, lib_dois, lib_s2_ids)
             for paper, in_lib in flagged:
-                s2_output.append({
-                    "title": paper.title,
-                    "authors": paper.authors,
-                    "year": paper.year,
-                    "doi": paper.doi,
-                    "citation_count": paper.citation_count,
-                    "s2_id": paper.s2_id,
-                    "in_library": in_lib,
-                    "abstract": paper.abstract[:300] if paper.abstract else None,
-                    "sources": ["s2"],
-                })
+                s2_output.append(
+                    {
+                        "title": paper.title,
+                        "authors": paper.authors,
+                        "year": paper.year,
+                        "doi": paper.doi,
+                        "citation_count": paper.citation_count,
+                        "s2_id": paper.s2_id,
+                        "in_library": in_lib,
+                        "abstract": paper.abstract[:300] if paper.abstract else None,
+                        "sources": ["s2"],
+                    }
+                )
     except APIError as e:
         s2_error = str(e)
 
@@ -2334,18 +2573,20 @@ def _discover_search(query: str, n: int) -> dict[str, Any]:
         if oa_results:
             flagged_oa = openalex.flag_in_library(oa_results, lib_dois)
             for work, in_lib in flagged_oa:
-                oa_output.append({
-                    "title": work.title,
-                    "authors": work.authors,
-                    "year": work.year,
-                    "doi": work.doi,
-                    "citation_count": work.citation_count,
-                    "is_oa": work.is_oa,
-                    "oa_url": work.oa_url,
-                    "in_library": in_lib,
-                    "abstract": work.abstract[:300] if work.abstract else None,
-                    "sources": ["openalex"],
-                })
+                oa_output.append(
+                    {
+                        "title": work.title,
+                        "authors": work.authors,
+                        "year": work.year,
+                        "doi": work.doi,
+                        "citation_count": work.citation_count,
+                        "is_oa": work.is_oa,
+                        "oa_url": work.oa_url,
+                        "in_library": in_lib,
+                        "abstract": work.abstract[:300] if work.abstract else None,
+                        "sources": ["openalex"],
+                    }
+                )
     except APIError as e:
         oa_error = str(e)
 
@@ -2435,7 +2676,8 @@ def _discover_graph(key: str, doi: str, s2_id: str) -> dict[str, Any]:
     # --- Local S2AG enrichment ---
     s2ag_data: dict[str, Any] = {}
     try:
-        from tome.s2ag import S2AGLocal, DB_PATH
+        from tome.s2ag import DB_PATH, S2AGLocal
+
         if DB_PATH.exists():
             db = S2AGLocal()
             lookup_doi = doi or (s2_data.get("paper", {}).get("doi"))
@@ -2477,7 +2719,8 @@ def _discover_shared_citers(min_shared: int, min_year: int, n: int) -> dict[str,
             lib = _load_bib()
             library_keys = {e.key for e in lib.entries}
             tree_results = cite_tree_mod.discover_new(
-                tree, library_keys,
+                tree,
+                library_keys,
                 min_shared=min_shared,
                 min_year=min_year or None,
                 max_results=n,
@@ -2492,7 +2735,8 @@ def _discover_shared_citers(min_shared: int, min_year: int, n: int) -> dict[str,
 
     # --- Local S2AG ---
     try:
-        from tome.s2ag import S2AGLocal, DB_PATH
+        from tome.s2ag import DB_PATH, S2AGLocal
+
         if DB_PATH.exists():
             db = S2AGLocal()
             lib = _load_bib()
@@ -2508,14 +2752,16 @@ def _discover_shared_citers(min_shared: int, min_year: int, n: int) -> dict[str,
                 for cid, count in s2ag_results:
                     p = db.get_paper(cid)
                     if p:
-                        results_list.append({
-                            "title": p.title,
-                            "year": p.year,
-                            "doi": p.doi,
-                            "citation_count": p.citation_count,
-                            "shared_count": count,
-                            "source": "s2ag_local",
-                        })
+                        results_list.append(
+                            {
+                                "title": p.title,
+                                "year": p.year,
+                                "doi": p.doi,
+                                "citation_count": p.citation_count,
+                                "shared_count": count,
+                                "source": "s2ag_local",
+                            }
+                        )
                 sources_used.append("s2ag_local")
     except Exception:
         pass  # best-effort: S2AG local is one of several sources
@@ -2575,7 +2821,8 @@ def _discover_refresh(key: str, min_year: int) -> dict[str, Any]:
                     cite_tree_mod.update_tree(tree, key, tree_entry)
                     cite_tree_mod.save_tree(_dot_tome(), tree)
                     result["cite_tree"] = {
-                        "status": "built", "key": key,
+                        "status": "built",
+                        "key": key,
                         "cited_by": len(tree_entry.get("cited_by", [])),
                         "references": len(tree_entry.get("references", [])),
                     }
@@ -2626,7 +2873,8 @@ def _discover_refresh(key: str, min_year: int) -> dict[str, Any]:
 
     # --- S2AG incremental sweep ---
     try:
-        from tome.s2ag import S2AGLocal, DB_PATH
+        from tome.s2ag import DB_PATH, S2AGLocal
+
         if DB_PATH.exists():
             db = S2AGLocal()
             corpus_ids = []
@@ -2639,7 +2887,8 @@ def _discover_refresh(key: str, min_year: int) -> dict[str, Any]:
             if corpus_ids:
                 lines: list[str] = []
                 s2ag_result = db.incremental_update(
-                    corpus_ids, min_year=min_year,
+                    corpus_ids,
+                    min_year=min_year,
                     progress_fn=lambda msg: lines.append(msg),
                 )
                 s2ag_result["library_papers_checked"] = len(corpus_ids)
@@ -2656,10 +2905,13 @@ def _discover_refresh(key: str, min_year: int) -> dict[str, Any]:
 def _discover_stats() -> dict[str, Any]:
     """S2AG local database statistics."""
     try:
-        from tome.s2ag import S2AGLocal, DB_PATH
+        from tome.s2ag import DB_PATH, S2AGLocal
+
         if not DB_PATH.exists():
-            return {"error": "S2AG database not found at ~/.tome/s2ag/s2ag.db",
-                    "hint": "Run: python -m tome.s2ag_cli sync-library <bib_file>"}
+            return {
+                "error": "S2AG database not found at ~/.tome/s2ag/s2ag.db",
+                "hint": "Run: python -m tome.s2ag_cli sync-library <bib_file>",
+            }
         db = S2AGLocal()
         stats = db.stats()
         stats["scope"] = "stats"
@@ -2674,7 +2926,8 @@ def _discover_lookup(doi: str, s2_id: str) -> dict[str, Any]:
 
     # --- Local S2AG first (instant, no API) ---
     try:
-        from tome.s2ag import S2AGLocal, DB_PATH
+        from tome.s2ag import DB_PATH, S2AGLocal
+
         if DB_PATH.exists():
             db = S2AGLocal()
             rec = None
@@ -2765,13 +3018,14 @@ def discover(
     if key or doi or s2_id:
         return json.dumps(_discover_graph(key, doi, s2_id), indent=2)
 
-    return json.dumps({
-        "error": "Provide query (search), key/doi/s2_id (graph), or scope.",
-        "hint": "discover(query='...') for search, discover(key='...') for citation graph, "
-                "discover(scope='shared_citers') for co-citation, "
-                "discover(scope='refresh') to update caches."
-                + _guide_hint("discover"),
-    })
+    return json.dumps(
+        {
+            "error": "Provide query (search), key/doi/s2_id (graph), or scope.",
+            "hint": "discover(query='...') for search, discover(key='...') for citation graph, "
+            "discover(scope='shared_citers') for co-citation, "
+            "discover(scope='refresh') to update caches." + _guide_hint("discover"),
+        }
+    )
 
 
 def _doi_fetch(key: str) -> str:
@@ -2808,16 +3062,22 @@ def _doi_fetch(key: str) -> str:
     except APIError as e:
         return json.dumps({"error": str(e)})
     if result is None:
-        return json.dumps({"error": f"Unpaywall returned no data for DOI: {doi}. DOI may not exist in their database."})
+        return json.dumps(
+            {
+                "error": f"Unpaywall returned no data for DOI: {doi}. DOI may not exist in their database."
+            }
+        )
 
     if not result.is_oa or not result.best_oa_url:
-        return json.dumps({
-            "doi": doi,
-            "is_oa": result.is_oa,
-            "oa_status": result.oa_status,
-            "message": "No open-access PDF available.",
-            "hint": "Try paper(action='request', key='...') to track it, or manually place the PDF in tome/inbox/.",
-        })
+        return json.dumps(
+            {
+                "doi": doi,
+                "is_oa": result.is_oa,
+                "oa_status": result.oa_status,
+                "message": "No open-access PDF available.",
+                "hint": "Try paper(action='request', key='...') to track it, or manually place the PDF in tome/inbox/.",
+            }
+        )
 
     # Download PDF
     pdf_dir = _project_root() / "tome" / "pdf"
@@ -2825,19 +3085,23 @@ def _doi_fetch(key: str) -> str:
     dest = pdf_dir / f"{key}.pdf"
 
     if dest.exists():
-        return json.dumps({
-            "doi": doi,
-            "message": f"PDF already exists: tome/pdf/{key}.pdf",
-            "oa_url": result.best_oa_url,
-        })
+        return json.dumps(
+            {
+                "doi": doi,
+                "message": f"PDF already exists: tome/pdf/{key}.pdf",
+                "oa_url": result.best_oa_url,
+            }
+        )
 
     ok = unpaywall.download_pdf(result.best_oa_url, str(dest))
     if not ok:
-        return json.dumps({
-            "doi": doi,
-            "oa_url": result.best_oa_url,
-            "error": "Download failed. URL may require browser access.",
-        })
+        return json.dumps(
+            {
+                "doi": doi,
+                "oa_url": result.best_oa_url,
+                "error": "Download failed. URL may require browser access.",
+            }
+        )
 
     # Update x-pdf in bib
     try:
@@ -2846,13 +3110,15 @@ def _doi_fetch(key: str) -> str:
     except Exception:
         pass  # PDF saved, bib update is best-effort
 
-    return json.dumps({
-        "doi": doi,
-        "oa_status": result.oa_status,
-        "oa_url": result.best_oa_url,
-        "saved": f"tome/pdf/{key}.pdf",
-        "size_bytes": dest.stat().st_size,
-    })
+    return json.dumps(
+        {
+            "doi": doi,
+            "oa_status": result.oa_status,
+            "oa_url": result.best_oa_url,
+            "saved": f"tome/pdf/{key}.pdf",
+            "size_bytes": dest.stat().st_size,
+        }
+    )
 
 
 @mcp_server.tool()
@@ -2939,8 +3205,12 @@ def figure(
         return json.dumps({"count": len(figs), "figures": figs}, indent=2)
 
     if not figure:
-        return json.dumps({"error": "Provide figure label (e.g. 'fig3').",
-                           "hint": "See guide('paper-workflow') for usage."})
+        return json.dumps(
+            {
+                "error": "Provide figure label (e.g. 'fig3').",
+                "hint": "See guide('paper-workflow') for usage.",
+            }
+        )
 
     data = _load_manifest()
 
@@ -3043,7 +3313,10 @@ def _doi_reject(
         return json.dumps({"error": "DOI is required."})
 
     entry = rejected_dois_mod.add(
-        _tome_dir(), doi, key=key, reason=reason or "DOI does not resolve",
+        _tome_dir(),
+        doi,
+        key=key,
+        reason=reason or "DOI does not resolve",
     )
 
     # Auto-resolve any open request with this DOI
@@ -3100,14 +3373,16 @@ def doi(
 
     if action == "reject":
         if not doi:
-            return json.dumps({"error": "doi is required for action='reject'."
-                               + _guide_hint("paper")})
+            return json.dumps(
+                {"error": "doi is required for action='reject'." + _guide_hint("paper")}
+            )
         return _doi_reject(doi=doi, key=key, reason=reason)
 
     if action == "fetch":
         if not key:
-            return json.dumps({"error": "key is required for action='fetch'."
-                               + _guide_hint("paper")})
+            return json.dumps(
+                {"error": "key is required for action='fetch'." + _guide_hint("paper")}
+            )
         return _doi_fetch(key)
 
     # --- No action specified ---
@@ -3119,7 +3394,6 @@ def doi(
 # ---------------------------------------------------------------------------
 # Maintenance Tools
 # ---------------------------------------------------------------------------
-
 
 
 # rebuild has been folded into reindex(scope="papers").
@@ -3159,7 +3433,11 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
             chunks = chunk.chunk_text("\n".join(pages))
             page_indices = list(range(len(chunks)))
             store.upsert_paper_chunks(
-                col, k, chunks, page_indices, sha,
+                col,
+                k,
+                chunks,
+                page_indices,
+                sha,
             )
 
             results["rebuilt"].append({"key": k, "pages": ext_result.pages})
@@ -3342,8 +3620,7 @@ def _toc_locate_cite(key: str, root: str = "default") -> str:
         return f"No citations of '{key}' found ({len(tex_files)} files scanned)."
 
     lines: list[str] = [
-        f"Citations of '{key}' ({len(locations)} locations, "
-        f"{len(tex_files)} files scanned)",
+        f"Citations of '{key}' ({len(locations)} locations, {len(tex_files)} files scanned)",
         "",
     ]
     for loc in locations:
@@ -3364,7 +3641,7 @@ def _toc_locate_label(prefix: str = "") -> str:
         raise ChromaDBError(_sanitize_exc(e))
 
     if prefix:
-        labels = [l for l in labels if l["label"].startswith(prefix)]
+        labels = [lb for lb in labels if lb["label"].startswith(prefix)]
 
     if not labels:
         msg = f"No labels matching '{prefix}'." if prefix else "No labels found."
@@ -3478,43 +3755,48 @@ def doc_lint(root: str = "default", file: str = "") -> str:
             return json.dumps({"error": f"File not found: {file}"})
         text = abs_path.read_text(encoding="utf-8")
         fa = analysis.analyze_file(file, text, cfg.track)
-        return json.dumps({
-            "file": file,
-            "labels": len(fa.labels),
-            "refs": len(fa.refs),
-            "cites": len(fa.cites),
-            "deep_cites": sum(1 for c in fa.cites if c.is_deep),
-            "tracked": {
-                name: sum(1 for t in fa.tracked if t.name == name)
-                for name in sorted(set(t.name for t in fa.tracked))
+        return json.dumps(
+            {
+                "file": file,
+                "labels": len(fa.labels),
+                "refs": len(fa.refs),
+                "cites": len(fa.cites),
+                "deep_cites": sum(1 for c in fa.cites if c.is_deep),
+                "tracked": {
+                    name: sum(1 for t in fa.tracked if t.name == name)
+                    for name in sorted(set(t.name for t in fa.tracked))
+                },
+                "word_count": fa.word_count,
             },
-            "word_count": fa.word_count,
-        }, indent=2)
+            indent=2,
+        )
 
     # Whole-document mode
     doc = analysis.analyze_document(root_tex, proj, cfg)
 
-    return json.dumps({
-        "root": root_tex,
-        "files": len(doc.files),
-        "total_labels": sum(len(fa.labels) for fa in doc.files.values()),
-        "total_refs": sum(len(fa.refs) for fa in doc.files.values()),
-        "total_cites": sum(len(fa.cites) for fa in doc.files.values()),
-        "total_deep_cites": sum(
-            sum(1 for c in fa.cites if c.is_deep) for fa in doc.files.values()
-        ),
-        "total_words": sum(fa.word_count for fa in doc.files.values()),
-        "undefined_refs": doc.undefined_refs[:_MAX_RESULTS],
-        "orphan_labels": doc.orphan_labels[:_MAX_RESULTS],
-        "orphan_files": doc.orphan_files[:_MAX_RESULTS],
-        "shallow_high_use_cites": doc.shallow_high_use[:_MAX_RESULTS],
-    }, indent=2)
+    return json.dumps(
+        {
+            "root": root_tex,
+            "files": len(doc.files),
+            "total_labels": sum(len(fa.labels) for fa in doc.files.values()),
+            "total_refs": sum(len(fa.refs) for fa in doc.files.values()),
+            "total_cites": sum(len(fa.cites) for fa in doc.files.values()),
+            "total_deep_cites": sum(
+                sum(1 for c in fa.cites if c.is_deep) for fa in doc.files.values()
+            ),
+            "total_words": sum(fa.word_count for fa in doc.files.values()),
+            "undefined_refs": doc.undefined_refs[:_MAX_RESULTS],
+            "orphan_labels": doc.orphan_labels[:_MAX_RESULTS],
+            "orphan_files": doc.orphan_files[:_MAX_RESULTS],
+            "shallow_high_use_cites": doc.shallow_high_use[:_MAX_RESULTS],
+        },
+        indent=2,
+    )
 
 
 @mcp_server.tool()
 def review_status(root: str = "default", file: str = "") -> str:
-    """Show tracked marker counts from tome/config.yaml patterns.
-    """
+    """Show tracked marker counts from tome/config.yaml patterns."""
     cfg = _load_config()
     proj = _project_root()
 
@@ -3532,13 +3814,16 @@ def review_status(root: str = "default", file: str = "") -> str:
 
     # Group tracked markers by name, then by file
     from collections import defaultdict
+
     by_name: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
     for fpath, fa in files_map.items():
         for t in fa.tracked:
-            by_name[t.name][fpath].append({
-                "line": t.line,
-                "groups": t.groups,
-            })
+            by_name[t.name][fpath].append(
+                {
+                    "line": t.line,
+                    "groups": t.groups,
+                }
+            )
 
     summary: dict[str, Any] = {}
     for name in sorted(by_name.keys()):
@@ -3550,24 +3835,29 @@ def review_status(root: str = "default", file: str = "") -> str:
         }
 
     if not cfg.track:
-        return json.dumps({
-            "status": "no_tracked_patterns",
-            "hint": (
-                "Add 'track:' entries to tome/config.yaml to index project-specific macros. "
-                "See examples/config.yaml for pattern examples, or guide('configuration') for details."
-            ),
-        }, indent=2)
+        return json.dumps(
+            {
+                "status": "no_tracked_patterns",
+                "hint": (
+                    "Add 'track:' entries to tome/config.yaml to index project-specific macros. "
+                    "See examples/config.yaml for pattern examples, or guide('configuration') for details."
+                ),
+            },
+            indent=2,
+        )
 
-    return json.dumps({
-        "tracked_pattern_names": [tp.name for tp in cfg.track],
-        "markers": summary,
-    }, indent=2)
+    return json.dumps(
+        {
+            "tracked_pattern_names": [tp.name for tp in cfg.track],
+            "markers": summary,
+        },
+        indent=2,
+    )
 
 
 @mcp_server.tool()
 def dep_graph(file: str, root: str = "default") -> str:
-    """Show dependency graph for a .tex file.
-    """
+    """Show dependency graph for a .tex file."""
     cfg = _load_config()
     root_tex = _resolve_root(root)
     proj = _project_root()
@@ -3581,8 +3871,8 @@ def dep_graph(file: str, root: str = "default") -> str:
     fa = doc.files[file]
 
     # Labels defined in this file
-    my_labels = [{"name": l.name, "type": l.label_type, "line": l.line} for l in fa.labels]
-    my_label_names = {l.name for l in fa.labels}
+    my_labels = [{"name": lb.name, "type": lb.label_type, "line": lb.line} for lb in fa.labels]
+    my_label_names = {lb.name for lb in fa.labels}
 
     # Outgoing refs: this file → other files
     outgoing: dict[str, list] = {}
@@ -3602,7 +3892,6 @@ def dep_graph(file: str, root: str = "default") -> str:
                 incoming.setdefault(fpath, []).append(ref.target)
 
     # Citations in this file
-    from collections import defaultdict
     cite_summary: dict[str, dict[str, Any]] = {}
     for c in fa.cites:
         if c.key not in cite_summary:
@@ -3612,20 +3901,22 @@ def dep_graph(file: str, root: str = "default") -> str:
             cite_summary[c.key]["deep"] += 1
         cite_summary[c.key]["lines"].append(c.line)
 
-    return json.dumps({
-        "file": file,
-        "labels_defined": my_labels,
-        "outgoing_refs": {f: sorted(set(refs)) for f, refs in sorted(outgoing.items())},
-        "incoming_refs": {f: sorted(set(refs)) for f, refs in sorted(incoming.items())},
-        "citations": cite_summary,
-        "word_count": fa.word_count,
-    }, indent=2)
+    return json.dumps(
+        {
+            "file": file,
+            "labels_defined": my_labels,
+            "outgoing_refs": {f: sorted(set(refs)) for f, refs in sorted(outgoing.items())},
+            "incoming_refs": {f: sorted(set(refs)) for f, refs in sorted(incoming.items())},
+            "citations": cite_summary,
+            "word_count": fa.word_count,
+        },
+        indent=2,
+    )
 
 
 @mcp_server.tool()
 def validate_deep_cites(file: str = "", key: str = "") -> str:
-    """Verify deep citation quotes against source paper text in ChromaDB.
-    """
+    """Verify deep citation quotes against source paper text in ChromaDB."""
     cfg = _load_config()
     proj = _project_root()
 
@@ -3638,16 +3929,19 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
             break
 
     if not deep_cite_pattern:
-        return json.dumps({
-            "error": "No 'deep_cite' pattern in config.yaml. Add a tracked pattern named "
-                     "'deep_cite' with groups [key, page, quote] to enable quote validation. "
-                     "See guide('configuration') for tracked pattern setup.",
-            "example": {
-                "name": "deep_cite",
-                "pattern": "\\\\mciteboxp\\{([^}]+)\\}\\{([^}]+)\\}\\{([^}]+)\\}",
-                "groups": ["key", "page", "quote"],
+        return json.dumps(
+            {
+                "error": "No 'deep_cite' pattern in config.yaml. Add a tracked pattern named "
+                "'deep_cite' with groups [key, page, quote] to enable quote validation. "
+                "See guide('configuration') for tracked pattern setup.",
+                "example": {
+                    "name": "deep_cite",
+                    "pattern": "\\\\mciteboxp\\{([^}]+)\\}\\{([^}]+)\\}\\{([^}]+)\\}",
+                    "groups": ["key", "page", "quote"],
+                },
             },
-        }, indent=2)
+            indent=2,
+        )
 
     # Collect files to scan
     if file:
@@ -3673,13 +3967,15 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
                 if key and cite_key != key:
                     continue
                 if cite_key and quote:
-                    quotes_to_check.append({
-                        "file": fpath,
-                        "line": t.line,
-                        "key": cite_key,
-                        "page": page,
-                        "quote": quote[:200],
-                    })
+                    quotes_to_check.append(
+                        {
+                            "file": fpath,
+                            "line": t.line,
+                            "key": cite_key,
+                            "page": page,
+                            "quote": quote[:200],
+                        }
+                    )
 
     if not quotes_to_check:
         return json.dumps({"status": "no_deep_cites_found", "count": 0})
@@ -3707,12 +4003,14 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
                 if hits["documents"] and hits["documents"][0]:
                     best_text = hits["documents"][0][0][:150]
 
-            results.append({
-                **q,
-                "match_score": round(best_score, 3),
-                "best_match_preview": best_text,
-                "verdict": "ok" if best_score > 0.5 else "low_match",
-            })
+            results.append(
+                {
+                    **q,
+                    "match_score": round(best_score, 3),
+                    "best_match_preview": best_text,
+                    "verdict": "ok" if best_score > 0.5 else "low_match",
+                }
+            )
         except Exception as e:
             results.append({**q, "error": _sanitize_exc(e)})
 
@@ -3720,14 +4018,16 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
     low_count = sum(1 for r in results if r.get("verdict") == "low_match")
     err_count = sum(1 for r in results if "error" in r)
 
-    return json.dumps({
-        "total_checked": len(results),
-        "ok": ok_count,
-        "low_match": low_count,
-        "errors": err_count,
-        **_truncate(results),
-    }, indent=2)
-
+    return json.dumps(
+        {
+            "total_checked": len(results),
+            "ok": ok_count,
+            "low_match": low_count,
+            "errors": err_count,
+            **_truncate(results),
+        },
+        indent=2,
+    )
 
 
 # find_text and grep_raw have been folded into the unified search() tool.
@@ -3747,7 +4047,11 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
 
 
 def _explore_fetch(
-    key: str, s2_id: str, limit: int, parent_s2_id: str, depth: int,
+    key: str,
+    s2_id: str,
+    limit: int,
+    parent_s2_id: str,
+    depth: int,
 ) -> dict[str, Any]:
     """Fetch citing papers for LLM-guided exploration."""
     paper_id = s2_id
@@ -3771,7 +4075,8 @@ def _explore_fetch(
     tree = cite_tree_mod.load_tree(_dot_tome())
     try:
         result = cite_tree_mod.explore_paper(
-            tree, paper_id,
+            tree,
+            paper_id,
             limit=min(limit, 100),
             parent_s2_id=parent_s2_id,
             depth=depth,
@@ -3830,7 +4135,9 @@ def _explore_fetch(
 
 
 def _explore_mark(
-    s2_id: str, relevance: str, note: str,
+    s2_id: str,
+    relevance: str,
+    note: str,
 ) -> dict[str, Any]:
     """Mark an explored paper's relevance for beam-search pruning."""
     if relevance not in cite_tree_mod.RELEVANCE_STATES:
@@ -3857,7 +4164,9 @@ def _explore_mark(
 
 
 def _explore_list(
-    relevance: str, seed: str, expandable: bool,
+    relevance: str,
+    seed: str,
+    expandable: bool,
 ) -> dict[str, Any]:
     """Show exploration state for session continuity."""
     tree = cite_tree_mod.load_tree(_dot_tome())
@@ -3961,17 +4270,20 @@ def explore(
             indent=2,
         )
 
-    return json.dumps({
-        "error": "Provide key/s2_id (fetch), s2_id+relevance (mark), or action.",
-        "hint": "explore(key='...') to fetch citers, explore() to list state, "
-                "explore(s2_id='...', relevance='relevant') to mark, "
-                "explore(action='clear') to reset."
-                + _guide_hint("explore"),
-    })
+    return json.dumps(
+        {
+            "error": "Provide key/s2_id (fetch), s2_id+relevance (mark), or action.",
+            "hint": "explore(key='...') to fetch citers, explore() to list state, "
+            "explore(s2_id='...', relevance='relevant') to mark, "
+            "explore(action='clear') to reset." + _guide_hint("explore"),
+        }
+    )
 
 
 @mcp_server.tool()
-def report_issue(tool: str, description: str, severity: Literal["minor", "major", "blocker"] = "minor") -> str:
+def report_issue(
+    tool: str, description: str, severity: Literal["minor", "major", "blocker"] = "minor"
+) -> str:
     """Report a tool issue for the project maintainer to review.
 
     Severity levels: minor (cosmetic/UX), major (wrong results), blocker (tool unusable).
@@ -3982,13 +4294,15 @@ def report_issue(tool: str, description: str, severity: Literal["minor", "major"
     num = issues_mod.append_issue(_tome_dir(), tool, description, severity)
     open_count = issues_mod.count_open(_tome_dir())
 
-    return json.dumps({
-        "status": "reported",
-        "issue_id": f"ISSUE-{num:03d}",
-        "file": "tome/issues.md",
-        "open_issues": open_count,
-    }, indent=2)
-
+    return json.dumps(
+        {
+            "status": "reported",
+            "issue_id": f"ISSUE-{num:03d}",
+            "file": "tome/issues.md",
+            "open_issues": open_count,
+        },
+        indent=2,
+    )
 
 
 _EMPTY_BIB = """\
@@ -4039,8 +4353,7 @@ def _scaffold_tome(project_root: Path) -> list[str]:
 
 @mcp_server.tool()
 def set_root(path: str) -> str:
-    """Switch Tome's project root directory at runtime.
-    """
+    """Switch Tome's project root directory at runtime."""
     global _runtime_root
     p = Path(path)
     if not p.is_absolute():
@@ -4172,8 +4485,7 @@ def set_root(path: str) -> str:
         )
 
     response["guide_hint"] = (
-        "Call guide('getting-started') for first-session orientation "
-        "and tool group overview."
+        "Call guide('getting-started') for first-session orientation and tool group overview."
     )
 
     return json.dumps(response, indent=2)
@@ -4197,18 +4509,28 @@ def needful(n: int = 10, file: str = "", task: str = "", note: str = "") -> str:
     # ── Mark-done mode ──
     if task:
         if not file:
-            return json.dumps({"error": "Provide file path to mark done.",
-                               "hint": "See guide('needful') for usage."})
+            return json.dumps(
+                {
+                    "error": "Provide file path to mark done.",
+                    "hint": "See guide('needful') for usage.",
+                }
+            )
 
         if not cfg.needful_tasks:
-            return json.dumps({"error": "No needful tasks configured.",
-                               "hint": "See guide('needful') for setup."})
+            return json.dumps(
+                {
+                    "error": "No needful tasks configured.",
+                    "hint": "See guide('needful') for setup.",
+                }
+            )
 
         task_names = {t.name for t in cfg.needful_tasks}
         if task not in task_names:
-            return json.dumps({
-                "error": f"Unknown task '{task}'. Known tasks: {sorted(task_names)}",
-            })
+            return json.dumps(
+                {
+                    "error": f"Unknown task '{task}'. Known tasks: {sorted(task_names)}",
+                }
+            )
 
         abs_path = _project_root() / file
         if not abs_path.exists():
@@ -4243,14 +4565,16 @@ def needful(n: int = 10, file: str = "", task: str = "", note: str = "") -> str:
 
     # ── List mode ──
     if not cfg.needful_tasks:
-        return json.dumps({
-            "status": "no_tasks",
-            "message": (
-                "No needful tasks configured. Add a 'needful:' section to "
-                "tome/config.yaml with task definitions. "
-                "See guide('needful') for examples and the review workflow."
-            ),
-        })
+        return json.dumps(
+            {
+                "status": "no_tasks",
+                "message": (
+                    "No needful tasks configured. Add a 'needful:' section to "
+                    "tome/config.yaml with task definitions. "
+                    "See guide('needful') for examples and the review workflow."
+                ),
+            }
+        )
 
     state = needful_mod.load_state(_dot_tome())
     items = needful_mod.rank_needful(
@@ -4262,10 +4586,12 @@ def needful(n: int = 10, file: str = "", task: str = "", note: str = "") -> str:
     )
 
     if not items:
-        return json.dumps({
-            "status": "all_done",
-            "message": "Everything is up to date. Nothing needful.",
-        })
+        return json.dumps(
+            {
+                "status": "all_done",
+                "message": "Everything is up to date. Nothing needful.",
+            }
+        )
 
     results = []
     for item in items:
@@ -4281,17 +4607,19 @@ def needful(n: int = 10, file: str = "", task: str = "", note: str = "") -> str:
             entry["git_sha"] = item.git_sha
         results.append(entry)
 
-    return json.dumps({
-        "status": "ok",
-        "count": len(results),
-        "items": results,
-    }, indent=2)
+    return json.dumps(
+        {
+            "status": "ok",
+            "count": len(results),
+            "items": results,
+        },
+        indent=2,
+    )
 
 
 @mcp_server.tool()
 def file_diff(file: str, task: str = "", base: str = "") -> str:
-    """Show what changed in a file since the last review.
-    """
+    """Show what changed in a file since the last review."""
     project = _project_root()
     abs_path = project / file
     if not abs_path.exists():
@@ -4317,8 +4645,6 @@ def file_diff(file: str, task: str = "", base: str = "") -> str:
     return result.format()
 
 
-
-
 # ---------------------------------------------------------------------------
 # Vault: paper link/unlink (project ↔ vault)
 # ---------------------------------------------------------------------------
@@ -4337,21 +4663,26 @@ def link_paper(
     """
     from tome.vault import (
         catalog_get_by_key,
-        link_paper as vault_link,
         project_papers,
         unlink_paper,
+    )
+    from tome.vault import (
+        link_paper as vault_link,
     )
 
     project_id = str(_project_root())
 
     if not key:
         papers = project_papers(project_id)
-        return json.dumps({
-            "status": "ok",
-            "project": project_id,
-            "count": len(papers),
-            "papers": papers,
-        }, indent=2)
+        return json.dumps(
+            {
+                "status": "ok",
+                "project": project_id,
+                "count": len(papers),
+                "papers": papers,
+            },
+            indent=2,
+        )
 
     # Resolve key → content_hash via catalog
     doc = catalog_get_by_key(key)

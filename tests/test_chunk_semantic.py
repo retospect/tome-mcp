@@ -1,7 +1,5 @@
 """Tests for semantic chunking with chonkie."""
 
-import pytest
-
 from tome.chunk import SemanticChunk, semantic_chunk_pages, semantic_chunk_text
 
 
