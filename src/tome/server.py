@@ -4684,8 +4684,33 @@ def link_paper(
 # ---------------------------------------------------------------------------
 
 
+async def _safe_run_stdio() -> None:
+    """Run stdio transport with stdout protection.
+
+    ``stdio_server()`` captures fd 1 and sets it non-blocking for chunked
+    writes.  Immediately after, we redirect ``sys.stdout`` to ``/dev/null``
+    so that **no** stray ``print()`` or library output can write to the MCP
+    pipe and block the event loop (macOS pipe buffer is only 64 KB).
+    """
+    import anyio
+    from mcp.server.stdio import stdio_server
+
+    async with stdio_server() as (read_stream, write_stream):
+        # stdio_server has captured the raw fd and set it non-blocking.
+        # Now make sys.stdout a black hole — the transport doesn't need it.
+        sys.stdout = open(os.devnull, "w")  # noqa: SIM115
+        logger.debug("sys.stdout redirected to /dev/null (pipe protection)")
+        await mcp_server._mcp_server.run(
+            read_stream,
+            write_stream,
+            mcp_server._mcp_server.create_initialization_options(),
+        )
+
+
 def main():
     """Run the Tome MCP server."""
+    import anyio
+
     # Try to attach file log early from env var (before any tool call)
     root = os.environ.get("TOME_ROOT")
     if root:
@@ -4695,7 +4720,7 @@ def main():
             pass  # will attach later via _dot_tome()
 
     try:
-        mcp_server.run(transport="stdio")
+        anyio.run(_safe_run_stdio)
     except KeyboardInterrupt:
         logger.info("Tome server stopped (keyboard interrupt)")
     except Exception:
