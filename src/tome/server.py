@@ -647,14 +647,9 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     try:
         client = store.get_client(_chroma_dir())
         embed_fn = store.get_embed_fn()
-        pages_col = store.get_collection(client, store.PAPER_PAGES, embed_fn)
         chunks_col = store.get_collection(client, store.PAPER_CHUNKS, embed_fn)
         sha = checksum.sha256_file(dest_pdf)
 
-        page_texts = []
-        for i in range(1, ext_result.pages + 1):
-            page_texts.append(extract.read_page(_raw_dir(), key, i))
-        store.upsert_paper_pages(pages_col, key, page_texts, sha)
         store.upsert_paper_chunks(chunks_col, key, all_chunks, page_map, sha)
         embedded = True
     except Exception:
@@ -892,10 +887,6 @@ def _paper_rename(old_key: str, new_key: str) -> str:
                 pages.append(extract.read_page(_raw_dir(), new_key, page_num))
 
             sha = checksum.sha256_file(new_pdf)
-            store.upsert_paper_pages(
-                store.get_collection(client, store.PAPER_PAGES, embed_fn),
-                new_key, pages, sha,
-            )
             chunks = chunk.chunk_text("\n".join(pages))
             page_indices = list(range(len(chunks)))
             store.upsert_paper_chunks(
@@ -3119,10 +3110,6 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
                 pages.append(extract.read_page(_raw_dir(), k, page_num))
 
             sha = checksum.sha256_file(pdf)
-            store.upsert_paper_pages(
-                store.get_collection(client, store.PAPER_PAGES, embed_fn),
-                k, pages, sha,
-            )
 
             chunks = chunk.chunk_text("\n".join(pages))
             page_indices = list(range(len(chunks)))

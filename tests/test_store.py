@@ -12,15 +12,15 @@ import pytest
 from tome.store import (
     CORPUS_CHUNKS,
     PAPER_CHUNKS,
-    PAPER_PAGES,
     _format_results,
     delete_corpus_file,
     delete_paper,
+    drop_paper_pages,
     get_all_labels,
     get_indexed_files,
+    search_all,
     upsert_corpus_chunks,
     upsert_paper_chunks,
-    upsert_paper_pages,
 )
 
 
@@ -45,11 +45,6 @@ def dummy_embed_fn():
 
 
 @pytest.fixture
-def pages_col(client, dummy_embed_fn):
-    return client.get_or_create_collection(PAPER_PAGES, embedding_function=dummy_embed_fn)
-
-
-@pytest.fixture
 def chunks_col(client, dummy_embed_fn):
     return client.get_or_create_collection(PAPER_CHUNKS, embedding_function=dummy_embed_fn)
 
@@ -57,33 +52,6 @@ def chunks_col(client, dummy_embed_fn):
 @pytest.fixture
 def corpus_col(client, dummy_embed_fn):
     return client.get_or_create_collection(CORPUS_CHUNKS, embedding_function=dummy_embed_fn)
-
-
-class TestUpsertPaperPages:
-    def test_upsert(self, pages_col):
-        count = upsert_paper_pages(pages_col, "xu2022", ["Page 1 text", "Page 2 text"], "sha1")
-        assert count == 2
-        assert pages_col.count() == 2
-
-    def test_empty_pages(self, pages_col):
-        count = upsert_paper_pages(pages_col, "xu2022", [], "sha1")
-        assert count == 0
-
-    def test_metadata(self, pages_col):
-        upsert_paper_pages(pages_col, "xu2022", ["Text"], "sha_abc")
-        data = pages_col.get(ids=["xu2022::page_1"], include=["metadatas"])
-        meta = data["metadatas"][0]
-        assert meta["bib_key"] == "xu2022"
-        assert meta["page"] == 1
-        assert meta["file_sha256"] == "sha_abc"
-
-    def test_upsert_idempotent(self, client, dummy_embed_fn):
-        col = client.get_or_create_collection("idempotent_test", embedding_function=dummy_embed_fn)
-        upsert_paper_pages(col, "xu2022", ["Text"], "sha1")
-        upsert_paper_pages(col, "xu2022", ["Updated text"], "sha2")
-        assert col.count() == 1
-        data = col.get(ids=["xu2022::page_1"], include=["documents"])
-        assert data["documents"][0] == "Updated text"
 
 
 class TestUpsertPaperChunks:
@@ -104,6 +72,22 @@ class TestUpsertPaperChunks:
         assert meta["bib_key"] == "xu2022"
         assert meta["chunk_index"] == 0
         assert meta["page"] == 3
+
+    def test_char_offsets(self, chunks_col):
+        upsert_paper_chunks(
+            chunks_col, "xu2022", ["chunk0", "chunk1"], [1, 1], "sha_x",
+            char_starts=[0, 100], char_ends=[99, 200],
+        )
+        data = chunks_col.get(ids=["xu2022::chunk_0", "xu2022::chunk_1"], include=["metadatas"])
+        assert data["metadatas"][0]["char_start"] == 0
+        assert data["metadatas"][0]["char_end"] == 99
+        assert data["metadatas"][1]["char_start"] == 100
+
+    def test_no_char_offsets(self, client, dummy_embed_fn):
+        col = client.get_or_create_collection("no_offset_test", embedding_function=dummy_embed_fn)
+        upsert_paper_chunks(col, "nooff2024", ["chunk"], [1], "sha_x")
+        data = col.get(ids=["nooff2024::chunk_0"], include=["metadatas"])
+        assert "char_start" not in data["metadatas"][0]
 
 
 class TestUpsertCorpusChunks:
@@ -172,12 +156,6 @@ class TestCorpusChunksWithMarkers:
 
 
 class TestPaperSourceType:
-    def test_pages_have_source_type(self, client, dummy_embed_fn):
-        col = client.get_or_create_collection("src_type_pages", embedding_function=dummy_embed_fn)
-        upsert_paper_pages(col, "xu2022", ["page text"], "sha1")
-        data = col.get(ids=["xu2022::page_1"], include=["metadatas"])
-        assert data["metadatas"][0]["source_type"] == "paper"
-
     def test_chunks_have_source_type(self, client, dummy_embed_fn):
         col = client.get_or_create_collection("src_type_chunks", embedding_function=dummy_embed_fn)
         upsert_paper_chunks(col, "xu2022", ["chunk text"], [1], "sha1")
@@ -186,14 +164,11 @@ class TestPaperSourceType:
 
 
 class TestDeletePaper:
-    def test_deletes_from_both_collections(self, client, dummy_embed_fn):
-        pages = client.get_or_create_collection(PAPER_PAGES, embedding_function=dummy_embed_fn)
+    def test_deletes_from_chunks(self, client, dummy_embed_fn):
         chunks = client.get_or_create_collection(PAPER_CHUNKS, embedding_function=dummy_embed_fn)
-        upsert_paper_pages(pages, "xu2022", ["p1"], "sha1")
         upsert_paper_chunks(chunks, "xu2022", ["c1"], [1], "sha1")
 
         delete_paper(client, "xu2022", embed_fn=dummy_embed_fn)
-        assert pages.count() == 0
         assert chunks.count() == 0
 
     def test_delete_nonexistent(self, client, dummy_embed_fn):

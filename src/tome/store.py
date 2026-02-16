@@ -1,11 +1,14 @@
 """ChromaDB storage management.
 
-Manages three collections:
-- paper_pages: full page text from PDFs
-- paper_chunks: overlapping ~500-char chunks from PDFs
-- corpus_chunks: chunks from .tex/.py files
+Two ChromaDB instances:
+- Vault ChromaDB (~/.tome/chroma/) — paper_chunks from all papers
+- Project ChromaDB (project/.tome/chroma/) — corpus_chunks from .tex/.py files
 
-Handles upsert, delete, search, and sync operations.
+Search scopes:
+- scope="vault"  → vault unfiltered (all papers)
+- scope="papers" → vault filtered to project's linked keys
+- scope="corpus" → project ChromaDB only
+- scope="all"    → merge both, sort by distance (scores comparable: same model)
 """
 
 from __future__ import annotations
@@ -22,9 +25,11 @@ from chromadb.api.types import EmbeddingFunction
 from tome.chunk import chunk_text
 
 # Collection names
-PAPER_PAGES = "paper_pages"
 PAPER_CHUNKS = "paper_chunks"
 CORPUS_CHUNKS = "corpus_chunks"
+
+# Deprecated — kept for migration only
+PAPER_PAGES = "paper_pages"
 
 
 def get_client(chroma_dir: Path) -> chromadb.ClientAPI:
@@ -87,56 +92,25 @@ def _batched_upsert(
         )
 
 
-def upsert_paper_pages(
-    collection: chromadb.Collection,
-    key: str,
-    pages: list[str],
-    file_sha256: str,
-) -> int:
-    """Upsert full page texts for a paper into ChromaDB.
-
-    Args:
-        collection: The paper_pages collection.
-        key: Bib key.
-        pages: List of page texts (0-indexed, but stored as 1-indexed).
-        file_sha256: SHA256 of the source PDF.
-
-    Returns:
-        Number of pages upserted.
-    """
-    if not pages:
-        return 0
-
-    ids = [f"{key}::page_{i+1}" for i in range(len(pages))]
-    metadatas = [
-        {
-            "bib_key": key,
-            "page": i + 1,
-            "file_sha256": file_sha256,
-            "source_type": "paper",
-        }
-        for i in range(len(pages))
-    ]
-
-    _batched_upsert(collection, ids, pages, metadatas)
-    return len(pages)
-
-
 def upsert_paper_chunks(
     collection: chromadb.Collection,
     key: str,
     chunks: list[str],
     page_map: list[int],
     file_sha256: str,
+    char_starts: list[int] | None = None,
+    char_ends: list[int] | None = None,
 ) -> int:
-    """Upsert text chunks for a paper.
+    """Upsert semantic text chunks for a paper into vault ChromaDB.
 
     Args:
-        collection: The paper_chunks collection.
+        collection: The paper_chunks collection (vault-level).
         key: Bib key.
         chunks: List of text chunks.
         page_map: Page number for each chunk (1-indexed).
         file_sha256: SHA256 of the source PDF.
+        char_starts: Start character offset per chunk (optional).
+        char_ends: End character offset per chunk (optional).
 
     Returns:
         Number of chunks upserted.
@@ -145,16 +119,20 @@ def upsert_paper_chunks(
         return 0
 
     ids = [f"{key}::chunk_{i}" for i in range(len(chunks))]
-    metadatas = [
-        {
+    metadatas = []
+    for i in range(len(chunks)):
+        meta: dict[str, Any] = {
             "bib_key": key,
             "chunk_index": i,
             "page": page_map[i] if i < len(page_map) else 0,
             "file_sha256": file_sha256,
             "source_type": "paper",
         }
-        for i in range(len(chunks))
-    ]
+        if char_starts and i < len(char_starts):
+            meta["char_start"] = char_starts[i]
+        if char_ends and i < len(char_ends):
+            meta["char_end"] = char_ends[i]
+        metadatas.append(meta)
 
     _batched_upsert(collection, ids, chunks, metadatas)
     return len(chunks)
@@ -209,19 +187,18 @@ def delete_paper(
     key: str,
     embed_fn: EmbeddingFunction | None = None,
 ) -> None:
-    """Remove all ChromaDB entries for a paper.
+    """Remove all ChromaDB entries for a paper from vault ChromaDB.
 
     Args:
-        client: ChromaDB client.
+        client: Vault ChromaDB client.
         key: Bib key to remove.
         embed_fn: Embedding function.
     """
-    for col_name in [PAPER_PAGES, PAPER_CHUNKS]:
-        try:
-            col = get_collection(client, col_name, embed_fn)
-            col.delete(where={"bib_key": key})
-        except Exception:
-            pass  # Collection may not exist yet
+    try:
+        col = get_collection(client, PAPER_CHUNKS, embed_fn)
+        col.delete(where={"bib_key": key})
+    except Exception:
+        pass  # Collection may not exist yet
 
 
 def delete_corpus_file(
@@ -406,6 +383,55 @@ def get_all_labels(
     # Sort by file then label
     results.sort(key=lambda r: (r["file"], r["label"]))
     return results
+
+
+def search_all(
+    vault_client: chromadb.ClientAPI,
+    project_client: chromadb.ClientAPI,
+    query: str,
+    n: int = 10,
+    keys: list[str] | None = None,
+    embed_fn: EmbeddingFunction | None = None,
+) -> list[dict[str, Any]]:
+    """Search both vault papers and project corpus, merged by distance.
+
+    Scores are comparable because both use the same embedding model
+    (ChromaDB default all-MiniLM-L6-v2) and the same distance metric.
+
+    Args:
+        vault_client: Vault ChromaDB client (~/.tome/chroma/).
+        project_client: Project ChromaDB client (project/.tome/chroma/).
+        query: Natural language search query.
+        n: Maximum total results.
+        keys: Filter papers to these bib keys (project scope).
+        embed_fn: Embedding function.
+
+    Returns:
+        List of result dicts sorted by distance (best first).
+    """
+    paper_results = search_papers(
+        vault_client, query, n=n, keys=keys, embed_fn=embed_fn,
+    )
+    corpus_results = search_corpus(
+        project_client, query, n=n, embed_fn=embed_fn,
+    )
+
+    merged = paper_results + corpus_results
+    merged.sort(key=lambda r: r.get("distance", float("inf")))
+    return merged[:n]
+
+
+def drop_paper_pages(client: chromadb.ClientAPI) -> bool:
+    """Drop the deprecated paper_pages collection (migration helper).
+
+    Returns:
+        True if collection was deleted, False if it didn't exist.
+    """
+    try:
+        client.delete_collection(PAPER_PAGES)
+        return True
+    except Exception:
+        return False
 
 
 _INTERNAL_META_KEYS = {"chunk_index", "file_sha256", "source_type"}
