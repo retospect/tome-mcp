@@ -852,6 +852,8 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
 
     # Commit: ChromaDB upsert (embedding handled internally by ChromaDB)
     embedded = False
+    chunk_embeddings = None
+    chunks_col = None
     for _attempt in range(2):
         try:
             _, _, chunks_col = _vault_paper_col()
@@ -863,6 +865,17 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
             if _attempt == 0:
                 _reset_vault_chroma()  # retry once after reset
             # else: ChromaDB failures are non-fatal
+
+    # Retrieve embeddings from ChromaDB for archive storage
+    if embedded and chunks_col is not None and all_chunks:
+        try:
+            import numpy as np
+            ids = [f"{key}::c{i}" for i in range(len(all_chunks))]
+            result = chunks_col.get(ids=ids, include=["embeddings"])
+            if result and result["embeddings"]:
+                chunk_embeddings = np.array(result["embeddings"], dtype=np.float32)
+        except Exception:
+            pass  # non-fatal: archive just won't have embeddings
 
     # Commit: write to vault — PDF + .tome archive + catalog.db
     from tome.vault import (
@@ -898,10 +911,17 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     for page_num in range(1, ext_result.pages + 1):
         page_texts.append(extract.read_page(_raw_dir(), key, page_num))
 
-    # Write .tome archive (sharded: tome/<initial>/<key>.tome)
+    # Write .tome archive with pages + chunks + embeddings (self-contained)
     v_tome = vault_tome_path(key)
     v_tome.parent.mkdir(parents=True, exist_ok=True)
-    write_archive(v_tome, doc_meta, page_texts=page_texts)
+    write_archive(
+        v_tome,
+        doc_meta,
+        page_texts=page_texts,
+        chunk_texts=all_chunks if all_chunks else None,
+        chunk_embeddings=chunk_embeddings,
+        chunk_pages=page_map if all_chunks else None,
+    )
 
     # Write to catalog.db (content hash, DOI, title for dedup)
     catalog_upsert(doc_meta)
