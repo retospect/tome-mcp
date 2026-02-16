@@ -876,10 +876,14 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
             import numpy as np
             ids = [f"{key}::chunk_{i}" for i in range(len(all_chunks))]
             result = chunks_col.get(ids=ids, include=["embeddings"])
-            if result and result["embeddings"]:
+            if result and result.get("embeddings"):
                 chunk_embeddings = np.array(result["embeddings"], dtype=np.float32)
-        except Exception:
-            pass  # non-fatal: archive just won't have embeddings
+                logger.info("Retrieved %d embeddings for %s", len(result["embeddings"]), key)
+            else:
+                logger.warning("No embeddings returned for %s (ids=%d, result_keys=%s)",
+                               key, len(ids), list(result.keys()) if result else "None")
+        except Exception as exc:
+            logger.warning("Failed to retrieve embeddings for %s: %s", key, exc)
 
     # Commit: write to vault — PDF + .tome archive + catalog.db
     from tome.vault import (
