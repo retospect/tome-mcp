@@ -853,8 +853,14 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     except Exception:
         pass  # ChromaDB failures are non-fatal
 
-    # Commit: write to catalog.db (content hash, DOI, title for dedup)
-    from tome.vault import DocumentMeta, catalog_upsert
+    # Commit: write to vault — PDF + .tome archive + catalog.db
+    from tome.vault import (
+        ARCHIVE_EXTENSION,
+        DocumentMeta,
+        catalog_upsert,
+        vault_dir,
+        write_archive,
+    )
 
     content_hash = checksum.sha256_file(dest_pdf)
     doc_meta = DocumentMeta(
@@ -868,6 +874,26 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
         journal=fields.get("journal"),
         page_count=ext_result.pages,
     )
+
+    # Copy PDF to vault
+    v_dir = vault_dir()
+    v_dir.mkdir(parents=True, exist_ok=True)
+    vault_pdf = v_dir / f"{key}.pdf"
+    shutil.copy2(dest_pdf, vault_pdf)
+
+    # Read extracted page texts for the .tome archive
+    page_texts: list[str] = []
+    for page_num in range(1, ext_result.pages + 1):
+        page_texts.append(extract.read_page(_raw_dir(), key, page_num))
+
+    # Write .tome archive (meta.json + pages/*.txt)
+    write_archive(
+        v_dir / f"{key}{ARCHIVE_EXTENSION}",
+        doc_meta,
+        page_texts=page_texts,
+    )
+
+    # Write to catalog.db (content hash, DOI, title for dedup)
     catalog_upsert(doc_meta)
 
     # Commit: update manifest
