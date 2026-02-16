@@ -54,7 +54,7 @@ def _init_session() -> Path:
 
 
 def _get_session_file() -> Path:
-    if _session_file is None:
+    if _session_file is None or not _session_file.parent.exists():
         return _init_session()
     return _session_file
 
