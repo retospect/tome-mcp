@@ -853,6 +853,23 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     except Exception:
         pass  # ChromaDB failures are non-fatal
 
+    # Commit: write to catalog.db (content hash, DOI, title for dedup)
+    from tome.vault import DocumentMeta, catalog_upsert
+
+    content_hash = checksum.sha256_file(dest_pdf)
+    doc_meta = DocumentMeta(
+        content_hash=content_hash,
+        key=key,
+        doi=fields.get("doi"),
+        title=fields.get("title", ""),
+        first_author=fields.get("author", "").split(" and ")[0] if fields.get("author") else "",
+        authors=fields.get("author", "").split(" and ") if fields.get("author") else [],
+        year=int(fields.get("year")) if fields.get("year", "").isdigit() else None,
+        journal=fields.get("journal"),
+        page_count=ext_result.pages,
+    )
+    catalog_upsert(doc_meta)
+
     # Commit: update manifest
     data = _load_manifest()
     manifest.set_paper(
