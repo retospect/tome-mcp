@@ -1122,180 +1122,6 @@ def _paper_remove(key: str) -> str:
     return json.dumps({"status": "removed", "key": key})
 
 
-def _paper_rename(old_key: str, new_key: str) -> str:
-    """Rename a paper's bib key across the entire library.
-
-    Renames the bib entry, PDF, notes, raw text, ChromaDB index, and
-    manifest. Reports .tex files that still cite the old key so you
-    can update them.
-
-    Args:
-        old_key: Current bib key.
-        new_key: New bib key (e.g. 'smith2024ndr').
-    """
-    validate.validate_key(old_key)
-    validate.validate_key(new_key)
-
-    renamed: list[str] = []
-    errors: list[str] = []
-
-    # 1. Rename bib entry
-    lib = _load_bib()
-    bib.rename_key(lib, old_key, new_key)
-    bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
-    renamed.append("references.bib")
-
-    # 2. Rename PDF(s) — main, _sup*, _wrong
-    pdf_dir = _tome_dir() / "pdf"
-    for pdf in sorted(pdf_dir.glob(f"{old_key}*.pdf")):
-        new_name = pdf.name.replace(old_key, new_key, 1)
-        target = pdf_dir / new_name
-        try:
-            pdf.rename(target)
-            renamed.append(f"pdf/{new_name}")
-        except OSError as e:
-            errors.append(f"pdf rename {pdf.name}: {e}")
-
-    # 3. Rename notes YAML
-    notes_dir = _tome_dir() / "notes"
-    old_notes = notes_dir / f"{old_key}.yaml"
-    if old_notes.exists():
-        try:
-            old_notes.rename(notes_dir / f"{new_key}.yaml")
-            renamed.append(f"notes/{new_key}.yaml")
-        except OSError as e:
-            errors.append(f"notes rename: {e}")
-
-    # 4. Rename raw text directory
-    old_raw = _raw_dir() / old_key
-    if old_raw.exists():
-        new_raw = _raw_dir() / new_key
-        try:
-            old_raw.rename(new_raw)
-            # Rename files inside: old_key.pN.txt → new_key.pN.txt
-            for f in sorted(new_raw.glob(f"{old_key}.*")):
-                f.rename(new_raw / f.name.replace(old_key, new_key, 1))
-            renamed.append(f"raw/{new_key}/")
-        except OSError as e:
-            errors.append(f"raw rename: {e}")
-
-    # 5. Update vault: rename archive + PDF, update catalog.db key
-    from tome.vault import catalog_update_key, vault_pdf_path, vault_tome_path
-
-    try:
-        if catalog_update_key(old_key, new_key):
-            renamed.append("catalog.db")
-    except Exception as e:
-        errors.append(f"catalog.db: {e}")
-
-    for old_path, new_path, label in [
-        (vault_tome_path(old_key), vault_tome_path(new_key), "vault/tome"),
-        (vault_pdf_path(old_key), vault_pdf_path(new_key), "vault/pdf"),
-    ]:
-        if old_path.exists():
-            try:
-                new_path.parent.mkdir(parents=True, exist_ok=True)
-                old_path.rename(new_path)
-                renamed.append(f"{label}/{new_path.name}")
-            except OSError as e:
-                errors.append(f"{label} rename: {e}")
-
-    # 6. Update vault ChromaDB — delete old, rebuild new
-    try:
-        client, embed_fn, col = _vault_paper_col()
-        store.delete_paper(client, old_key, embed_fn=embed_fn)
-        # Also delete old note entry
-        try:
-            col.delete(ids=[f"{old_key}::note"])
-        except Exception:
-            pass  # best-effort: note entry may not exist
-
-        # Rebuild under new key if PDF exists
-        new_pdf = pdf_dir / f"{new_key}.pdf"
-        if new_pdf.exists():
-            ext_result = extract.extract_pdf_pages(
-                new_pdf,
-                _raw_dir(),
-                new_key,
-                force=True,
-            )
-            pages = []
-            for page_num in range(1, ext_result.pages + 1):
-                pages.append(extract.read_page(_raw_dir(), new_key, page_num))
-
-            sha = checksum.sha256_file(new_pdf)
-            chunks = chunk.chunk_text("\n".join(pages))
-            page_indices = list(range(len(chunks)))
-            store.upsert_paper_chunks(
-                col,
-                new_key,
-                chunks,
-                page_indices,
-                sha,
-            )
-            renamed.append("chromadb")
-
-        # Re-index notes under new key
-        new_notes_path = notes_dir / f"{new_key}.yaml"
-        if new_notes_path.exists():
-            note_data = notes_mod.load_note(_tome_dir(), new_key)
-            if note_data:
-                flat_text = notes_mod.flatten_for_search(new_key, note_data)
-                col.upsert(
-                    ids=[f"{new_key}::note"],
-                    documents=[flat_text],
-                    metadatas=[{"bib_key": new_key, "source_type": "note"}],
-                )
-    except Exception as e:
-        errors.append(f"chromadb: {e}")
-
-    # 7. Update manifest (paper data + requests)
-    data = _load_manifest()
-    paper_data = manifest.remove_paper(data, old_key)
-    if paper_data is not None:
-        manifest.set_paper(data, new_key, paper_data)
-        renamed.append("manifest")
-    # Also check requests
-    req_data = manifest.get_request(data, old_key)
-    if req_data is not None:
-        data.get("requests", {}).pop(old_key, None)
-        manifest.set_request(data, new_key, req_data)
-    _save_manifest(data)
-
-    # 7. Find citations in .tex files
-    cite_locations: list[dict[str, Any]] = []
-    try:
-        cfg = _load_config()
-        tex_files: list[Path] = []
-        root = _project_root()
-        for pattern in cfg.tex_globs:
-            for f in sorted(root.glob(pattern)):
-                if f.is_file() and f.suffix == ".tex":
-                    tex_files.append(f)
-        cite_locations = latex.find_cite_locations(old_key, tex_files)
-    except Exception:
-        pass  # best-effort: cite scan is advisory only
-
-    response: dict[str, Any] = {
-        "status": "renamed",
-        "old_key": old_key,
-        "new_key": new_key,
-        "renamed": renamed,
-    }
-    if errors:
-        response["errors"] = errors
-    if cite_locations:
-        response["cite_locations"] = cite_locations
-        response["cite_hint"] = (
-            f"Found {len(cite_locations)} citation(s) of '{old_key}' in .tex files. "
-            f"Update all \\cite{{{old_key}}} → \\cite{{{new_key}}} "
-            f"(and \\mciteboxp, \\citeq, etc.)."
-        )
-    else:
-        response["cite_hint"] = f"No citations of '{old_key}' found in .tex files."
-
-    return json.dumps(response, indent=2)
-
 
 def _paper_get(key: str, page: int = 0) -> str:
     """Get full metadata for a paper in the library.
@@ -1339,7 +1165,7 @@ def _paper_get(key: str, page: int = 0) -> str:
 
 # get_notes has been folded into paper(key=...) (notes are always included).
 # get_page has been folded into paper(key=..., page=N).
-# set_paper, remove_paper, rename_paper, list_papers, request_paper,
+# set_paper, remove_paper, list_papers, request_paper,
 # list_requests, stats have been folded into paper().
 
 
@@ -1358,21 +1184,18 @@ def paper(
     entry_type: str = "article",
     raw_field: str = "",
     raw_value: str = "",
-    # rename
-    new_key: str = "",
     # list filters
     status: str = "",
     # request fields
     reason: str = "",
     tentative_title: str = "",
 ) -> str:
-    """Unified paper management. Read, write, list, rename, remove, request.
+    """Unified paper management. Read, write, list, remove, request.
 
     No args → library stats overview.
     key only → get paper metadata (+ notes, page text if page>0).
     key + write fields (title/author/year/...) → create or update bib entry.
     action='list' → list papers (filter by tags, status).
-    action='rename' → rename key (requires key + new_key).
     action='remove' → remove paper and all data (requires key).
     action='request' → track a wanted paper (requires key).
     action='requests' → list open paper requests.
@@ -1390,13 +1213,6 @@ def paper(
                 {"error": "key is required for action='request'." + _guide_hint("paper")}
             )
         return _paper_request(key=key, doi=doi, reason=reason, tentative_title=tentative_title)
-
-    if action == "rename":
-        if not key or not new_key:
-            return json.dumps(
-                {"error": "Both key and new_key are required for rename." + _guide_hint("paper")}
-            )
-        return _paper_rename(key, new_key)
 
     if action == "remove":
         if not key:

@@ -678,19 +678,6 @@ def catalog_delete(content_hash: str, path: Path | None = None) -> bool:
         return cursor.rowcount > 0
 
 
-def catalog_update_key(old_key: str, new_key: str, path: Path | None = None) -> bool:
-    """Rename a document's key and vault_path in catalog.db.
-
-    Returns True if the document was found and updated.
-    """
-    with _db(path) as conn:
-        cursor = conn.execute(
-            "UPDATE documents SET key = ?, vault_path = ? WHERE key = ?",
-            (new_key, _vault_relative_tome(new_key), old_key),
-        )
-        return cursor.rowcount > 0
-
-
 def catalog_rebuild(path: Path | None = None) -> int:
     """Rebuild catalog.db by scanning all .tome archives in vault.
 

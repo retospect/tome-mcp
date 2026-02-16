@@ -894,10 +894,6 @@ class TestPaperRouting:
         result = self._call(action="remove")
         assert "error" in result
 
-    def test_action_rename_no_new_key(self):
-        result = self._call(key="xu2022", action="rename")
-        assert "error" in result
-
     def test_action_request(self, monkeypatch):
         monkeypatch.setattr(
             server,
@@ -1007,23 +1003,6 @@ class TestPaperRouting:
         )
         self._call(action="list")
         assert captured["page"] == 1
-
-    def test_action_rename_success(self, monkeypatch):
-        monkeypatch.setattr(
-            server,
-            "_paper_rename",
-            lambda old_key, new_key: json.dumps(
-                {"status": "renamed", "old_key": old_key, "new_key": new_key}
-            ),
-        )
-        result = self._call(key="xu2022", action="rename", new_key="xu2022mof")
-        assert result["status"] == "renamed"
-        assert result["old_key"] == "xu2022"
-        assert result["new_key"] == "xu2022mof"
-
-    def test_action_rename_no_key_no_new_key(self):
-        result = self._call(action="rename")
-        assert "error" in result
 
     def test_request_passes_all_fields(self, monkeypatch):
         captured = {}
