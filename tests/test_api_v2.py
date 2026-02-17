@@ -1653,3 +1653,266 @@ class TestHintConsistencyGuide:
     def test_report(self, monkeypatch):
         monkeypatch.setattr(server.issues_mod, "append_issue", lambda *a, **kw: None)
         assert _has_report_hint(_parse(server._route_guide(report="test")))
+
+
+# ###########################################################################
+#
+#   HAREBRAINED REQUESTS — confused/vague/wrong inputs should still
+#   give useful pointers and guide references, never crash.
+#
+# ###########################################################################
+
+
+def _guides_to(r: dict, fragment: str) -> bool:
+    """True if any hint value contains the guide fragment."""
+    for v in r.get("hints", {}).values():
+        if isinstance(v, str) and fragment in v:
+            return True
+    return False
+
+
+class TestHarebrainedPaper:
+    """Confused paper() calls should give useful guidance, not crash."""
+
+    def test_bare_delete_no_target(self):
+        """'Delete it' — but delete what?"""
+        r = _parse(server._route_paper(delete=True))
+        # No id → no-args response (can't delete nothing)
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_id_looks_like_page_no_slug(self):
+        """'page3' — forgot the slug prefix."""
+        r = _parse(server._route_paper(id="page3"))
+        # Treated as slug 'page3', won't be found
+        assert "error" in r or "hints" in r
+        assert _has_report_hint(r)
+        assert _guides_to(r, "paper")
+
+    def test_empty_search_list(self):
+        """paper(search=[]) — empty search bag."""
+        r = _parse(server._route_paper(search=[]))
+        # Empty search → treated as no search → no-args hints
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_nonsense_doi(self):
+        """'10.fake/not-a-real-doi' — DOI that won't resolve."""
+        r = _parse(server._route_paper(id="10.fake/not-a-real-doi"))
+        # DOI lookup fails gracefully
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_meta_as_yaml_not_json(self):
+        """User writes YAML instead of JSON in meta."""
+        r = _parse(server._route_paper(id="xu2022", meta="title: New Title"))
+        assert "error" in r
+        assert _guides_to(r, "paper-metadata")
+
+    def test_meta_as_bare_string(self):
+        """User puts a plain string in meta."""
+        r = _parse(server._route_paper(id="xu2022", meta="just a string"))
+        assert "error" in r
+        assert _guides_to(r, "paper-metadata")
+
+    def test_search_single_year(self):
+        """paper(search=['2022']) — just a year, no keywords."""
+        # Should not crash, treats '2022' as a keyword
+        r = _parse(server._route_paper(search=["2022"]))
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_search_with_typo_modifier(self):
+        """paper(search=['cite_by:xu2022']) — typo: cite_by instead of cited_by."""
+        # Should treat 'cite_by:xu2022' as a keyword, not a modifier
+        r = _parse(server._route_paper(search=["cite_by:xu2022"]))
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_path_nonexistent_file(self):
+        """paper(path='inbox/ghost.pdf') — file doesn't exist."""
+        r = _parse(server._route_paper(path="inbox/ghost.pdf"))
+        assert "error" in r or r.get("status") == "failed"
+        assert _has_report_hint(r)
+
+    def test_figure_id_on_missing_paper(self):
+        """paper(id='nonexistent2099:fig1') — paper doesn't exist."""
+        r = _parse(server._route_paper(id="nonexistent2099:fig1"))
+        assert "error" in r or "hints" in r
+        assert _has_report_hint(r)
+
+    def test_page_zero(self, fake_project):
+        """paper(id='xu2022:page0') — pages are 1-indexed."""
+        _setup_raw_pages(fake_project, "xu2022", 3)
+        r = _parse(server._route_paper(id="xu2022:page0"))
+        # Might error or return empty — shouldn't crash
+        assert "hints" in r or "error" in r
+        assert _has_report_hint(r)
+
+    def test_id_with_spaces(self):
+        """paper(id='xu 2022') — spaces in id."""
+        r = _parse(server._route_paper(id="xu 2022"))
+        assert "error" in r or "hints" in r
+        assert _has_report_hint(r)
+
+
+class TestHarebrainedNotes:
+    """Confused notes() calls should give useful guidance."""
+
+    def test_content_without_title(self):
+        """notes(on='xu2022', content='stuff') — content but no title."""
+        r = _parse(server._route_notes(on="xu2022", content="stuff"))
+        # No title → falls through to list (title required for write)
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_delete_nonexistent_title(self):
+        """notes(on='xu2022', title='Ghost', delete=true) — nothing to delete."""
+        r = _parse(server._route_notes(on="xu2022", title="Ghost", delete=True))
+        # Idempotent delete — should not crash
+        assert "status" in r or "hints" in r
+        assert _has_report_hint(r)
+
+    def test_on_with_page_suffix(self):
+        """notes(on='xu2022:page3') — page syntax in notes on field."""
+        r = _parse(server._route_notes(on="xu2022:page3"))
+        # Treated as slug 'xu2022:page3' (not a paper, but won't crash)
+        assert "hints" in r
+        assert _has_report_hint(r)
+        assert _guides_to(r, "notes")
+
+    def test_title_very_long(self, fake_project):
+        """notes(on='xu2022', title='A'*200, content='x') — very long title."""
+        r = _parse(server._route_notes(on="xu2022", title="A" * 200, content="x"))
+        # Should truncate and save, not crash
+        assert r.get("status") == "saved" or "error" in r
+        assert _has_report_hint(r)
+
+    def test_on_empty_string(self):
+        """notes(on='') — empty on field."""
+        r = _parse(server._route_notes(on=""))
+        # Empty → no-args hints
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_doi_not_in_vault(self):
+        """notes(on='10.9999/nonexistent') — DOI for paper not in vault."""
+        r = _parse(server._route_notes(on="10.9999/nonexistent"))
+        assert "error" in r
+        assert _has_report_hint(r)
+        assert _guides_to(r, "notes")
+
+
+class TestHarebrainedDoc:
+    """Confused doc() calls should give useful guidance."""
+
+    def test_search_todo_without_percent(self, fake_project):
+        """doc(search=['TODO']) — forgot the % prefix."""
+        _setup_sections(fake_project, {"intro.tex": "% TODO fix this\n"})
+        r = _parse(server._route_doc(search=["TODO"]))
+        # Treated as semantic search (no % prefix), not marker grep
+        # Should still work, just different results
+        assert "results" in r
+        assert _has_report_hint(r)
+        assert _guides_to(r, "doc-search")
+
+    def test_search_empty_list(self):
+        """doc(search=[]) — empty search."""
+        r = _parse(server._route_doc(search=[]))
+        # Empty search → falls through to TOC
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_search_nonexistent_file(self, fake_project):
+        """doc(search=['sections/ghost.tex']) — file doesn't exist."""
+        _setup_sections(fake_project, {"intro.tex": "hello\n"})
+        r = _parse(server._route_doc(search=["sections/ghost.tex"]))
+        assert "results" in r or "error" in r
+        assert _has_report_hint(r)
+
+    def test_context_garbage(self, fake_project):
+        """doc(search=['query'], context='lots') — non-numeric context."""
+        _setup_sections(fake_project, {"intro.tex": "Some content\n"})
+        r = _parse(server._route_doc(search=["content"], context="lots"))
+        # Should handle gracefully (parse to 0)
+        assert "results" in r
+        assert _has_report_hint(r)
+
+    def test_search_single_char(self, fake_project):
+        """doc(search=['x']) — single character search."""
+        _setup_sections(fake_project, {"intro.tex": "x marks the spot\n"})
+        r = _parse(server._route_doc(search=["x"]))
+        assert "results" in r
+        assert _has_report_hint(r)
+
+
+class TestHarebrainedGuide:
+    """Confused guide() calls should give useful guidance."""
+
+    def test_natural_language_query(self):
+        """guide(topic='how do I add a paper') — natural language, not a slug."""
+        r = _parse(server._route_guide(topic="how do I add a paper"))
+        # Should fuzzy-match to 'paper' or 'paper-ingest', or show index
+        assert "guide" in r or "error" in r or "topics" in r
+        assert _has_report_hint(r)
+
+    def test_tool_call_as_topic(self):
+        """guide(topic='paper(id)') — pasted a call instead of a topic."""
+        r = _parse(server._route_guide(topic="paper(id)"))
+        # Should fuzzy-match to 'paper-id' or 'paper', or show index
+        assert "guide" in r or "error" in r or "topics" in r
+        assert _has_report_hint(r)
+
+    def test_topic_with_trailing_spaces(self):
+        """guide(topic='  paper  ') — padded with spaces."""
+        r = _parse(server._route_guide(topic="  paper  "))
+        # guide.find_topic strips and lowercases
+        assert "guide" in r or "error" in r
+        assert _has_report_hint(r)
+
+    def test_report_no_description(self, monkeypatch):
+        """guide(report='') — empty report string."""
+        monkeypatch.setattr(server.issues_mod, "append_issue", lambda *a, **kw: None)
+        r = _parse(server._route_guide(report=""))
+        # Empty report → either files empty report or returns hints
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_completely_wrong_topic(self):
+        """guide(topic='asdfghjkl') — total gibberish."""
+        r = _parse(server._route_guide(topic="asdfghjkl"))
+        # Returns guide text with "No guide found" + index listing
+        assert "guide" in r or "error" in r or "topics" in r
+        assert _has_report_hint(r)
+
+
+class TestHarebrainedCrossToolConfusion:
+    """User confuses which tool does what."""
+
+    def test_search_in_notes(self):
+        """User tries to search papers via notes."""
+        # notes(on='quantum interference') — not a valid paper slug
+        r = _parse(server._route_notes(on="quantum interference"))
+        # Treated as slug, returns empty notes list with hints
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_doc_search_for_paper_slug(self, fake_project):
+        """User searches doc() for a paper slug — should find citations."""
+        _setup_sections(fake_project, {
+            "intro.tex": "As shown by \\cite{xu2022}, quantum interference...\n"
+        })
+        r = _parse(server._route_doc(search=["xu2022"]))
+        assert "results" in r
+        # Should detect as cite key and find the citation
+        results = r["results"]
+        assert any(item.get("type") == "cite" for item in results)
+        assert _has_report_hint(r)
+
+    def test_paper_search_for_latex_content(self):
+        """User searches paper() for LaTeX content — should search vault."""
+        r = _parse(server._route_paper(search=["functionally complete"]))
+        # Semantic search over papers — won't crash even if no results
+        assert "hints" in r
+        assert _has_report_hint(r)
+        assert _guides_to(r, "paper-search")
