@@ -147,7 +147,35 @@ def ensure_vault_dirs() -> None:
     (vault_root() / VAULT_PDF_DIR).mkdir(parents=True, exist_ok=True)
     (vault_root() / VAULT_TOME_DIR).mkdir(parents=True, exist_ok=True)
     vault_chroma_dir().mkdir(parents=True, exist_ok=True)
-    init_catalog()
+    ensure_catalog_populated()
+
+
+def ensure_catalog_populated() -> int:
+    """Auto-rebuild catalog.db from .tome archives if it exists but is empty.
+
+    Returns number of documents in catalog (0 if no archives exist).
+    Skips rebuild if catalog already has rows.
+    """
+    db_path = catalog_path()
+    tome_dir = vault_root() / VAULT_TOME_DIR
+
+    # No archives → nothing to rebuild from
+    if not tome_dir.exists() or not any(tome_dir.rglob(f"*{ARCHIVE_EXTENSION}")):
+        return 0
+
+    # Check if catalog has any rows
+    try:
+        with _db(db_path) as conn:
+            conn.executescript(_SCHEMA)
+            row = conn.execute("SELECT count(*) FROM documents").fetchone()
+            if row and row[0] > 0:
+                return row[0]
+    except Exception:
+        pass  # corrupt or missing — rebuild
+
+    # Catalog empty but archives exist → rebuild
+    logger.info("Catalog empty but .tome archives found — rebuilding")
+    return catalog_rebuild(db_path)
 
 
 # ---------------------------------------------------------------------------

@@ -892,6 +892,10 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
     layers on server-specific extras (bib, ChromaDB, manifest, staging).
     """
     from tome.ingest import prepare_ingest
+    from tome.vault import ensure_catalog_populated
+
+    # Ensure catalog is populated (handles mid-session catalog loss)
+    ensure_catalog_populated()
 
     if not key:
         return {
@@ -950,9 +954,15 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
     for gate in prep.validation.results:
         if not gate.passed:
             if gate.gate in ("pdf_integrity", "dedup"):
-                return {"error": f"Validation failed: {gate.message}"}
+                result = {"error": f"Validation failed: {gate.message}"}
+                if gate.data.get("existing_key"):
+                    result["existing_key"] = gate.data["existing_key"]
+                return result
             elif gate.gate == "doi_duplicate":
-                return {"error": f"Duplicate DOI: {gate.message}"}
+                result = {"error": f"Duplicate DOI: {gate.message}"}
+                if gate.data.get("existing_key"):
+                    result["existing_key"] = gate.data["existing_key"]
+                return result
             elif gate.gate == "prompt_injection":
                 return {
                     "error": f"Blocked: {gate.message}",
@@ -5685,6 +5695,14 @@ def _paper_v2_ingest_commit(key: str, path_str: str, meta: str) -> str:
             except (json.JSONDecodeError, AttributeError):
                 pass
         result = _commit_ingest(pdf_path, key, tags, dois=dois)
+        # If dedup error, point hints to the existing paper, not the rejected key
+        if isinstance(result, dict) and "error" in result and "existing_key" in result:
+            existing = result["existing_key"]
+            return hints_mod.response(result, hints={
+                "view_existing": f"paper(id='{existing}')",
+                "notes": f"notes(on='{existing}')",
+                "guide": "guide('paper-ingest')",
+            })
         return hints_mod.response(result, hints=hints_mod.ingest_commit_hints(key))
     except Exception as exc:
         return hints_mod.error(f"Ingest commit failed: {exc}", hints={"guide": "guide('paper-ingest')"})

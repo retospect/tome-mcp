@@ -59,7 +59,16 @@ def _get_session_file() -> Path:
 
 
 def set_project(project_root: str) -> None:
-    """Record the project root in the session log."""
+    """Redirect logs to the project's .tome-mcp/ directory and record the change."""
+    global _BASE_DIR, _LOGS_DIR, _REQUESTS_DIR, _session_file
+
+    project_dir = Path(project_root) / ".tome-mcp"
+    if project_dir != _BASE_DIR:
+        _BASE_DIR = project_dir
+        _LOGS_DIR = _BASE_DIR / "logs"
+        _REQUESTS_DIR = _BASE_DIR / "llm-requests"
+        _session_file = None  # force new session file in new location
+
     f = _get_session_file()
     entry = {
         "type": "set_project",
