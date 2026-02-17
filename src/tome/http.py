@@ -38,6 +38,9 @@ def get_with_retry(
     """
     kwargs.setdefault("timeout", DEFAULT_TIMEOUT)
     for attempt in range(max_retries + 1):
+        from tome.cancellation import check_cancelled
+
+        check_cancelled(f"http retry attempt {attempt}")
         try:
             resp = httpx.get(url, **kwargs)
         except (httpx.ConnectError, httpx.TimeoutException):

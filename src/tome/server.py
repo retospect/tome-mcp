@@ -125,12 +125,16 @@ def _attach_file_log(dot_tome: Path) -> None:
 
 # ---------------------------------------------------------------------------
 # Tool invocation logging — wraps every @mcp_server.tool() with timing,
-# error classification, and response-size capping.
+# error classification, response-size capping, and cancellation support.
 #
-# Tools run directly on the event loop (single-threaded).  Multiple
-# Cascade windows calling Tome are naturally serialised: each request
-# waits for the previous to finish, including its stdout response
-# write.  No threads → no locks → no deadlocks.
+# Each tool call runs in a **worker thread** via anyio.to_thread so the
+# async event loop stays responsive.  This lets us:
+#   • enforce a global timeout (safety net for book-sized ingests)
+#   • detect client disconnect (stdin EOF / broken pipe)
+#   • set a cancellation token that tool code checks cooperatively
+#
+# Tools are still serialised — only one worker thread runs at a time.
+# No shared mutable state, no locks needed.
 # ---------------------------------------------------------------------------
 
 _original_tool = mcp_server.tool
@@ -139,6 +143,10 @@ _original_tool = mcp_server.tool
 # Maximum response size (bytes) returned to the MCP client.  Keeps
 # responses well under the macOS 64 KB stdout pipe buffer.
 _MAX_RESPONSE_BYTES = 48_000
+
+# Global tool timeout (seconds).  Safety net — most tools finish in <10s
+# but book ingests with prompt-injection scanning can take minutes.
+_TOOL_TIMEOUT = 300  # 5 minutes
 
 
 def _cap_response(result: str, name: str) -> str:
@@ -201,23 +209,60 @@ def _guide_hint(tool_name: str) -> str:
 
 
 def _logging_tool(**kwargs):
-    """Drop-in replacement for ``mcp_server.tool()`` that adds invocation logging."""
+    """Drop-in replacement for ``mcp_server.tool()`` that adds invocation logging.
+
+    The returned wrapper is **async**: it dispatches the (sync) tool function
+    to a worker thread so the event loop stays responsive for timeout /
+    cancellation / pipe-health monitoring.
+    """
+    import anyio
+
+    from tome.cancellation import Cancelled, clear_token, new_token
+
     decorator = _original_tool(**kwargs)
 
     def wrapper(fn):
         @functools.wraps(fn)
-        def logged(*args, **kw):
+        async def logged(*args, **kw):
             name = fn.__name__
             logger.info("TOOL %s called", name)
             t0 = time.monotonic()
+            token = new_token()
+
+            def _run_in_thread():
+                return fn(*args, **kw)
+
             try:
-                result = fn(*args, **kw)
+                try:
+                    with anyio.fail_after(_TOOL_TIMEOUT):
+                        result = await anyio.to_thread.run_sync(_run_in_thread)
+                except TimeoutError:
+                    token.set()  # signal worker thread to stop
+                    dt = time.monotonic() - t0
+                    call_log.log_call(name, kw, dt * 1000, status="timeout", error="timeout")
+                    logger.error(
+                        "TOOL %s timed out after %.0fs (limit %ds) — "
+                        "cancellation token set, worker thread may still be running",
+                        name,
+                        dt,
+                        _TOOL_TIMEOUT,
+                    )
+                    raise TomeError(
+                        f"Tool {name} timed out after {int(dt)}s. "
+                        f"The operation was cancelled."
+                    )
+
                 dt = time.monotonic() - t0
                 dt_ms = dt * 1000
                 rsize = len(result) if isinstance(result, str) else 0
                 logger.info("TOOL %s completed in %.2fs (%d bytes)", name, dt, rsize)
                 call_log.log_call(name, kw, dt_ms, status="ok")
                 return _cap_response(result, name) if isinstance(result, str) else result
+            except Cancelled:
+                dt = time.monotonic() - t0
+                call_log.log_call(name, kw, dt * 1000, status="cancelled", error="cancelled")
+                logger.info("TOOL %s cancelled after %.2fs", name, dt)
+                raise TomeError(f"Tool {name} was cancelled.")
             except TomeError as exc:
                 dt = time.monotonic() - t0
                 call_log.log_call(name, kw, dt * 1000, status="error", error=str(exc))
@@ -241,8 +286,6 @@ def _logging_tool(**kwargs):
                     dt,
                     traceback.format_exc(),
                 )
-                # Wrap raw exceptions so LLM gets actionable message,
-                # not raw traceback with system paths.
                 hint = _guide_hint(name)
                 raise TomeError(
                     f"Internal error in {name}: {type(exc).__name__}: "
@@ -250,6 +293,8 @@ def _logging_tool(**kwargs):
                     f"If this persists, use report_issue to log it — "
                     f"see guide('reporting-issues')."
                 ) from exc
+            finally:
+                clear_token()
 
         return decorator(logged)
 
@@ -3895,6 +3940,9 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
     rebuilt_keys: set[str] = set()
     for archive in archives:
         try:
+            from tome.cancellation import Cancelled, check_cancelled
+
+            check_cancelled(f"reindex archive {len(rebuilt_keys)}/{len(archives)}")
             meta = read_archive_meta(archive)
             k = meta.key
             if key and k != key:
@@ -3942,6 +3990,8 @@ def _reindex_papers(key: str = "") -> dict[str, Any]:
                 results["from_archive"] += 1
 
             rebuilt_keys.add(k)
+        except Cancelled:
+            raise  # don't swallow cancellation
         except Exception as e:
             results["errors"].append({"key": str(archive.stem), "error": _sanitize_exc(e)})
 
@@ -4453,7 +4503,7 @@ def validate_deep_cites(file: str = "", key: str = "") -> str:
             {
                 "error": "No 'deep_cite' pattern in config.yaml. Add a tracked pattern named "
                 "'deep_cite' with groups [key, page, quote] to enable quote validation. "
-                "See guide('configuration') for tracked pattern setup.",
+                "See guide('document-analysis') for setup, and examples/tome-deepcite.sty for LaTeX macros.",
                 "example": {
                     "name": "deep_cite",
                     "pattern": "\\\\mciteboxp\\{([^}]+)\\}\\{([^}]+)\\}\\{([^}]+)\\}",

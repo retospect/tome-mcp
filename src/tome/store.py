@@ -81,7 +81,10 @@ def _batched_upsert(
     batch_size: int = _CHROMA_BATCH_LIMIT,
 ) -> None:
     """Upsert in batches to stay within ChromaDB's per-call limit."""
+    from tome.cancellation import check_cancelled
+
     for start in range(0, len(ids), batch_size):
+        check_cancelled(f"chroma upsert batch {start}/{len(ids)}")
         end = start + batch_size
         collection.upsert(
             ids=ids[start:end],

@@ -707,9 +707,14 @@ def catalog_rebuild(path: Path | None = None) -> int:
     count = 0
     for archive in sorted(tome_dir.rglob(f"*{ARCHIVE_EXTENSION}")):
         try:
+            from tome.cancellation import Cancelled, check_cancelled
+
+            check_cancelled(f"catalog rebuild {count}")
             meta = read_archive_meta(archive)
             catalog_upsert(meta, db_path)
             count += 1
+        except Cancelled:
+            raise  # don't swallow cancellation
         except Exception as exc:
             logger.warning("Skipping corrupt archive %s: %s", archive.name, exc)
             continue

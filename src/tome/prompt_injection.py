@@ -152,8 +152,13 @@ def scan_pages(
     scores: list[float] = []
     try:
         for start in range(0, len(texts_to_scan), _MAX_BATCH_SIZE):
+            from tome.cancellation import Cancelled, check_cancelled
+
+            check_cancelled(f"injection scan batch {start}/{len(texts_to_scan)}")
             chunk = texts_to_scan[start : start + _MAX_BATCH_SIZE]
             scores.extend(_classify_batch(chunk))
+    except Cancelled:
+        raise  # don't swallow cancellation
     except Exception as e:
         logger.warning("Batch scan failed: %s", e)
         return ScanResult(flagged=False, error=str(e))

@@ -69,13 +69,62 @@ search("cooperatively functioning rotaxanes",
        scope="papers", mode="exact", key="feng2022", paragraphs=1)
 ```
 
-## Deep citation validation
+## Deep citations
+
+Deep citations embed a verbatim quote from a source paper directly in
+your LaTeX, enabling automated verification against the PDF text.
+
+### LaTeX macros
+
+Tome ships `examples/tome-deepcite.sty` with five macros:
+
+| Macro | Arguments | Output |
+|-------|-----------|--------|
+| `\mciteboxp{key}{page}{quote}` | key, page, quote | Shaded block quote with page |
+| `\mcitebox{key}{quote}` | key, quote | Shaded block quote (no page) |
+| `\citeqp{key}{page}{quote}` | key, page, quote | Inline quote with page |
+| `\citeq{key}{quote}` | key, quote | Inline quote |
+| `\citeqm{key}{quote}` | key, quote | Inline quote, source in margin |
+
+Copy `tome-deepcite.sty` into your project and add to your preamble:
+
+```latex
+\usepackage{tome-deepcite}              % footnotes on (default)
+\usepackage[nofootnotes]{tome-deepcite}  % footnotes off
+```
+
+Toggle footnotes mid-document with `\tomedeepcitefootnotefalse` /
+`\tomedeepcitefootnotetrue`.
+
+### Config: enable validation
+
+Add a `deep_cite` tracked pattern to `tome/config.yaml`:
+
+```yaml
+track:
+  - name: deep_cite
+    pattern: '\\mciteboxp\{([^}]+)\}\{([^}]+)\}\{([^}]+)\}'
+    groups: [key, page, quote]
+```
+
+The pattern must be named `deep_cite` with groups `[key, page, quote]`.
+Adjust the regex if you use a different macro as your primary deep-cite
+command.
+
+### Validation
 
 **`validate_deep_cites(file="", key="")`** — Extracts all deep-cite
-macros (mciteboxp, citeq, etc.) and searches ChromaDB for each quote
-against the cited paper's text. Reports match score — low scores may
-indicate misquotes or wrong pages. Live check, no cache. Requires
-papers to be rebuilt first.
+macros from `.tex` source and searches ChromaDB for each quote against
+the cited paper's text. Reports match score — low scores may indicate
+misquotes or wrong pages. Live check, no cache. Requires papers to be
+indexed first (run `reindex` if needed).
+
+### Writing deep cites
+
+Use `search(query, scope="papers", mode="exact", key="...", paragraphs=1)`
+to find quote-ready text from a paper. The paragraph mode returns cleaned
+text with hyphens rejoined and whitespace collapsed — paste directly into
+`\mciteboxp{key}{page}{...}`.
 
 ## File summaries
 
