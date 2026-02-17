@@ -9,6 +9,30 @@ Run this after code changes to the Tome MCP server. Requires MCP server restart 
 - 3+ PDFs in `tome/pdf/` to copy as test samples
 - MCP server freshly restarted with latest code
 
+## Hint Validation (continuous — applies to EVERY phase)
+
+Every v2 API response includes `hints` — executable call suggestions for
+the next logical action. **After every call in every phase, test that the
+returned hints actually work.**
+
+1. Inspect the `hints` dict in the response.
+2. Skip template hints containing `...` or `{...}` placeholders.
+3. Skip `report` hints (side-effect: creates an issue file).
+4. For every other hint, **call it** and verify:
+   - It returns valid JSON (not a crash).
+   - It does **not** contain `"error"` (unless the hint intentionally
+     points to an empty result, e.g. notes listing with no notes yet).
+   - It itself contains a `hints` dict with a `report` key.
+
+Example: if `paper(id='xu2022')` returns
+`{"hints": {"page": "paper(id='xu2022:page1')", "notes": "notes(on='xu2022')"}}`,
+then call `paper(id='xu2022:page1')` and `notes(on='xu2022')` and verify
+both succeed.
+
+**If any hint returns an error or crashes, fix it before proceeding.**
+Broken hints erode the self-describing API contract — the LLM will
+follow them and hit a dead end.
+
 ## Phase 0: Wipe
 1. `rm -rf /tmp/tome-smoke-vault ./.tome-mcp`
 2. Remove any stale test bib entries from `tome/references.bib`
@@ -106,62 +130,37 @@ f['chunks/embeddings'].shape # → (N, 384) float32
 - `paper(id='<test_key>', delete=true)` → success
 - **Verify**: sharded PDF + .tome files deleted, catalog row gone, ChromaDB chunks gone
 
-## Phase 13: Hint Validation
-
-Every v2 API response includes `hints` — executable call suggestions for
-the next logical action. **Test that returned hints actually work.**
-
-For each phase above, after verifying the primary response:
-
-1. Inspect the `hints` dict in the response.
-2. Skip template hints containing `...` or `{...}` placeholders.
-3. Skip `report` hints (side-effect: creates an issue file).
-4. For every other hint, **call it** and verify:
-   - It returns valid JSON (not a crash).
-   - It does **not** contain `"error"` (unless the hint intentionally
-     points to an empty result, e.g. notes listing with no notes yet).
-   - It itself contains a `hints` dict with a `report` key.
-
-Example: if `paper(id='xu2022')` returns
-`{"hints": {"page": "paper(id='xu2022:page1')", "notes": "notes(on='xu2022')"}}`,
-then call `paper(id='xu2022:page1')` and `notes(on='xu2022')` and verify
-both succeed.
-
-**If any hint returns an error or crashes, fix it before proceeding.**
-Broken hints erode the self-describing API contract — the LLM will
-follow them and hit a dead end.
-
-## Phase 14: Call Logs
+## Phase 13: Call Logs
 - **Verify**: logs in `.tome-mcp/logs/*.jsonl` have entries for all tool calls, all `status=ok`
 
-## Phase 15: DB Rebuild from .tome Archives
+## Phase 14: DB Rebuild from .tome Archives
 Tests that catalog.db and ChromaDB can be fully rebuilt from `.tome` HDF5 archives alone.
 (Reindex is now transparent — server auto-detects stale indexes.)
 
-### 15a: Capture baseline
+### 14a: Capture baseline
 ```bash
 sqlite3 /tmp/tome-smoke-vault/catalog.db "SELECT key, content_hash, doi FROM documents ORDER BY key;" > /tmp/baseline_catalog.txt
 ```
 - Run 2 `paper(search=['...'])` queries, record top-result key
 
-### 15b: Delete catalog (NOT chroma)
+### 14b: Delete catalog (NOT chroma)
 ```bash
 rm -f /tmp/tome-smoke-vault/catalog.db
 ```
 **Do NOT `rm -rf` chroma/ — ChromaDB PersistentClient is a singleton per path.**
 
-### 15c: Trigger rebuild
+### 14c: Trigger rebuild
 - Any `paper(search=['...'])` call should auto-rebuild
 - **Verify**: catalog row count matches baseline
 
-### 15d: Verify search works post-rebuild
-- Re-run same 2 search queries from 15a
+### 14d: Verify search works post-rebuild
+- Re-run same 2 search queries from 14a
 - **Verify**: same top-result keys returned
 
-### 15e: Verify page text serves from archive
+### 14e: Verify page text serves from archive
 - `paper(id='...:page1')` → text returned
 
-## Phase 16: Vault Audit
+## Phase 15: Vault Audit
 Programmatic check for data quality issues.
 
 ```python
@@ -200,12 +199,12 @@ for pdf_file in sorted(vault_pdf.rglob('*.pdf')):
 
 **Verify**: zero empty titles, zero orphans, zero page mismatches, all archives have chunks + embeddings
 
-## Phase 17: Filesystem Safety
+## Phase 16: Filesystem Safety
 - Ingest with key containing special chars: `paper(id='test/2024:bad*key', path='inbox/test.pdf')` → verify sanitized
 - **Verify**: resulting key has no `/\:*?"<>|` characters
 - **Verify**: shard directory is ASCII alphanumeric (non-ASCII → `_/`)
 
-## Phase 18: Test Safety
+## Phase 17: Test Safety
 Verify the pytest suite does NOT touch the live vault or project directories.
 
 ```bash
