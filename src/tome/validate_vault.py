@@ -483,6 +483,56 @@ def check_title_fuzzy_dedup(
     return GateResult(gate="title_dedup", passed=True, message="No similar titles found")
 
 
+def check_prompt_injection(
+    page_texts: list[str],
+    threshold: float = 0.5,
+) -> GateResult:
+    """Gate: No prompt injection detected in extracted text.
+
+    Uses ProtectAI's DeBERTa-v3 ONNX model to classify each page.
+    Returns passed=True (with a warning) if the scanner is unavailable.
+    """
+    try:
+        from tome.prompt_injection import scan_pages
+
+        result = scan_pages(page_texts, threshold=threshold)
+    except Exception as e:
+        return GateResult(
+            gate="prompt_injection",
+            passed=True,
+            message=f"Scanner unavailable: {e}",
+        )
+
+    if result.error:
+        return GateResult(
+            gate="prompt_injection",
+            passed=True,
+            message=f"Scanner error: {result.error}",
+        )
+
+    if result.flagged:
+        return GateResult(
+            gate="prompt_injection",
+            passed=False,
+            message=(
+                f"Prompt injection detected on page(s) {result.flagged_pages} "
+                f"(max score: {result.max_score:.2f})"
+            ),
+            data={
+                "max_score": result.max_score,
+                "flagged_pages": result.flagged_pages,
+                "details": result.details,
+            },
+        )
+
+    return GateResult(
+        gate="prompt_injection",
+        passed=True,
+        message=f"Clean (max score: {result.max_score:.2f})",
+        data={"max_score": result.max_score},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Aggregate validation
 # ---------------------------------------------------------------------------

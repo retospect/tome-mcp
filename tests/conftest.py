@@ -7,13 +7,22 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _isolate_api_cache(tmp_path: Path):
+    """Redirect api_cache to a temp dir so tests never share cached responses."""
+    from tome import api_cache
+
+    api_cache.set_cache_root(tmp_path / "test_cache")
+    yield
+    api_cache.clear_cache_root()
+
+
 @pytest.fixture
 def tmp_project(tmp_path: Path) -> Path:
     """Create a minimal Tome project structure in a temp directory."""
     tome_dir = tmp_path / "tome"
     tome_dir.mkdir()
     (tome_dir / "inbox").mkdir()
-    (tome_dir / "pdf").mkdir()
     (tome_dir / "figures").mkdir()
 
     dot_tome = tmp_path / ".tome-mcp"

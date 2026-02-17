@@ -1,14 +1,7 @@
 """Semantic Scholar API client.
 
 Provides paper discovery, metadata fetching, and citation graph traversal.
-
-Lookups (get_paper, get_citation_graph) use the local S2AG database at
-~/.tome-mcp/s2ag/s2ag.db when it exists — populated via ``python -m tome.s2ag_cli``.
-If the DB file is absent (not yet downloaded), lookups fall back to the S2 API.
-If the DB file exists but a paper isn't found, no API call is made.
-
-Explicit online operations (search, explore, get_paper_api) always hit the
-S2 API regardless of local DB state.
+All API responses are cached in ~/.tome-mcp/cache/s2/ (see :mod:`tome.api_cache`).
 
 An optional API key (via SEMANTIC_SCHOLAR_API_KEY env var) gives higher
 rate limits for online operations.
@@ -88,6 +81,15 @@ def search(query: str, limit: int = 10) -> list[S2Paper]:
     Returns:
         List of S2Paper results.
     """
+    from tome import api_cache
+
+    cache_id = f"{query}||{limit}"
+    cached = api_cache.get("s2", "search", cache_id)
+    if cached is not None:
+        return [_parse_paper(item) for item in cached.get("data", [])]
+
+    api_cache.throttle("s2")
+
     url = f"{S2_API}/paper/search"
     params = {
         "query": query,
@@ -105,6 +107,8 @@ def search(query: str, limit: int = 10) -> list[S2Paper]:
         return []
 
     data = resp.json()
+    api_cache.put("s2", "search", cache_id, data, url=url)
+
     papers = []
     for item in data.get("data", []):
         papers.append(_parse_paper(item))
@@ -114,8 +118,7 @@ def search(query: str, limit: int = 10) -> list[S2Paper]:
 def get_paper(paper_id: str) -> S2Paper | None:
     """Get a single paper by S2 ID, DOI, or other identifier.
 
-    Uses the local S2AG database when available.  Falls back to the
-    S2 API only if the local DB file doesn't exist yet.
+    Checks the API cache first, then hits the S2 API on miss.
 
     Args:
         paper_id: Semantic Scholar paper ID, or 'DOI:10.xxxx/...',
@@ -124,19 +127,24 @@ def get_paper(paper_id: str) -> S2Paper | None:
     Returns:
         S2Paper or None if not found.
     """
-    local = _local_get_paper(paper_id)
-    if local is not None:
-        return local
-    # DB exists but paper not found → don't hit API
-    if _get_s2ag() is not None:
-        return None
-    # No local DB at all → fall back to API
     return get_paper_api(paper_id)
 
 
 def get_paper_api(paper_id: str) -> S2Paper | None:
-    """Get a single paper via the S2 API (online).  Use for explicit
-    online lookups only — normal code paths should use get_paper()."""
+    """Get a single paper via the S2 API, with cache."""
+    from tome import api_cache
+
+    # Normalize DOI-style identifiers for cache key
+    cache_id = paper_id
+    if paper_id.upper().startswith("DOI:"):
+        cache_id = "DOI:" + api_cache.normalize_doi(paper_id[4:])
+
+    cached = api_cache.get("s2", "paper", cache_id)
+    if cached is not None:
+        return _parse_paper(cached)
+
+    api_cache.throttle("s2")
+
     url = f"{S2_API}/paper/{paper_id}"
     params = {"fields": DEFAULT_FIELDS}
 
@@ -149,7 +157,10 @@ def get_paper_api(paper_id: str) -> S2Paper | None:
     if resp.status_code != 200:
         return None
 
-    return _parse_paper(resp.json())
+    data = resp.json()
+    api_cache.put("s2", "paper", cache_id, data, url=url)
+
+    return _parse_paper(data)
 
 
 @dataclass
@@ -164,8 +175,7 @@ class CitationGraph:
 def get_citation_graph(paper_id: str, limit: int = 100) -> CitationGraph | None:
     """Get citations and references for a paper.
 
-    Uses the local S2AG database when available.  Falls back to the
-    S2 API only if the local DB file doesn't exist yet.
+    Uses the API cache, then falls back to the S2 API.
 
     Args:
         paper_id: S2 paper ID or DOI identifier.
@@ -174,13 +184,6 @@ def get_citation_graph(paper_id: str, limit: int = 100) -> CitationGraph | None:
     Returns:
         CitationGraph or None if paper not found.
     """
-    local = _local_citation_graph(paper_id, limit)
-    if local is not None:
-        return local
-    # DB exists but paper not found → don't hit API
-    if _get_s2ag() is not None:
-        return None
-    # No local DB at all → fall back to API
     return get_citation_graph_api(paper_id, limit)
 
 
@@ -217,6 +220,21 @@ def _get_connected(
     Returns:
         List of S2Papers.
     """
+    from tome import api_cache
+
+    cache_id = f"{s2_id}||{fields}||{limit}"
+    cached = api_cache.get("s2", direction, cache_id)
+    if cached is not None:
+        paper_key = "citingPaper" if direction == "citations" else "citedPaper"
+        papers = []
+        for item in cached.get("data", []):
+            paper_data = item.get(paper_key, {})
+            if paper_data:
+                papers.append(_parse_paper(paper_data))
+        return papers
+
+    api_cache.throttle("s2")
+
     url = f"{S2_API}/paper/{s2_id}/{direction}"
     params = {
         "fields": fields,
@@ -233,10 +251,12 @@ def _get_connected(
         return []
 
     data = resp.json()
+    api_cache.put("s2", direction, cache_id, data, url=url)
+
     papers = []
-    key = "citingPaper" if direction == "citations" else "citedPaper"
+    paper_key = "citingPaper" if direction == "citations" else "citedPaper"
     for item in data.get("data", []):
-        paper_data = item.get(key, {})
+        paper_data = item.get(paper_key, {})
         if paper_data:
             papers.append(_parse_paper(paper_data))
     return papers
@@ -287,94 +307,10 @@ def flag_in_library(
 
 
 # ---------------------------------------------------------------------------
-# Local S2AG database bridge
+# Legacy S2AG local DB bridge (removed — replaced by api_cache)
 # ---------------------------------------------------------------------------
-
-_s2ag_db = None  # lazy singleton
 
 
 def _get_s2ag():
-    """Return the shared S2AGLocal instance, or None if DB doesn't exist."""
-    # LOCAL DB DISABLED — always use API for now
+    """Stub — S2AG local DB replaced by api_cache. Always returns None."""
     return None
-    global _s2ag_db
-    if _s2ag_db is not None:
-        return _s2ag_db
-    try:
-        from tome.s2ag import DB_PATH, S2AGLocal
-
-        if DB_PATH.exists():
-            _s2ag_db = S2AGLocal()
-            return _s2ag_db
-    except Exception:
-        pass
-    return None
-
-
-def _s2ag_to_s2paper(rec) -> S2Paper:
-    """Convert an s2ag.S2Paper record to a semantic_scholar.S2Paper."""
-    return S2Paper(
-        s2_id=rec.paper_id or "",
-        title=rec.title,
-        authors=[],
-        year=rec.year,
-        doi=rec.doi,
-        citation_count=rec.citation_count,
-    )
-
-
-def _local_get_paper(paper_id: str) -> S2Paper | None:
-    """Look up a paper in the local S2AG database."""
-    db = _get_s2ag()
-    if db is None:
-        return None
-
-    # Parse the identifier format
-    if paper_id.startswith("DOI:"):
-        rec = db.lookup_doi(paper_id[4:])
-    elif paper_id.startswith("CorpusId:"):
-        try:
-            rec = db.get_paper(int(paper_id[9:]))
-        except (ValueError, TypeError):
-            return None
-    else:
-        # Assume it's an S2 paper ID (sha)
-        rec = db.lookup_s2id(paper_id)
-    return _s2ag_to_s2paper(rec) if rec else None
-
-
-def _local_citation_graph(paper_id: str, limit: int) -> CitationGraph | None:
-    """Build a citation graph from the local S2AG database."""
-    db = _get_s2ag()
-    if db is None:
-        return None
-
-    # Resolve the paper first
-    paper_rec = None
-    if paper_id.startswith("DOI:"):
-        paper_rec = db.lookup_doi(paper_id[4:])
-    elif paper_id.startswith("CorpusId:"):
-        try:
-            paper_rec = db.get_paper(int(paper_id[9:]))
-        except (ValueError, TypeError):
-            pass
-    else:
-        paper_rec = db.lookup_s2id(paper_id)
-
-    if paper_rec is None:
-        return None
-
-    paper = _s2ag_to_s2paper(paper_rec)
-
-    # Get citers and references from local DB
-    citer_ids = db.get_citers(paper_rec.corpus_id)[:limit]
-    ref_ids = db.get_references(paper_rec.corpus_id)[:limit]
-
-    citer_recs = db.get_papers(citer_ids)
-    ref_recs = db.get_papers(ref_ids)
-
-    return CitationGraph(
-        paper=paper,
-        citations=[_s2ag_to_s2paper(r) for r in citer_recs],
-        references=[_s2ag_to_s2paper(r) for r in ref_recs],
-    )

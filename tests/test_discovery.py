@@ -172,7 +172,6 @@ class TestScaffoldTome:
         # config.yaml created
         assert (tmp_path / "tome" / "config.yaml").exists()
         # Report includes all created paths
-        assert "tome/pdf/" in created
         assert "tome/inbox/" in created
         assert "tome/figures/papers/" in created
         assert ".tome-mcp/" in created
@@ -198,12 +197,10 @@ class TestScaffoldTome:
         assert "tome/references.bib" not in created
         assert "tome/config.yaml" not in created
         # But subdirs should be created
-        assert "tome/pdf/" in created
         assert "tome/inbox/" in created
         assert "tome/figures/papers/" in created
         assert ".tome-mcp/" in created
         # Verify dirs exist
-        assert (tmp_path / "tome" / "pdf").is_dir()
         assert (tmp_path / "tome" / "figures" / "papers").is_dir()
 
     def test_preserves_existing_bib_content(self, tmp_path):

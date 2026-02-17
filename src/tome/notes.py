@@ -10,6 +10,7 @@ Default fields: summary, claims, relevance, limitations, quality, tags.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
@@ -18,6 +19,100 @@ import yaml
 DEFAULT_PAPER_FIELDS = frozenset(
     {"summary", "claims", "relevance", "limitations", "quality", "tags"}
 )
+
+# ---------------------------------------------------------------------------
+# Related-paper conventions — errata, retractions, corrigenda, etc.
+# ---------------------------------------------------------------------------
+
+# Recognised relationship suffixes.  Keys follow the pattern:
+#   parentkey_<suffix>_<N>   e.g. miller1999slug_errata_1
+# The suffix encodes the relationship type.
+RELATED_SUFFIXES: tuple[str, ...] = (
+    "errata",
+    "erratum",
+    "retraction",
+    "corrigendum",
+    "addendum",
+    "comment",
+    "reply",
+)
+
+# Regex matching any of the known suffixes (with optional numeric index).
+_SUFFIX_RE = re.compile(
+    r"^(.+?)_(" + "|".join(RELATED_SUFFIXES) + r")(?:_(\d+))?$"
+)
+
+
+def parse_related_key(key: str) -> tuple[str, str, int | None] | None:
+    """Parse a related-paper key into (parent_key, relation, index).
+
+    Returns None if the key doesn't match the convention.
+
+    >>> parse_related_key("miller1999slug_errata_1")
+    ('miller1999slug', 'errata', 1)
+    >>> parse_related_key("miller1999slug_retraction")
+    ('miller1999slug', 'retraction', None)
+    >>> parse_related_key("miller1999slug")  # not a child
+    """
+    m = _SUFFIX_RE.match(key)
+    if not m:
+        return None
+    parent = m.group(1)
+    relation = m.group(2)
+    idx = int(m.group(3)) if m.group(3) else None
+    return parent, relation, idx
+
+
+def find_related_keys(key: str, all_keys: set[str] | list[str]) -> list[dict[str, str]]:
+    """Find keys related to *key* by convention (suffix-based).
+
+    Searches *all_keys* for children of *key* (e.g. ``key_errata_1``),
+    and if *key* is itself a child, includes the parent.
+
+    Returns a list of dicts: ``[{"key": ..., "relation": ..., "direction": "child"|"parent"}]``
+    """
+    results: list[dict[str, str]] = []
+    key_set = set(all_keys)
+
+    # 1. Is *key* a child of some parent?
+    parsed = parse_related_key(key)
+    if parsed:
+        parent, relation, _ = parsed
+        if parent in key_set:
+            results.append({"key": parent, "relation": relation, "direction": "parent"})
+
+    # 2. Does *key* have children?
+    prefix = key + "_"
+    for candidate in sorted(key_set):
+        if not candidate.startswith(prefix):
+            continue
+        child_parsed = parse_related_key(candidate)
+        if child_parsed and child_parsed[0] == key:
+            results.append({
+                "key": candidate,
+                "relation": child_parsed[1],
+                "direction": "child",
+            })
+
+    return results
+
+
+def find_parent_from_notes(tome_dir: Path, key: str) -> str | None:
+    """Check if a paper's notes contain a ``parent`` field pointing to another key."""
+    data = load_note(tome_dir, key)
+    return data.get("parent") or None
+
+
+def find_children_from_notes(tome_dir: Path, all_keys: set[str] | list[str], parent_key: str) -> list[str]:
+    """Find keys whose notes have ``parent`` set to *parent_key*."""
+    children: list[str] = []
+    for k in sorted(all_keys):
+        if k == parent_key:
+            continue
+        data = load_note(tome_dir, k)
+        if data.get("parent") == parent_key:
+            children.append(k)
+    return children
 
 
 def notes_dir(tome_dir: Path) -> Path:

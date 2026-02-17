@@ -2,6 +2,7 @@
 
 Provides search and metadata retrieval from the OpenAlex database (474M+ works).
 API docs: https://docs.openalex.org/
+All API responses are cached in ~/.tome-mcp/cache/openalex/ (see :mod:`tome.api_cache`).
 
 Uses the polite pool (mailto parameter) for higher rate limits.
 Optional API key via OPENALEX_API_KEY env var.
@@ -109,6 +110,15 @@ def search(query: str, limit: int = 10) -> list[OAWork]:
     Returns:
         List of OAWork results.
     """
+    from tome import api_cache
+
+    cache_id = f"{query}||{limit}"
+    cached = api_cache.get("openalex", "search", cache_id)
+    if cached is not None:
+        return [_parse_work(item) for item in cached.get("results", [])]
+
+    api_cache.throttle("openalex")
+
     url = f"{OPENALEX_API}/works"
     params = _get_params()
     params["search"] = query
@@ -124,6 +134,8 @@ def search(query: str, limit: int = 10) -> list[OAWork]:
         return []
 
     data = resp.json()
+    api_cache.put("openalex", "search", cache_id, data, url=url)
+
     return [_parse_work(item) for item in data.get("results", [])]
 
 
@@ -136,6 +148,15 @@ def get_work_by_doi(doi: str) -> OAWork | None:
     Returns:
         OAWork or None if not found.
     """
+    from tome import api_cache
+
+    norm = api_cache.normalize_doi(doi)
+    cached = api_cache.get("openalex", "doi", norm)
+    if cached is not None:
+        return _parse_work(cached)
+
+    api_cache.throttle("openalex")
+
     url = f"{OPENALEX_API}/works/doi:{doi}"
     params = _get_params()
 
@@ -148,7 +169,10 @@ def get_work_by_doi(doi: str) -> OAWork | None:
     if resp.status_code != 200:
         return None
 
-    return _parse_work(resp.json())
+    data = resp.json()
+    api_cache.put("openalex", "doi", norm, data, url=url)
+
+    return _parse_work(data)
 
 
 def flag_in_library(works: list[OAWork], library_dois: set[str]) -> list[tuple[OAWork, bool]]:

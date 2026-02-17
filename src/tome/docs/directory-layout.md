@@ -10,7 +10,6 @@ Tome uses two directories at the project root:
 | Path | Contents |
 |------|----------|
 | `tome/references.bib` | Bibliography (managed by Tome) |
-| `tome/pdf/` | Paper PDFs (`authorYYYY[slug].pdf`) |
 | `tome/inbox/` | Drop zone for new PDFs (ingest picks up from here) |
 | `tome/figures/` | Source figures from papers |
 | `tome/notes/` | Research notes YAML (`{key}.yaml`) |
@@ -49,13 +48,13 @@ Tome uses two directories at the project root:
 
 ### Status fields in `.bib`
 BibTeX ignores unknown fields — Tome uses them for tracking:
-- `x-pdf = {true|false}` — PDF exists in `tome/pdf/`
+- `x-pdf = {true|false}` — PDF has been ingested (stored in vault)
 - `x-doi-status = {valid|unchecked|rejected|missing}`
 - `x-tags = {tag1, tag2}` — Comma-separated tags
 
 ### Rebuilding `.tome/`
 If cache becomes corrupt: `reindex(scope="papers")` re-extracts text, re-embeds,
-and rebuilds ChromaDB from `tome/pdf/` and `tome/references.bib`.
+and rebuilds ChromaDB from vault archives and `tome/references.bib`.
 
 **Never edit files in `.tome/` directly.** Everything under `.tome/`
 is auto-generated and rebuildable from `tome/`.

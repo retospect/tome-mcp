@@ -122,7 +122,6 @@ project-root/
 ├── tome/
 │   ├── references.bib          # AUTHORITATIVE bibliography
 │   ├── inbox/                  # Drop PDFs here for processing
-│   ├── pdf/                    # Committed PDFs (authorYYYY.pdf)
 │   ├── figures/                # Source figure screenshots
 │   └── notes/                  # LLM-curated paper notes (authorYYYY.yaml)
 ```
@@ -146,7 +145,7 @@ project-root/
 
 | Tier | Data | Location | Recovery |
 |------|------|----------|----------|
-| Source of truth | PDFs, figure screenshots | `tome/pdf/`, `tome/figures/` | Unrecoverable |
+| Source of truth | PDFs, figure screenshots | Vault (`~/.tome-mcp/pdf/`), `tome/figures/` | Unrecoverable |
 | Authoritative metadata | Bibliography | `tome/references.bib` | Git rollback |
 | Derived cache | Everything else | `.tome/` | `tome:rebuild` |
 
@@ -163,7 +162,7 @@ A `.bak` copy is made before every write.
 
 | Field | Values | Meaning |
 |-------|--------|---------|
-| `x-pdf` | `true`/`false` | PDF exists in `tome/pdf/` |
+| `x-pdf` | `true`/`false` | PDF has been ingested (stored in vault) |
 | `x-doi-status` | `valid`/`unchecked`/`rejected`/`missing` | DOI verification state |
 | `x-tags` | comma-separated | Freeform tags for search filtering |
 
@@ -266,8 +265,8 @@ The LLM reviews the proposal and confirms or corrects.
 **Phase 2: Commit** (fast, ordered for crash safety)
 
 1. Write bib entry to `tome/references.bib` (via bibtexparser)
-2. Move PDF: `tome/inbox/x.pdf` → `tome/pdf/authorYYYY.pdf`
-3. Move staging artifacts → `.tome/raw/`, `.tome/cache/`
+2. Copy PDF to vault (`~/.tome-mcp/pdf/`), write `.tome` archive
+3. Move staging artifacts → `.tome-mcp/raw/`, `.tome-mcp/cache/`
 4. Upsert into ChromaDB
 5. Update `.tome/tome.json`
 6. Clean up staging dir
@@ -301,137 +300,64 @@ ChromaDB collections: `paper_pages`, `paper_chunks`, `corpus_chunks` (separate).
 
 ## MCP tools
 
+Many formerly separate tools have been unified into multi-action tools.
+Call `guide()` for the full topic index, or `guide('getting-started')` for orientation.
+
 ### Paper management
 
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `ingest` | `path?`, `key?`, `confirm?`, `tags?` | Process inbox PDFs. Without confirm: proposes. With confirm: commits. |
-| `set_paper` | `key`, field params, `raw_field?`, `raw_value?` | Set/update bib metadata. Creates entry if new. |
-| `remove_paper` | `key` | Delete paper + all derived data |
-| `get_paper` | `key` | Full metadata (bib + state + figures + notes) |
-| `list_papers` | `tags?`, `status?` | Summary table, filterable |
-| `check_doi` | `key?` | Verify DOI via CrossRef. Single or batch all unchecked. |
+| Tool | Description |
+|------|-------------|
+| `paper` | Unified: get/set/list/remove/request/stats. No args = library stats. `key` = metadata + notes. `action='list'` = browse. |
+| `ingest` | Process inbox PDFs. Without `confirm`: proposes key + metadata. With `confirm=True`: commits to library + vault. |
+| `notes` | Read/write/clear paper notes or file meta. Paper notes in `tome/notes/`, file meta in `% === FILE META` blocks. |
+| `link_paper` | Link/unlink a vault paper to the current project. No args = list linked papers. |
 
-### Paper notes
+### Search & navigation
 
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `get_notes` | `key` | Read LLM-curated notes (summary, claims, relevance, limitations). |
-| `set_notes` | `key`, `summary?`, `claims?`, `relevance?`, `limitations?`, `quality?`, `tags?` | Add/update notes. Append-only lists. Indexed into ChromaDB. |
-| `edit_notes` | `key`, `action`, `field?`, `value?` | Remove an item from a note field, or delete the entire note. |
-
-### Content access
-
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `get_page` | `key`, `page` | Raw text of page N |
-| `search` | `query`, `tags?`, `key?`, `n?` | Semantic search across papers (includes notes) |
-
-### Corpus
-
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `search_corpus` | `query`, `paths?`, `n?`, `labels_only?`, `cites_only?` | Semantic search across .tex/.py files. Auto-syncs stale. |
-| `sync_corpus` | `paths` | Force re-index of .tex/.py files |
-| `list_labels` | `prefix?` | All \label{} targets in indexed .tex files |
-| `find_cites` | `key`, `paths?` | Live grep for all \cite{key} occurrences |
+| Tool | Description |
+|------|-------------|
+| `search` | Unified search: `scope` (all/papers/corpus/notes) × `mode` (semantic/exact). Filters: `key`, `keys`, `tags`, `paths`. |
+| `toc` | Document structure: `locate` (heading/cite/label/index/tree). Replaces old `doc_tree`, `find_cites`, `list_labels`. |
 
 ### Document analysis
 
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `toc` | `root?`, `depth?`, `query?`, `file?`, `pages?`, `figures?`, `part?` | Parse compiled TOC into hierarchical document map |
-| `doc_tree` | `root?` | Ordered file list from \input{} tree |
-| `doc_lint` | `root?`, `file?` | Structural issues: undefined refs, orphan labels, shallow cites |
-| `review_status` | `root?`, `file?` | Tracked marker counts (TODOs, findings, etc.) |
-| `dep_graph` | `file`, `root?` | Labels, refs, cites for a .tex file |
-| `validate_deep_cites` | `file?`, `key?` | Verify deep-cite quotes against source PDF text |
-| `summarize_file` | `file`, `summary`, `short`, `sections` | Store content summary for quick lookup |
-| `get_summary` | `file?`, `stale_only?` | Read stored summaries |
+| Tool | Description |
+|------|-------------|
+| `doc_lint` | Structural issues: undefined refs, orphan labels, shallow cites, tracked patterns. |
+| `dep_graph` | Labels, refs, cites for a single `.tex` file. |
+| `review_status` | Tracked marker counts from `tome/config.yaml` patterns. |
+| `validate_deep_cites` | Verify deep-cite quotes against source PDF text in ChromaDB. |
 
-### Text search
+### Discovery & exploration
 
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `find_text` | `query`, `context_lines?` | Normalized search across .tex source (handles PDF copy-paste) |
-| `grep_raw` | `query`, `key?`, `context_chars?` | Normalized grep across raw PDF extractions |
+| Tool | Description |
+|------|-------------|
+| `discover` | Unified: federated search (S2 + OpenAlex), citation graph, shared citers, refresh, stats, lookup. |
+| `cite_graph` | S2 citation graph (who cites this paper, what it cites). Flags in-library papers. |
+| `explore` | LLM-guided citation beam search — fetch, triage, expand, dismiss. |
 
-### Document index
+### DOI & figures
 
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `rebuild_doc_index` | `root?` | Rebuild back-of-book index from .idx file |
-| `search_doc_index` | `query`, `fuzzy?` | Search the document index |
-| `list_doc_index` | — | List all terms in the index |
+| Tool | Description |
+|------|-------------|
+| `doi` | Unified DOI management: verify, reject, list rejected, fetch open-access PDF (via Unpaywall → inbox). |
+| `figure` | Request, register, or list figures. No args = list all. |
 
-### Discovery
+### Task tracking
 
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `discover` | `query`, `n?` | Search Semantic Scholar. Flags in-library papers. |
-| `discover_openalex` | `query`, `n?` | Search OpenAlex. Complement to S2. |
-| `cite_graph` | `key?`, `s2_id?` | S2 citations/references. Flags in-library papers. |
-| `fetch_oa` | `key` | Download open-access PDF via Unpaywall |
-
-### Citation tree
-
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `build_cite_tree` | `key?` | Fetch citation graph from S2, cache in .tome/cite_tree.json |
-| `discover_citing` | `min_shared?`, `min_year?`, `n?` | Find papers citing multiple library papers |
-| `dismiss_citing` | `s2_id` | Dismiss a candidate so it doesn't resurface |
-
-### Citation exploration (beam search)
-
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `explore_citations` | `key?`, `s2_id?`, `limit?`, `parent_s2_id?`, `depth?` | Fetch citing papers with abstracts for relevance judgment |
-| `mark_explored` | `s2_id`, `relevance`, `note?` | Mark branch as relevant/irrelevant/deferred |
-| `list_explorations` | `relevance?`, `seed?`, `expandable?` | Show exploration state |
-| `clear_explorations` | — | Reset exploration state |
-
-### Figures
-
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `request_figure` | `key`, `figure`, `page?`, `reason?`, `caption?` | Queue figure request. Extracts caption + context. |
-| `add_figure` | `key`, `figure`, `path` | Register captured screenshot. Resolves request. |
-| `list_figures` | `status?` | All figures — captured and pending. |
-
-### Paper requests
-
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `request_paper` | `key`, `doi?`, `reason?`, `tentative_title?` | Track a paper you want but don't have. |
-| `list_requests` | — | Show open paper requests. |
-
-### Needful (recurring tasks)
-
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `needful` | `n?` | List most urgent tasks, ranked by never-done > changed > overdue |
-| `mark_done` | `task`, `file`, `note?` | Record task completion. Commit first for diff baseline. |
-| `file_diff` | `file`, `task?`, `base?` | Git diff annotated with LaTeX section headings |
+| Tool | Description |
+|------|-------------|
+| `needful` | List N most urgent tasks, or mark a task as done. Ranked by never-done > changed > overdue. |
+| `file_diff` | Git diff annotated with LaTeX section headings. |
 
 ### Maintenance
 
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `rebuild` | `key?` | Re-derive `.tome/` from `tome/`. Single paper or all. |
-| `stats` | — | Counts, DOI status, pending figures/requests, notes, open issues. |
-| `set_root` | `path` | Switch project root. Scaffolds directories. Surfaces open issues. |
-| `report_issue` | `tool`, `description`, `severity?` | Log a tool issue to tome/issues.md (git-tracked). |
-| `report_issue_guide` | — | Best-practices guide for reporting tool issues. |
-| `guide` | `topic?` | On-demand usage guides. Call without args for topic index. |
-
-### S2AG (local citation database)
-
-| Tool | Parameters | Description |
-|------|-----------|-------------|
-| `s2ag_incremental` | `min_year?` | Sweep library papers for new citers via S2 Graph API. Adds edges to local DB. |
-| `s2ag_stats` | — | Local S2AG database statistics (paper count, citation count, DB size). |
-| `s2ag_lookup` | `doi?`, `s2_id?`, `corpus_id?` | Look up a paper in local S2AG database. No API calls. |
-| `s2ag_shared_citers` | `dois`, `min_shared?` | Find non-library papers citing multiple given papers. Purely local. |
+| Tool | Description |
+|------|-------------|
+| `set_root` | Switch project root. Scaffolds directories. Surfaces open issues. |
+| `reindex` | Re-index papers, corpus files, or both. Rebuilds from vault archives. |
+| `guide` | On-demand usage guides. Call without args for topic index. |
+| `report_issue` | Log a tool issue to `tome/issues.md` (git-tracked). |
 
 ## Tool descriptions
 
@@ -445,7 +371,7 @@ is needed.
 |------|---------|
 | library | The collection of papers in `tome/references.bib` |
 | key | The bib key, e.g. `miller1999`. Same as `\cite{miller1999}` |
-| has_pdf | Whether a PDF exists in `tome/pdf/` |
+| `has_pdf` | Whether a PDF has been ingested (exists in vault) |
 | inbox | `tome/inbox/` — drop PDFs here for processing |
 
 ## Error handling

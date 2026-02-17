@@ -186,7 +186,7 @@ class TextNotExtracted(TomeError):
             msg = (
                 f"Text not yet extracted for paper '{key}'. "
                 f"Run reindex(key='{key}') to extract text from the PDF, "
-                f"or check that the PDF exists in tome/pdf/."
+                f"or check that the PDF exists in the vault (use paper(key='{key}') to verify)."
             )
         super().__init__(msg)
         self.key = key

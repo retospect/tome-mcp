@@ -404,7 +404,6 @@ EXCLUDE_DIRS = frozenset(
         ".mypy_cache",
         ".ruff_cache",
         ".tox",
-        "tome/pdf",
         "tome/inbox",  # PDFs handled separately by paper tools
     }
 )
@@ -553,6 +552,37 @@ def ingest(
     return json.dumps(_commit_ingest(pdf_path, key, tags), indent=2)
 
 
+def _detect_related_doc_type(api_title: str | None, pdf_title: str | None) -> str | None:
+    """Detect if a paper is an erratum, corrigendum, retraction, or addendum from its title.
+
+    Returns the canonical suffix (e.g. 'errata', 'retraction') or None.
+    """
+    titles = [t for t in (api_title, pdf_title) if t]
+    if not titles:
+        return None
+    combined = " ".join(titles).lower()
+    # Order matters — check more specific terms first
+    if any(w in combined for w in ("retraction", "retracted", "withdrawal")):
+        return "retraction"
+    if any(w in combined for w in ("corrigendum", "corrigenda", "correction to")):
+        return "corrigendum"
+    if any(w in combined for w in ("erratum", "errata")):
+        return "errata"
+    if any(w in combined for w in ("addendum", "addenda", "supplement to")):
+        return "addendum"
+    if any(w in combined for w in ("comment on", "reply to", "response to")):
+        return "comment"
+    return None
+
+
+def _find_parent_candidates(
+    existing_keys: set[str], surname: str, year: int | str,
+) -> list[str]:
+    """Find candidate parent keys matching the same author/year prefix."""
+    prefix = surname.lower() + str(year)
+    return [k for k in sorted(existing_keys) if k.startswith(prefix)]
+
+
 def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
     """Phase 1: Extract metadata, query APIs, propose key."""
     try:
@@ -641,6 +671,31 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
             "ingest(path='...', key='vendor_partnum', doc_type='datasheet')."
         )
 
+    # Detect errata / corrigendum / retraction / addendum
+    related_doc_type = _detect_related_doc_type(api_title, pdf_title)
+    related_hint = None
+    if related_doc_type:
+        # Find candidate parent papers in the library
+        candidates = _find_parent_candidates(existing, surname, year)
+        if candidates:
+            parent_list = ", ".join(sorted(candidates)[:5])
+            related_hint = (
+                f"This looks like a {related_doc_type} for an existing paper. "
+                f"Candidate parent key(s): {parent_list}. "
+                f"Use the key format: <parentkey>_{related_doc_type}_1 "
+                f"(e.g. '{sorted(candidates)[0]}_{related_doc_type}_1'). "
+                f"After ingesting, store the link: "
+                f"notes(key='<new_key>', fields='{{\"parent\": \"<parentkey>\"}}')."
+            )
+        else:
+            related_hint = (
+                f"This looks like a {related_doc_type}. "
+                f"No obvious parent paper found in library. "
+                f"Use the key format: <parentkey>_{related_doc_type}_1 "
+                f"where <parentkey> is the key for the corrected paper. "
+                f"Ingest the parent paper first if it is not yet in the library."
+            )
+
     proposal: dict[str, Any] = {
         "source_file": str(pdf_path.name),
         "status": "pending_confirmation",
@@ -664,6 +719,10 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
             f"from the title as a slug (e.g. 'smith2024ndr')."
         ),
     }
+    if related_doc_type:
+        proposal["related_doc_type"] = related_doc_type
+    if related_hint:
+        proposal["related_hint"] = related_hint
     if doc_type_hint:
         proposal["doc_type_hint"] = doc_type_hint
     if doi_warning:
@@ -751,12 +810,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     bib.add_entry(lib, key, "article", fields)
     bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
 
-    # --- Server-specific: copy PDF + extract raw text ---
-    dest_pdf = _tome_dir() / "pdf" / f"{key}.pdf"
-    dest_pdf.parent.mkdir(parents=True, exist_ok=True)
-    if pdf_path.resolve() != dest_pdf.resolve():
-        shutil.copy2(pdf_path, dest_pdf)
-
+    # --- Server-specific: extract raw text ---
     # Write raw page text files for project use
     staging = _staging_dir() / key
     staging.mkdir(parents=True, exist_ok=True)
@@ -787,7 +841,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     for _attempt in range(2):
         try:
             _, _, chunks_col = _vault_paper_col()
-            sha = checksum.sha256_file(dest_pdf)
+            sha = checksum.sha256_file(pdf_path)
             store.upsert_paper_chunks(chunks_col, key, all_chunks, page_map, sha)
             embedded = True
             break
@@ -821,7 +875,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
         write_archive,
     )
 
-    content_hash = checksum.sha256_file(dest_pdf)
+    content_hash = checksum.sha256_file(pdf_path)
     doc_meta = DocumentMeta(
         content_hash=content_hash,
         key=key,
@@ -836,7 +890,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
 
     v_pdf = vault_pdf_path(key)
     v_pdf.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(dest_pdf, v_pdf)
+    shutil.copy2(pdf_path, v_pdf)
 
     v_tome = vault_tome_path(key)
     v_tome.parent.mkdir(parents=True, exist_ok=True)
@@ -887,6 +941,17 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
         if prep.doi_status == "unchecked"
         else f"No DOI — add manually: paper(key='{key}', doi='...'). "
     )
+    # Check if the committed key is a child (errata, retraction, etc.)
+    parsed_child = notes_mod.parse_related_key(key)
+    if parsed_child:
+        parent_key, relation, _ = parsed_child
+        parent_hint = (
+            f"This is a {relation} — link to parent: "
+            f"notes(key='{key}', parent='{parent_key}'). "
+        )
+    else:
+        parent_hint = ""
+
     commit_result: dict[str, Any] = {
         "status": "ingested",
         "key": key,
@@ -901,10 +966,14 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
         "embedded": embedded,
         "next_steps": (
             f"{doi_hint}"
+            f"{parent_hint}"
             f"Enrich: notes(key='{key}', summary='...'). "
             f"See guide('paper-workflow') for the full pipeline."
         ),
     }
+    if parsed_child:
+        commit_result["related_doc_type"] = parsed_child[1]
+        commit_result["parent_key"] = parsed_child[0]
     if prep.warnings:
         commit_result["warnings"] = prep.warnings
     return commit_result
@@ -1067,6 +1136,35 @@ def _paper_get(key: str, page: int = 0) -> str:
     if note_data:
         result["notes"] = note_data
 
+    # Surface related papers (errata, retractions, corrigenda, etc.)
+    all_keys = set(bib.list_keys(lib))
+    related = notes_mod.find_related_keys(key, all_keys)
+    if related:
+        result["related_papers"] = related
+        # Loud warning for retractions
+        retraction_children = [
+            r for r in related
+            if r["relation"] == "retraction" and r["direction"] == "child"
+        ]
+        if retraction_children:
+            result["warning"] = (
+                "⚠ RETRACTED — this paper has a retraction notice: "
+                + ", ".join(r["key"] for r in retraction_children)
+                + ". Treat all claims with extreme caution."
+            )
+        # Informational notice for errata/corrigenda
+        errata_children = [
+            r for r in related
+            if r["relation"] in ("errata", "erratum", "corrigendum", "addendum")
+            and r["direction"] == "child"
+        ]
+        if errata_children:
+            result["notice"] = (
+                "This paper has corrections: "
+                + ", ".join(r["key"] for r in errata_children)
+                + ". Check errata before citing specific claims."
+            )
+
     # Include page text if requested
     if page > 0:
         try:
@@ -1175,6 +1273,7 @@ def notes(
     limitations: str = "",
     quality: str = "",
     tags: str = "",
+    parent: str = "",
     intent: str = "",
     status: str = "",
     depends: str = "",
@@ -1187,6 +1286,8 @@ def notes(
     No fields → read.  field="text" → stores text, overwrites existing.
     clear="field" or clear="*" → deletes fields.  Cannot mix clear with writes.
     Named params and 'fields' JSON are merged (named params take priority).
+    parent: for errata/retractions, set to the parent paper's key
+    (e.g. notes(key='smith2020_errata_1', parent='smith2020slug')).
     """
     if not key and not file:
         return json.dumps(
@@ -1220,7 +1321,7 @@ def notes(
 
     if key:
         return _notes_paper(
-            key, summary, claims, relevance, limitations, quality, tags, clear, extra
+            key, summary, claims, relevance, limitations, quality, tags, parent, clear, extra
         )
     else:
         return _notes_file(
@@ -1246,6 +1347,7 @@ def _notes_paper(
     limitations: str,
     quality: str,
     tags: str,
+    parent: str,
     clear: str,
     extra: dict[str, str] | None = None,
 ) -> str:
@@ -1260,6 +1362,7 @@ def _notes_paper(
         "limitations": limitations,
         "quality": quality,
         "tags": tags,
+        "parent": parent,
     }
     # Merge extra fields
     if extra:
@@ -1900,7 +2003,7 @@ def _search_papers_exact(
             {
                 "error": "No raw text directory (.tome-mcp/raw/) found. "
                 "No papers have been ingested yet, or the cache was deleted. "
-                "Use ingest to add papers, or run reindex(scope='papers') to regenerate from tome/pdf/."
+                "Use ingest to add papers, or run reindex(scope='papers') to regenerate from vault archives."
             }
         )
 
@@ -2947,17 +3050,31 @@ def _doi_fetch(key: str) -> str:
             }
         )
 
-    # Download PDF
-    pdf_dir = _project_root() / "tome" / "pdf"
-    pdf_dir.mkdir(parents=True, exist_ok=True)
-    dest = pdf_dir / f"{key}.pdf"
+    # Check if PDF already exists in vault
+    from tome.vault import vault_pdf_path
+
+    v_pdf = vault_pdf_path(key)
+    if v_pdf.exists():
+        return json.dumps(
+            {
+                "doi": doi,
+                "message": f"PDF already exists in vault for '{key}'.",
+                "oa_url": result.best_oa_url,
+            }
+        )
+
+    # Download PDF to inbox for ingest
+    inbox_dir = _project_root() / "tome" / "inbox"
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    dest = inbox_dir / f"{key}.pdf"
 
     if dest.exists():
         return json.dumps(
             {
                 "doi": doi,
-                "message": f"PDF already exists: tome/pdf/{key}.pdf",
+                "message": f"PDF already in inbox: tome/inbox/{key}.pdf",
                 "oa_url": result.best_oa_url,
+                "next_step": f"Run ingest(path='inbox/{key}.pdf', key='{key}', confirm=True) to process it.",
             }
         )
 
@@ -2971,20 +3088,14 @@ def _doi_fetch(key: str) -> str:
             }
         )
 
-    # Update x-pdf in bib
-    try:
-        bib.set_field(lib, key, "x-pdf", "true")
-        bib.save(lib, _project_root() / "tome" / "references.bib")
-    except Exception:
-        pass  # PDF saved, bib update is best-effort
-
     return json.dumps(
         {
             "doi": doi,
             "oa_status": result.oa_status,
             "oa_url": result.best_oa_url,
-            "saved": f"tome/pdf/{key}.pdf",
+            "saved": f"tome/inbox/{key}.pdf",
             "size_bytes": dest.stat().st_size,
+            "next_step": f"Run ingest(path='inbox/{key}.pdf', key='{key}', confirm=True) to process it.",
         }
     )
 
@@ -3220,6 +3331,255 @@ def _doi_list_rejected() -> str:
 # check_doi, reject_doi, list_rejected_dois, fetch_oa have been folded into doi().
 
 
+# ---------------------------------------------------------------------------
+# DOI resolve — match a DOI to vault/library candidates
+# ---------------------------------------------------------------------------
+
+
+def _title_tokens(title: str | None) -> set[str]:
+    """Lowercase token set from a title, dropping short words."""
+    if not title:
+        return set()
+    words = re.sub(r"[^\w\s]", " ", title.lower()).split()
+    return {w for w in words if len(w) > 2}
+
+
+def _surname(name: str) -> str:
+    """Extract a likely surname from various author-name formats."""
+    # "Family, Given" → "family"
+    if "," in name:
+        return name.split(",")[0].strip().lower()
+    # "Given Family" → "family" (last word)
+    parts = name.strip().split()
+    return parts[-1].lower() if parts else ""
+
+
+def _author_surnames(authors: list[str] | list[dict]) -> set[str]:
+    """Extract surname set from a list of author names or dicts."""
+    surnames: set[str] = set()
+    for a in authors:
+        if isinstance(a, dict):
+            family = a.get("family", "")
+            if family:
+                surnames.add(family.lower())
+                continue
+            name = a.get("name", "")
+            if name:
+                surnames.add(_surname(name))
+                continue
+        elif isinstance(a, str):
+            s = _surname(a)
+            if s:
+                surnames.add(s)
+    return surnames
+
+
+def _match_score(
+    doi_title: str | None,
+    doi_authors: list[str] | list[dict],
+    doi_year: int | None,
+    candidate_title: str | None,
+    candidate_author: str | None,
+    candidate_year: int | None,
+) -> float:
+    """Score a candidate match (0-1) against DOI metadata.
+
+    Weighted: title token overlap 0.6, author surname 0.25, year 0.15.
+    """
+    # Title: Jaccard on token sets
+    t1 = _title_tokens(doi_title)
+    t2 = _title_tokens(candidate_title)
+    if t1 and t2:
+        title_score = len(t1 & t2) / len(t1 | t2)
+    elif not t1 and not t2:
+        title_score = 0.0
+    else:
+        title_score = 0.0
+
+    # Authors: any surname overlap?
+    doi_surnames = _author_surnames(doi_authors)
+    cand_surnames = {_surname(candidate_author)} if candidate_author else set()
+    cand_surnames.discard("")
+    if doi_surnames and cand_surnames:
+        author_score = len(doi_surnames & cand_surnames) / len(doi_surnames | cand_surnames)
+    else:
+        author_score = 0.0
+
+    # Year: exact match
+    if doi_year and candidate_year:
+        year_score = 1.0 if doi_year == candidate_year else 0.0
+    else:
+        year_score = 0.0
+
+    return 0.6 * title_score + 0.25 * author_score + 0.15 * year_score
+
+
+def _doi_resolve(doi_str: str) -> str:
+    """Resolve a DOI: fetch metadata from CrossRef/S2/OpenAlex, search vault for matches.
+
+    Returns all source metadata + ranked candidate matches for the LLM to reconcile.
+    """
+    from tome import api_cache
+    from tome.vault import catalog_list
+
+    result: dict[str, Any] = {"doi": doi_str, "sources": {}}
+
+    # --- CrossRef ---
+    try:
+        cr = crossref.check_doi_raw(doi_str)
+        cr_title = (cr.get("title") or [None])[0]
+        cr_authors = cr.get("author", [])
+        cr_year = None
+        pub = cr.get("published-print") or cr.get("published-online")
+        if pub:
+            parts = pub.get("date-parts", [[]])
+            if parts and parts[0]:
+                cr_year = parts[0][0]
+        result["sources"]["crossref"] = {
+            "title": cr_title,
+            "authors": [
+                f"{a.get('family', '')}, {a.get('given', '')}".strip(", ")
+                for a in cr_authors
+            ],
+            "year": cr_year,
+            "journal": (cr.get("container-title") or [None])[0],
+            "type": cr.get("type"),
+            "is_referenced_by_count": cr.get("is-referenced-by-count"),
+            "reference_count": len(cr.get("reference", [])),
+        }
+    except Exception as e:
+        result["sources"]["crossref"] = {"error": str(e)[:200]}
+        cr_title = None
+        cr_authors = []
+        cr_year = None
+
+    # --- Semantic Scholar ---
+    try:
+        s2_paper = s2.get_paper(f"DOI:{doi_str}")
+        if s2_paper:
+            result["sources"]["s2"] = {
+                "s2_id": s2_paper.s2_id,
+                "title": s2_paper.title,
+                "authors": s2_paper.authors,
+                "year": s2_paper.year,
+                "citation_count": s2_paper.citation_count,
+                "abstract": s2_paper.abstract,
+            }
+        else:
+            result["sources"]["s2"] = {"found": False}
+    except Exception as e:
+        result["sources"]["s2"] = {"error": str(e)[:200]}
+
+    # --- OpenAlex ---
+    try:
+        oa = openalex.get_work_by_doi(doi_str)
+        if oa:
+            result["sources"]["openalex"] = {
+                "openalex_id": oa.openalex_id,
+                "title": oa.title,
+                "authors": oa.authors,
+                "year": oa.year,
+                "citation_count": oa.citation_count,
+                "is_oa": oa.is_oa,
+                "oa_url": oa.oa_url,
+                "abstract": oa.abstract,
+            }
+        else:
+            result["sources"]["openalex"] = {"found": False}
+    except Exception as e:
+        result["sources"]["openalex"] = {"error": str(e)[:200]}
+
+    # --- Best metadata for matching (prefer CrossRef as DOI registrar) ---
+    best_title = cr_title
+    best_authors = cr_authors
+    best_year = cr_year
+    if not best_title:
+        s2_src = result["sources"].get("s2", {})
+        if isinstance(s2_src, dict) and s2_src.get("title"):
+            best_title = s2_src["title"]
+            best_authors = s2_src.get("authors", [])
+            best_year = s2_src.get("year")
+    if not best_title:
+        oa_src = result["sources"].get("openalex", {})
+        if isinstance(oa_src, dict) and oa_src.get("title"):
+            best_title = oa_src["title"]
+            best_authors = oa_src.get("authors", [])
+            best_year = oa_src.get("year")
+
+    # --- Search vault catalog for candidates ---
+    candidates: list[dict[str, Any]] = []
+    try:
+        all_docs = catalog_list()
+        for doc in all_docs:
+            # Skip if this DOI is already in the catalog
+            if doc.get("doi") and api_cache.normalize_doi(doc["doi"]) == api_cache.normalize_doi(doi_str):
+                result["already_in_vault"] = {
+                    "key": doc["key"],
+                    "title": doc["title"],
+                    "content_hash": doc["content_hash"],
+                }
+                continue
+
+            score = _match_score(
+                best_title, best_authors, best_year,
+                doc.get("title"), doc.get("first_author"), doc.get("year"),
+            )
+            if score > 0.2:
+                candidates.append({
+                    "key": doc["key"],
+                    "title": doc["title"],
+                    "first_author": doc.get("first_author"),
+                    "year": doc.get("year"),
+                    "doi": doc.get("doi"),
+                    "content_hash": doc["content_hash"],
+                    "score": round(score, 3),
+                })
+    except Exception:
+        pass  # vault not initialized — no candidates
+
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    result["vault_candidates"] = candidates[:5]
+
+    # --- Also search bib entries (project-level) ---
+    bib_candidates: list[dict[str, Any]] = []
+    try:
+        lib = _load_bib()
+        for entry in lib.entries:
+            entry_title = entry.fields_dict.get("title")
+            entry_author = entry.fields_dict.get("author")
+            entry_year = entry.fields_dict.get("year")
+            score = _match_score(
+                best_title, best_authors, best_year,
+                entry_title.value if entry_title else None,
+                entry_author.value if entry_author else None,
+                int(entry_year.value) if entry_year and entry_year.value.isdigit() else None,
+            )
+            if score > 0.2:
+                existing_doi = entry.fields_dict.get("doi")
+                bib_candidates.append({
+                    "key": entry.key,
+                    "title": entry_title.value if entry_title else None,
+                    "author": entry_author.value if entry_author else None,
+                    "year": entry_year.value if entry_year else None,
+                    "existing_doi": existing_doi.value if existing_doi else None,
+                    "score": round(score, 3),
+                })
+    except Exception:
+        pass  # no bib file — skip
+
+    bib_candidates.sort(key=lambda c: c["score"], reverse=True)
+    result["bib_candidates"] = bib_candidates[:5]
+
+    # --- Cache stats ---
+    result["cached"] = {
+        "crossref": api_cache.get_envelope("crossref", "", api_cache.normalize_doi(doi_str)) is not None,
+        "s2": api_cache.get_envelope("s2", "paper", f"DOI:{api_cache.normalize_doi(doi_str)}") is not None,
+        "openalex": api_cache.get_envelope("openalex", "doi", api_cache.normalize_doi(doi_str)) is not None,
+    }
+
+    return json.dumps(result, indent=2)
+
+
 @mcp_server.tool()
 def doi(
     key: str = "",
@@ -3234,6 +3594,7 @@ def doi(
     action='reject' → record a DOI as invalid (requires doi).
     action='rejected' → list all rejected DOIs.
     action='fetch' → fetch open-access PDF via Unpaywall (requires key).
+    action='resolve' + doi → fetch metadata from CrossRef/S2/OpenAlex, search vault for matches.
     """
     # --- Explicit actions ---
     if action == "rejected":
@@ -3252,6 +3613,13 @@ def doi(
                 {"error": "key is required for action='fetch'." + _guide_hint("paper")}
             )
         return _doi_fetch(key)
+
+    if action == "resolve":
+        if not doi:
+            return json.dumps(
+                {"error": "doi is required for action='resolve'."}
+            )
+        return _doi_resolve(doi)
 
     # --- No action specified ---
 
@@ -4276,7 +4644,6 @@ _EMPTY_BIB = """\
 """
 
 _SCAFFOLD_DIRS = [
-    "tome/pdf",
     "tome/inbox",
     "tome/figures/papers",
     "tome/notes",

@@ -32,7 +32,7 @@ LaTeX documents, and tracking research workflows.
 | **Discovery** | `discover` (search, graph, shared_citers, refresh, stats, lookup) |
 | **Citation exploration** | `explore` (fetch, mark, list, dismiss, clear) |
 | **Figures** | `figure` (request, register, or list) |
-| **DOI management** | `doi` (check/reject/list rejected/fetch OA PDF) |
+| **DOI management** | `doi` (check/reject/list rejected/fetch OA PDF/resolve) |
 | **Task tracking** | `needful` (list or mark done) |
 | **Maintenance** | `reindex` (papers/corpus/all) |
 | **Navigation** | `guide` (this system), `report_issue` |
@@ -48,6 +48,10 @@ LaTeX documents, and tracking research workflows.
 
 - **`doi(key=...)` after every ingest**: AI tools hallucinate ~10%
   of DOIs. Always verify.
+- **`doi(action='resolve', doi='...')`** to identify a DOI: fetches
+  metadata from CrossRef, S2, and OpenAlex (all cached), then fuzzy-matches
+  against vault and bib entries. Use when you have DOIs but don't know
+  which PDF is which.
 - **Verify PDF content**: `paper(key="...", page=1)` — confirm
   title/authors match the bib entry before citing.
 - **`notes` after reading a paper**: Build institutional

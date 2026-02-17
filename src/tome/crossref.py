@@ -1,7 +1,8 @@
 """CrossRef API client for DOI verification.
 
 Checks whether a DOI resolves and compares the returned metadata
-against what we have stored.
+against what we have stored.  Responses are cached in
+~/.tome-mcp/cache/crossref/ (see :mod:`tome.api_cache`).
 """
 
 from __future__ import annotations
@@ -31,18 +32,24 @@ class CrossRefResult:
     status_code: int
 
 
-def check_doi(doi: str) -> CrossRefResult:
-    """Verify a DOI against CrossRef.
+def _fetch_doi_raw(doi: str) -> dict:
+    """Fetch the full CrossRef response for a DOI, using cache.
 
-    Args:
-        doi: The DOI string (e.g. '10.1038/s41586-022-04435-4').
-
-    Returns:
-        CrossRefResult with metadata from CrossRef.
-
-    Raises:
-        DOIResolutionFailed: If CrossRef returns 404, 429, or 5xx.
+    Returns the raw JSON response dict.  Raises DOIResolutionFailed on
+    non-200 responses.
     """
+    from tome import api_cache
+
+    norm = api_cache.normalize_doi(doi)
+
+    # --- cache hit? ---
+    cached = api_cache.get("crossref", "", norm)
+    if cached is not None:
+        return cached
+
+    # --- cache miss: hit the API ---
+    api_cache.throttle("crossref")
+
     url = f"{CROSSREF_API}/{quote(doi, safe='')}"
     mailto = os.environ.get("UNPAYWALL_EMAIL", "")
     ua = f"Tome/0.1 (mailto:{mailto})" if mailto else "Tome/0.1"
@@ -57,6 +64,26 @@ def check_doi(doi: str) -> CrossRefResult:
         raise DOIResolutionFailed(doi, resp.status_code)
 
     data = resp.json()
+
+    # Cache the full raw response
+    api_cache.put("crossref", "", norm, data, url=url)
+
+    return data
+
+
+def check_doi(doi: str) -> CrossRefResult:
+    """Verify a DOI against CrossRef.
+
+    Args:
+        doi: The DOI string (e.g. '10.1038/s41586-022-04435-4').
+
+    Returns:
+        CrossRefResult with metadata from CrossRef.
+
+    Raises:
+        DOIResolutionFailed: If CrossRef returns 404, 429, or 5xx.
+    """
+    data = _fetch_doi_raw(doi)
     message = data.get("message", {})
 
     title = _extract_title(message)
@@ -72,6 +99,20 @@ def check_doi(doi: str) -> CrossRefResult:
         journal=journal,
         status_code=200,
     )
+
+
+def check_doi_raw(doi: str) -> dict:
+    """Fetch the full CrossRef message for a DOI.
+
+    Like :func:`check_doi` but returns the raw CrossRef ``message`` dict
+    with all fields (references, funders, license, etc.) for the DOI
+    resolve workflow.
+
+    Raises:
+        DOIResolutionFailed: If CrossRef returns 404, 429, or 5xx.
+    """
+    data = _fetch_doi_raw(doi)
+    return data.get("message", {})
 
 
 def _extract_title(message: dict) -> str | None:

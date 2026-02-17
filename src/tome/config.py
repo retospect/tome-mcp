@@ -47,6 +47,7 @@ DEFAULT_PAPER_FIELDS: list[str] = [
     "limitations",
     "quality",
     "tags",
+    "parent",
 ]
 DEFAULT_FILE_FIELDS: list[str] = ["intent", "status", "depends", "claims", "open"]
 
