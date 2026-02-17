@@ -47,8 +47,36 @@ track:
 
 ## Deep citations
 
-Deep citations embed verbatim quotes from source papers in LaTeX.
-Configure validation:
+Deep citations embed a verbatim quote from a source paper in your
+LaTeX. Tome ships `examples/tome-deepcite.sty` with five macros:
+
+| Macro | Arguments | Output |
+|-------|-----------|--------|
+| `\mciteboxp{key}{page}{quote}` | key, page, quote | Shaded block quote with page |
+| `\mcitebox{key}{quote}` | key, quote | Shaded block quote (no page) |
+| `\citeqp{key}{page}{quote}` | key, page, quote | Inline quote with page |
+| `\citeq{key}{quote}` | key, quote | Inline quote |
+| `\citeqm{key}{quote}` | key, quote | Inline quote, source in margin |
+
+```latex
+\usepackage{tome-deepcite}              % footnotes on (default)
+\usepackage[nofootnotes]{tome-deepcite}  % footnotes off
+```
+
+### Writing deep cites
+
+1. `paper(id='key:page3')` — read page text.
+2. Copy the relevant quote into `\mciteboxp{key}{3}{...}`.
+
+### Validating deep cites
+
+Validation is just searching the paper for the quote:
+
+1. `doc(search=['\mciteboxp'])` — find all deep cites in your .tex.
+2. For each hit, `paper(id='key:pageN')` — read the cited page.
+3. Compare the quote against the page text.
+
+### Config: track deep cites as markers
 
 ```yaml
 track:
@@ -56,7 +84,3 @@ track:
     pattern: '\\mciteboxp\{([^}]+)\}\{([^}]+)\}\{([^}]+)\}'
     groups: [key, page, quote]
 ```
-
-Validate by reading page text with `paper(id='key:pageN')` and
-comparing against quoted text. See `guide('document-analysis')`
-for the full deep citation macro reference.

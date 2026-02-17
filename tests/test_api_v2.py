@@ -1156,7 +1156,7 @@ class TestGuideTopicHierarchy:
         "doc", "doc-search", "doc-markers",
         "notes",
         "getting-started", "configuration", "directory-layout",
-        "reporting-issues", "document-analysis",
+        "reporting-issues",
     ]
 
     @pytest.mark.parametrize("topic", EXPECTED_TOPICS)
