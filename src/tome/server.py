@@ -510,7 +510,7 @@ def ingest(
 
     if not path:
         # Scan inbox
-        pdfs = sorted(inbox.glob("*.pdf"))
+        pdfs = sorted(inbox.glob("*.pdf"), key=lambda f: f.stat().st_mtime, reverse=True)
         if not pdfs:
             return json.dumps(
                 {
@@ -520,21 +520,27 @@ def ingest(
                     "See guide('paper-workflow') for the full pipeline.",
                 }
             )
-        results = []
-        for pdf in pdfs:
-            results.append(_propose_ingest(pdf))
-        return json.dumps(
-            {
-                "status": "proposals",
-                "papers": results,
-                "next_steps": (
-                    "Review each proposal. For correct matches, call: "
-                    "ingest(path='inbox/<file>', key='<suggested_key>', confirm=true). "
-                    "To override the key, provide your own key parameter."
-                ),
-            },
-            indent=2,
-        )
+        first = pdfs[0]
+        proposal = _propose_ingest(first)
+        response: dict[str, Any] = {
+            "status": "proposal",
+            "inbox_total": len(pdfs),
+            "paper": proposal,
+            "next_steps": (
+                "To accept: ingest(path='inbox/" + first.name + "', "
+                "key='" + (proposal.get("suggested_key") or "<key>") + "', confirm=true). "
+                "To skip and see next: ingest(path='inbox/<other_file>'). "
+                "To override the key, provide your own key parameter."
+            ),
+        }
+        if len(pdfs) > 1:
+            remaining = [p.name for p in pdfs[1:6]]
+            response["hint"] = (
+                f"{len(pdfs) - 1} more PDF(s) in inbox. "
+                "Next up: " + ", ".join(remaining)
+                + ("..." if len(pdfs) > 6 else "")
+            )
+        return json.dumps(response, indent=2)
 
     pdf_path = _tome_dir() / path if not Path(path).is_absolute() else Path(path)
     if not pdf_path.exists():
