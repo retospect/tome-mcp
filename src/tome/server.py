@@ -2854,11 +2854,11 @@ def _discover_graph(key: str, doi: str, s2_id: str) -> dict[str, Any]:
                 "paper": {"title": graph.paper.title, "s2_id": graph.paper.s2_id},
                 "citations": [
                     {"title": p.title, "year": p.year, "doi": p.doi, "s2_id": p.s2_id}
-                    for p in graph.citations[:50]
+                    for p in (graph.citations or [])[:50]
                 ],
                 "references": [
                     {"title": p.title, "year": p.year, "doi": p.doi, "s2_id": p.s2_id}
-                    for p in graph.references[:50]
+                    for p in (graph.references or [])[:50]
                 ],
             }
     except APIError as e:
