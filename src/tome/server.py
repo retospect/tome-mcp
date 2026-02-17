@@ -5992,7 +5992,7 @@ def _route_doc(
     if not search:
         try:
             root_tex = _resolve_root(root)
-            toc_text = toc_mod.build_toc(_project_root(), root_tex)
+            toc_text = toc_mod.get_toc(_project_root(), root_tex)
             toc_text = _paginate_toc(toc_text, page)
             return hints_mod.response(
                 {"toc": toc_text},
@@ -6028,7 +6028,7 @@ def _doc_smart_search(search_terms: list[str], root: str, context: str, page: in
             # Show TOC for that file
             try:
                 root_tex = _resolve_root(term)
-                toc_text = toc_mod.build_toc(_project_root(), root_tex)
+                toc_text = toc_mod.get_toc(_project_root(), root_tex)
                 results.append({"term": term, "type": "file", "matches": toc_text})
             except Exception as exc:
                 results.append({"term": term, "type": "file", "matches": str(exc)})
