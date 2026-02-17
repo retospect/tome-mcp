@@ -73,7 +73,6 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24.0",
     "respx>=0.21.0",
-    "ruff>=0.5.0",
     "mypy>=1.10.0",
     "black>=24.0",
     "bump-my-version>=0.28.0",
@@ -97,17 +96,6 @@ filterwarnings = [
 [tool.black]
 line-length = 99
 target-version = ["py311"]
-
-[tool.ruff]
-target-version = "py311"
-line-length = 99
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "W", "UP"]
-ignore = ["E501"]  # line length managed by ruff format
-
-[tool.ruff.lint.per-file-ignores]
-"tests/test_git_diff.py" = ["W293"]  # intentional trailing whitespace in diff fixtures
 
 [tool.bumpversion]
 current_version = "0.5.2"
