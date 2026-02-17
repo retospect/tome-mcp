@@ -5409,7 +5409,7 @@ def _route_paper(
     try:
         parsed = parse_id(id)
     except ValueError as exc:
-        return hints_mod.error(str(exc))
+        return hints_mod.error(str(exc), hints={"guide": "guide('paper-id')"})
 
     # --- DOI resolution ---
     if parsed.kind == IdKind.DOI:
@@ -5429,7 +5429,7 @@ def _route_paper(
         else:
             return hints_mod.error(
                 f"No paper with S2 ID '{parsed.s2_id}' in vault.",
-                hints={"search": "paper(search=['...'])"},
+                hints={"search": "paper(search=['...'])", "guide": "guide('paper-id')"},
             )
 
     # --- Delete ---
@@ -5468,7 +5468,7 @@ def _paper_v2_get(key: str) -> str:
         lib = _load_bib()
         entry = bib.get_entry(lib, key)
     except (PaperNotFound, NoBibFile) as exc:
-        return hints_mod.error(str(exc), hints={"search": "paper(search=['...'])"})
+        return hints_mod.error(str(exc), hints={"search": "paper(search=['...'])", "guide": "guide('paper')"})
 
     result = _paper_summary(entry)
     result["id"] = key
@@ -5529,7 +5529,7 @@ def _paper_v2_get_page(key: str, page: int) -> str:
     except TextNotExtracted:
         return hints_mod.error(
             f"Text not extracted for '{key}'. Ingest or reindex first.",
-            hints={"view": f"paper(id='{key}')"},
+            hints={"view": f"paper(id='{key}')", "guide": "guide('paper-id')"},
         )
     except Exception as exc:
         return hints_mod.error(str(exc))
@@ -5552,6 +5552,7 @@ def _paper_v2_get_figure(slug: str, figure: str) -> str:
             hints={
                 "register": f"paper(id='{slug}:{figure}', path='path/to/screenshot.png')",
                 "back": f"paper(id='{slug}')",
+                "guide": "guide('paper-figures')",
             },
         )
     result = {"id": slug, "figure": figure, **fig_data}
@@ -5625,12 +5626,12 @@ def _paper_v2_cited_by(key: str, search_terms: list[str]) -> str:
         return hints_mod.response(
             out,
             hints={
-                "reverse": f"paper(search=['cites:{key}'])",
                 **hints_mod.search_hints(search_terms, has_more=len(citations) >= 20),
+                **hints_mod.cite_graph_hints(key, "cited_by"),
             },
         )
     except Exception as exc:
-        return hints_mod.error(f"Citation graph failed: {exc}")
+        return hints_mod.error(f"Citation graph failed: {exc}", hints={"guide": "guide('paper-cite-graph')"})
 
 
 def _paper_v2_cites(key: str, search_terms: list[str]) -> str:
@@ -5647,12 +5648,12 @@ def _paper_v2_cites(key: str, search_terms: list[str]) -> str:
         return hints_mod.response(
             out,
             hints={
-                "reverse": f"paper(search=['cited_by:{key}'])",
                 **hints_mod.search_hints(search_terms, has_more=len(references) >= 20),
+                **hints_mod.cite_graph_hints(key, "cites"),
             },
         )
     except Exception as exc:
-        return hints_mod.error(f"Reference graph failed: {exc}")
+        return hints_mod.error(f"Reference graph failed: {exc}", hints={"guide": "guide('paper-cite-graph')"})
 
 
 def _paper_v2_ingest_propose(path_str: str) -> str:
@@ -5666,7 +5667,7 @@ def _paper_v2_ingest_propose(path_str: str) -> str:
             hints=hints_mod.ingest_propose_hints(suggested, path_str),
         )
     except Exception as exc:
-        return hints_mod.error(f"Ingest proposal failed: {exc}")
+        return hints_mod.error(f"Ingest proposal failed: {exc}", hints={"guide": "guide('paper-ingest')"})
 
 
 def _paper_v2_ingest_commit(key: str, path_str: str, meta: str) -> str:
@@ -5686,7 +5687,7 @@ def _paper_v2_ingest_commit(key: str, path_str: str, meta: str) -> str:
         result = _commit_ingest(pdf_path, key, tags, dois=dois)
         return hints_mod.response(result, hints=hints_mod.ingest_commit_hints(key))
     except Exception as exc:
-        return hints_mod.error(f"Ingest commit failed: {exc}")
+        return hints_mod.error(f"Ingest commit failed: {exc}", hints={"guide": "guide('paper-ingest')"})
 
 
 def _paper_v2_update_meta(key: str, meta_str: str) -> str:
@@ -5696,7 +5697,7 @@ def _paper_v2_update_meta(key: str, meta_str: str) -> str:
     except json.JSONDecodeError:
         return hints_mod.error(
             f"meta must be valid JSON. Got: {meta_str[:100]}",
-            hints={"example": f"paper(id='{key}', meta='{{\"title\": \"New Title\"}}')"},
+            hints={"example": f"paper(id='{key}', meta='{{\"title\": \"New Title\"}}')" , "guide": "guide('paper-metadata')"},
         )
 
     try:
@@ -5723,7 +5724,7 @@ def _paper_v2_update_figure(slug: str, figure: str, meta_str: str) -> str:
     try:
         m = json.loads(meta_str)
     except json.JSONDecodeError:
-        return hints_mod.error("meta must be valid JSON.")
+        return hints_mod.error("meta must be valid JSON.", hints={"guide": "guide('paper-figures')"})
 
     data = _load_manifest()
     paper_meta = manifest.get_paper(data, slug) or {}
@@ -5882,7 +5883,7 @@ def _route_notes(
         if resolved:
             on = resolved
         else:
-            return hints_mod.error(f"No paper with DOI '{on}' in vault.")
+            return hints_mod.error(f"No paper with DOI '{on}' in vault.", hints={"guide": "guide('notes')"})
 
     # --- Delete ---
     if delete:
@@ -5929,6 +5930,7 @@ def _route_notes(
                 hints={
                     "create": f"notes(on='{on}', title='{title}', content='...')",
                     "list": f"notes(on='{on}')",
+                    "guide": "guide('notes')",
                 },
             )
         note_data = yaml.safe_load(note_path.read_text(encoding="utf-8"))
@@ -6048,7 +6050,7 @@ def _doc_smart_search(search_terms: list[str], root: str, context: str, page: in
             results.append({"term": term, "type": "semantic", "matches": str(exc)})
 
     out = {"results": results, "search": search_terms}
-    h = {"back": "doc()"}
+    h = {"back": "doc()", "guide": "guide('doc-search')"}
     if context:
         h["more_context"] = f"doc(search={search_terms!r}, context='{_bump_context(context)}')"
     return hints_mod.response(out, hints=h)

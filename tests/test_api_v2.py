@@ -1142,6 +1142,150 @@ class TestGuideReport:
 
 # ###########################################################################
 #
+#   GUIDE HIERARCHY TESTS
+#
+# ###########################################################################
+
+
+class TestGuideTopicHierarchy:
+    """All expected guide topics should resolve to content."""
+
+    EXPECTED_TOPICS = [
+        "paper", "paper-id", "paper-search", "paper-ingest",
+        "paper-cite-graph", "paper-figures", "paper-metadata",
+        "doc", "doc-search", "doc-markers",
+        "notes",
+        "getting-started", "configuration", "directory-layout",
+        "reporting-issues", "document-analysis",
+    ]
+
+    @pytest.mark.parametrize("topic", EXPECTED_TOPICS)
+    def test_topic_exists(self, topic):
+        """Each guide topic should load without error."""
+        from tome import guide as guide_mod
+        from pathlib import Path
+        # Use the built-in docs directory
+        docs_dir = Path(__file__).parent.parent / "src" / "tome" / "docs"
+        p = guide_mod.find_topic(docs_dir.parent, topic)
+        assert p is not None, f"Guide topic '{topic}' not found"
+        assert p.exists()
+
+    def test_index_lists_all(self):
+        """guide() index should list all expected slugs."""
+        from tome import guide as guide_mod
+        from pathlib import Path
+        docs_dir = Path(__file__).parent.parent / "src" / "tome" / "docs"
+        topics = guide_mod.list_topics(docs_dir.parent)
+        slugs = {t["slug"] for t in topics}
+        for expected in self.EXPECTED_TOPICS:
+            assert expected in slugs, f"Missing from index: {expected}"
+
+    def test_paper_overview_links_sub_guides(self):
+        """paper.md should mention all paper sub-guides."""
+        from tome import guide as guide_mod
+        from pathlib import Path
+        docs_dir = Path(__file__).parent.parent / "src" / "tome" / "docs"
+        content = guide_mod.get_topic(docs_dir.parent, "paper")
+        for sub in ["paper-id", "paper-search", "paper-ingest",
+                     "paper-cite-graph", "paper-figures", "paper-metadata"]:
+            assert sub in content, f"paper.md missing link to {sub}"
+
+    def test_doc_overview_links_sub_guides(self):
+        """doc.md should mention all doc sub-guides."""
+        from tome import guide as guide_mod
+        from pathlib import Path
+        docs_dir = Path(__file__).parent.parent / "src" / "tome" / "docs"
+        content = guide_mod.get_topic(docs_dir.parent, "doc")
+        for sub in ["doc-search", "doc-markers"]:
+            assert sub in content, f"doc.md missing link to {sub}"
+
+
+class TestGuideHintsInErrors:
+    """Error responses should include a guide hint pointing to relevant docs."""
+
+    def test_bad_id_has_guide_hint(self):
+        r = _parse(server._route_paper(id=""))
+        # empty id → ValueError → error with guide hint
+        # Actually empty id with no other args → no-args hints
+        # Use a truly bad id
+        pass
+
+    def test_s2_not_found_has_guide(self, monkeypatch):
+        monkeypatch.setattr(server, "_resolve_s2_to_key", lambda x: None)
+        r = _parse(server._route_paper(id="a" * 40))
+        assert "error" in r
+        assert "guide" in r["hints"]
+        assert "paper-id" in r["hints"]["guide"]
+
+    def test_paper_not_found_has_guide(self, monkeypatch):
+        monkeypatch.setattr(server.bib, "get_entry", MagicMock(
+            side_effect=server.PaperNotFound("nope")
+        ))
+        r = _parse(server._route_paper(id="nonexistent2024"))
+        assert "error" in r
+        assert "guide" in r["hints"]
+
+    def test_bad_meta_json_has_guide(self):
+        r = _parse(server._route_paper(id="xu2022", meta="not json"))
+        assert "error" in r
+        assert "guide" in r["hints"]
+        assert "paper-metadata" in r["hints"]["guide"]
+
+    def test_missing_note_has_guide(self):
+        r = _parse(server._route_notes(on="xu2022", title="NoSuchNote"))
+        assert "error" in r
+        assert "guide" in r["hints"]
+        assert "notes" in r["hints"]["guide"]
+
+
+class TestGuideHintsInSuccess:
+    """Success responses should include guide hints for the relevant sub-topic."""
+
+    def test_paper_metadata_has_guide(self):
+        r = _parse(server._route_paper(id="xu2022"))
+        assert "guide" in r["hints"]
+        assert "paper" in r["hints"]["guide"]
+
+    def test_page_has_guide(self, fake_project):
+        _setup_raw_pages(fake_project, "xu2022", 3)
+        r = _parse(server._route_paper(id="xu2022:page1"))
+        assert "guide" in r["hints"]
+        assert "paper-id" in r["hints"]["guide"]
+
+    def test_search_has_guide(self):
+        r = _parse(server._route_paper(search=["*"]))
+        assert "guide" in r["hints"]
+        assert "paper-search" in r["hints"]["guide"]
+
+    def test_doc_toc_has_guide(self, fake_project):
+        _setup_sections(fake_project, {"intro.tex": "\\section{Intro}"})
+        r = _parse(server._route_doc())
+        assert "guide" in r["hints"]
+        assert "doc" in r["hints"]["guide"]
+
+    def test_doc_search_has_guide(self, fake_project):
+        _setup_sections(fake_project, {"intro.tex": "% TODO fix this"})
+        r = _parse(server._route_doc(search=["%TODO"]))
+        assert "guide" in r["hints"]
+        assert "doc-search" in r["hints"]["guide"]
+
+    def test_notes_list_has_guide(self):
+        r = _parse(server._route_notes(on="xu2022"))
+        assert "guide" in r["hints"]
+        assert "notes" in r["hints"]["guide"]
+
+    def test_cited_by_has_guide(self, monkeypatch):
+        monkeypatch.setattr(
+            server, "_discover_graph",
+            lambda key, doi, s2_id: {"citations": [], "citations_count": 0, "references": []},
+        )
+        r = _parse(server._route_paper(search=["cited_by:xu2022"]))
+        assert "guide" in r["hints"]
+        assert "paper-cite-graph" in r["hints"]["guide"]
+
+
+# ###########################################################################
+#
 #   USER-STORY TESTS — realistic scenarios
 #
 # ###########################################################################

@@ -50,6 +50,32 @@ Every response includes **hints** for next logical actions and a **report** hint
 - **Report issues**: Every tool response includes a report hint.
   Use `guide(report='severity: description')` to file issues.
 
+## Detailed guides
+
+Each tool has a hierarchy of guides:
+
+### paper
+- **`guide('paper')`** — Overview and quick reference
+- **`guide('paper-id')`** — The `id` parameter: slugs, DOIs, S2 hashes, pages, figures
+- **`guide('paper-search')`** — The `search` parameter: keywords, citation graph, online
+- **`guide('paper-ingest')`** — Ingesting PDFs: propose → commit flow
+- **`guide('paper-cite-graph')`** — Citation graph exploration
+- **`guide('paper-figures')`** — Figure management
+- **`guide('paper-metadata')`** — Updating bib fields, tags, DOI
+
+### doc
+- **`guide('doc')`** — Overview and quick reference
+- **`guide('doc-search')`** — Search types: markers, cites, labels, files, semantic
+- **`guide('doc-markers')`** — Review markers: %TODO, \fixme, \mrev
+
+### notes
+- **`guide('notes')`** — Notes tool overview
+
+### Other
+- **`guide('directory-layout')`** — Project structure, vault, .tome files
+- **`guide('configuration')`** — config.yaml options
+- **`guide('reporting-issues')`** — Filing bug reports
+
 ## Bootstrapping a new project
 
 For a new project, consider setting up rules (e.g. `.windsurf/rules/`)
@@ -57,17 +83,17 @@ that codify these practices for your specific LaTeX document:
 
 1. **Bibliography management** — bib key format, DOI verification
    discipline, wrong-PDF conventions, file layout.
-   See `guide('paper-workflow')` and `guide('directory-layout')`.
+   See `guide('paper')` and `guide('directory-layout')`.
 
 2. **Citation usage** — search order (always Tome first), deep
    citation workflow, how to upgrade shallow cites to verbatim quotes.
-   See `guide('search')`.
+   See `guide('paper-search')` and `guide('doc-search')`.
 
 3. **Git workflow** — commit discipline, review cycle
-   with `\mrev{}` findings. See `guide('review-cycle')`.
+   with `\mrev{}` findings. See `guide('doc-markers')`.
 
 4. **Document analysis** — use `doc(search=['%TODO', '\fixme'])` to
-   find markers. See `guide('document-analysis')`.
+   find markers. See `guide('doc')`.
 
 These guides contain general best practices. Project rules should
 add your specific conventions (LaTeX macros, naming schemes,

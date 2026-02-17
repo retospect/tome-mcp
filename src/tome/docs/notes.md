@@ -1,51 +1,57 @@
 ---
-description: Free-form notes on papers and files
+description: "Notes tool — free-form notes on papers and files"
 ---
-# Notes
+# notes() — Overview
 
 The `notes` tool manages free-form notes on papers or files.
 
-Notes are stored as YAML files in `tome/notes_v2/{slug}__{title}.yaml`.
-Each paper can have multiple titled notes.
+Notes are stored as YAML files in `tome/notes_v2/`. Each paper or
+file can have multiple titled notes.
 
 ## Parameters
 
 | Param | Purpose |
 |-------|---------|
-| `on` | Paper slug, DOI, or tex filename |
+| `on` | Paper slug, DOI, or tex filename — auto-detected |
 | `title` | Note title (for multi-note support) |
 | `content` | Note body (omit to read) |
 | `delete` | Remove note(s) |
 
-## Reading
+No args → usage hints.
 
-```
-notes(on='xu2022')                        # list all notes for this paper
-notes(on='xu2022', title='Summary')       # read specific note
-paper(id='xu2022')                        # has_notes shows note titles
-```
+## Quick reference
 
-## Writing
+| I want to... | Call |
+|--------------|------|
+| List notes for a paper | `notes(on='xu2022')` |
+| Read a specific note | `notes(on='xu2022', title='Summary')` |
+| Write a note | `notes(on='xu2022', title='Summary', content='...')` |
+| Overwrite a note | Same as write (title match = overwrite) |
+| Delete one note | `notes(on='xu2022', title='Summary', delete=true)` |
+| Delete all notes | `notes(on='xu2022', delete=true)` |
+| Note on a .tex file | `notes(on='sections/bg.tex', title='Intent', content='...')` |
+| Use DOI as identifier | `notes(on='10.1038/s41586-022-04435-4', title='...')` |
 
-Provide `on`, `title`, and `content` to write. Overwrites if title exists.
+## The `on` parameter
 
-```
-notes(on='xu2022', title='Summary', content='First QI demo in single molecules.')
-notes(on='xu2022', title='Limitations', content='Only tested at 4K.')
-notes(on='sections/bg.tex', title='Intent', content='Establish MOF background.')
-```
+The `on` parameter auto-detects the identifier type:
 
-The LLM decides the note structure — no fixed schema.
+| Format | Detected as |
+|--------|-------------|
+| `xu2022` | Paper slug |
+| `10.1038/...` | DOI → resolved to vault slug |
+| `sections/bg.tex` | File path (used as-is) |
+| `intro.tex` | Simple filename |
 
-## Deleting
-
-```
-notes(on='xu2022', title='Summary', delete=true)   # delete one note
-notes(on='xu2022', delete=true)                     # delete ALL notes for paper
-```
+DOIs starting with `10.` are automatically resolved to vault slugs.
+File paths with `/` that don't start with `10.` are treated as filenames.
 
 ## Auto-surfacing
 
 - `paper(id='key')` includes `has_notes` listing all note titles.
-- DOIs in `on` auto-resolve to vault slugs.
-- Every response includes hints for next actions.
+- Every response includes contextual hints for next actions.
+
+## Related guides
+
+- **`guide('paper')`** — Paper tool overview
+- **`guide('paper-id')`** — Identifier formats (shared with paper tool)
