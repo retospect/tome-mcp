@@ -1916,3 +1916,236 @@ class TestHarebrainedCrossToolConfusion:
         assert "hints" in r
         assert _has_report_hint(r)
         assert _guides_to(r, "paper-search")
+
+
+# ###########################################################################
+#
+#   PARAMETER COMBO CHAOS — conflicting/overlapping params that probe
+#   the routing priority chain. These should never crash and should
+#   always return hints.
+#
+# ###########################################################################
+
+
+class TestParamComboSearchOverrides:
+    """search takes priority — everything else should be silently ignored."""
+
+    def test_search_plus_id(self):
+        """paper(id='xu2022', search=['*']) — search wins, id ignored."""
+        r = _parse(server._route_paper(id="xu2022", search=["*"]))
+        # Search branch fires, returns paper list
+        assert "papers" in r or "results" in r
+        assert _has_report_hint(r)
+
+    def test_search_plus_delete(self):
+        """paper(search=['*'], delete=True) — search wins, delete ignored."""
+        r = _parse(server._route_paper(search=["*"], delete=True))
+        assert "papers" in r or "results" in r
+        # Should NOT have deleted anything
+        r2 = _parse(server._route_paper(id="xu2022"))
+        assert "error" not in r2  # xu2022 still exists
+
+    def test_search_plus_path(self):
+        """paper(search=['quantum'], path='inbox/x.pdf') — search wins."""
+        r = _parse(server._route_paper(search=["quantum"], path="inbox/x.pdf"))
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_search_plus_meta(self):
+        """paper(search=['*'], meta='{"title":"X"}') — search wins, meta ignored."""
+        r = _parse(server._route_paper(search=["*"], meta='{"title":"X"}'))
+        assert "papers" in r or "results" in r
+        # Title should NOT have changed
+        r2 = _parse(server._route_paper(id="xu2022"))
+        assert "X" != r2.get("title", "")
+
+    def test_search_plus_everything(self):
+        """paper(id='xu2022', search=['*'], path='x', meta='{}', delete=True)"""
+        r = _parse(server._route_paper(
+            id="xu2022", search=["*"], path="x", meta="{}", delete=True,
+        ))
+        # Search still wins
+        assert "papers" in r or "results" in r
+        assert _has_report_hint(r)
+
+
+class TestParamComboDeletePriority:
+    """delete takes priority over path and meta once id is parsed."""
+
+    def test_id_plus_delete_plus_path(self, fake_project):
+        """paper(id='xu2022', path='inbox/x.pdf', delete=True) — delete wins."""
+        r = _parse(server._route_paper(id="xu2022", path="inbox/x.pdf", delete=True))
+        # Should attempt delete, not ingest
+        assert r.get("status") == "removed" or "error" in r
+        assert _has_report_hint(r)
+
+    def test_id_plus_delete_plus_meta(self):
+        """paper(id='xu2022', meta='{"title":"X"}', delete=True) — delete wins."""
+        r = _parse(server._route_paper(id="xu2022", meta='{"title":"X"}', delete=True))
+        assert r.get("status") == "removed" or "error" in r
+        assert _has_report_hint(r)
+
+    def test_figure_delete_plus_path(self):
+        """paper(id='xu2022:fig1', path='shot.png', delete=True) — delete wins."""
+        r = _parse(server._route_paper(id="xu2022:fig1", path="shot.png", delete=True))
+        # Should try to delete the figure, not register it
+        assert "hints" in r or "error" in r
+        assert _has_report_hint(r)
+
+    def test_delete_plus_meta_plus_path(self):
+        """All three mutation params — delete still wins."""
+        r = _parse(server._route_paper(
+            id="xu2022", path="x.pdf", meta='{"title":"X"}', delete=True,
+        ))
+        assert r.get("status") == "removed" or "error" in r
+        assert _has_report_hint(r)
+
+
+class TestParamComboPathPriority:
+    """path takes priority over meta (once delete is not set)."""
+
+    def test_id_plus_path_plus_meta(self, fake_project):
+        """paper(id='xu2022', path='inbox/x.pdf', meta='{"tags":"test"}')
+        — path wins (ingest commit), meta may be passed along."""
+        r = _parse(server._route_paper(
+            id="xu2022", path="inbox/x.pdf", meta='{"tags":"test"}',
+        ))
+        # Ingest commit path fires
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_figure_path_plus_meta(self):
+        """paper(id='xu2022:fig1', path='shot.png', meta='{"caption":"X"}')
+        — path wins → register figure, meta ignored."""
+        r = _parse(server._route_paper(
+            id="xu2022:fig1", path="shot.png", meta='{"caption":"X"}',
+        ))
+        assert "hints" in r or "error" in r
+        assert _has_report_hint(r)
+
+
+class TestParamComboPageFigureEdgeCases:
+    """Page/figure IDs combined with mutation params."""
+
+    def test_page_plus_delete(self, fake_project):
+        """paper(id='xu2022:page3', delete=True) — deletes the PAPER, not page."""
+        _setup_raw_pages(fake_project, "xu2022", 5)
+        r = _parse(server._route_paper(id="xu2022:page3", delete=True))
+        # Delete branch fires on the slug (page kind → delete paper)
+        assert r.get("status") == "removed" or "error" in r
+        assert _has_report_hint(r)
+
+    def test_page_plus_meta(self):
+        """paper(id='xu2022:page3', meta='{"title":"X"}') — updates paper meta."""
+        r = _parse(server._route_paper(id="xu2022:page3", meta='{"title":"X"}'))
+        # Meta branch fires on the slug
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_page_plus_path(self, fake_project):
+        """paper(id='xu2022:page3', path='inbox/x.pdf') — ingest commit."""
+        r = _parse(server._route_paper(id="xu2022:page3", path="inbox/x.pdf"))
+        # Path branch fires (page kind doesn't matter, it's still a slug)
+        assert "hints" in r or "error" in r
+        assert _has_report_hint(r)
+
+    def test_figure_plus_page_like_id(self):
+        """paper(id='xu2022:fig3page2') — weird but valid fig name."""
+        r = _parse(server._route_paper(id="xu2022:fig3page2"))
+        # id_parser: matches fig pattern (fig\w+)
+        assert "hints" in r or "error" in r
+        assert _has_report_hint(r)
+
+
+class TestParamComboNoIdMutations:
+    """Mutation params without id — only path triggers ingest propose."""
+
+    def test_meta_only(self):
+        """paper(meta='{"title":"X"}') — meta without id → no-args."""
+        r = _parse(server._route_paper(meta='{"title":"X"}'))
+        # No id, no search, no path → no-args hints
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_delete_only(self):
+        """paper(delete=True) — delete without id → no-args."""
+        r = _parse(server._route_paper(delete=True))
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_path_plus_delete_no_id(self):
+        """paper(path='inbox/x.pdf', delete=True) — path wins, delete ignored."""
+        r = _parse(server._route_paper(path="inbox/x.pdf", delete=True))
+        # path without id → propose ingest (delete is ignored!)
+        assert "hints" in r or "error" in r or "status" in r
+        assert _has_report_hint(r)
+
+    def test_path_plus_meta_no_id(self):
+        """paper(path='inbox/x.pdf', meta='{}') — propose ingest, meta ignored."""
+        r = _parse(server._route_paper(path="inbox/x.pdf", meta="{}"))
+        assert "hints" in r or "error" in r or "status" in r
+        assert _has_report_hint(r)
+
+    def test_meta_plus_delete_no_id(self):
+        """paper(meta='{}', delete=True) — no id → no-args."""
+        r = _parse(server._route_paper(meta="{}", delete=True))
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+
+class TestParamComboNotes:
+    """Conflicting notes params."""
+
+    def test_title_content_plus_delete(self, fake_project):
+        """notes(on='xu2022', title='X', content='Y', delete=True) — delete wins."""
+        # Write first so there's something to delete
+        server._route_notes(on="xu2022", title="X", content="Y")
+        r = _parse(server._route_notes(on="xu2022", title="X", content="Y", delete=True))
+        # Delete branch checked before write branch
+        assert r.get("status") == "deleted"
+        assert _has_report_hint(r)
+
+    def test_content_no_title(self):
+        """notes(on='xu2022', content='orphan content') — title required for write."""
+        r = _parse(server._route_notes(on="xu2022", content="orphan content"))
+        # Falls through to list (title+content needed for write)
+        assert "notes" in r  # list result
+        assert _has_report_hint(r)
+
+    def test_delete_no_on(self):
+        """notes(delete=True) — delete but no target."""
+        r = _parse(server._route_notes(delete=True))
+        # No 'on' → no-args hints
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_all_params_at_once(self, fake_project):
+        """notes(on='xu2022', title='X', content='Y', delete=True)."""
+        r = _parse(server._route_notes(on="xu2022", title="X", content="Y", delete=True))
+        # Delete wins
+        assert r.get("status") == "deleted" or "hints" in r
+        assert _has_report_hint(r)
+
+
+class TestParamComboDoc:
+    """Conflicting doc params."""
+
+    def test_context_without_search(self):
+        """doc(context='3') — context without search → TOC."""
+        r = _parse(server._route_doc(context="3"))
+        # No search → TOC path, context ignored
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_page_without_search(self):
+        """doc(page=2) — page without search → TOC."""
+        r = _parse(server._route_doc(page=2))
+        assert "hints" in r
+        assert _has_report_hint(r)
+
+    def test_all_params(self, fake_project):
+        """doc(root='default', search=['%TODO'], context='3', page=1)."""
+        _setup_sections(fake_project, {"x.tex": "%TODO fix\n"})
+        r = _parse(server._route_doc(root="default", search=["%TODO"], context="3", page=1))
+        assert "results" in r
+        assert _has_report_hint(r)
