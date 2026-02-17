@@ -162,6 +162,7 @@ def prepare_ingest(
     crossref_journal: str | None = None,
     resolve_apis: bool = False,
     catalog_db: Path | None = None,
+    scan_injections: bool = True,
 ) -> PreparedIngest:
     """Shared analysis core — extract, resolve, validate, pick best metadata.
 
@@ -179,6 +180,7 @@ def prepare_ingest(
         crossref_journal: Pre-resolved CrossRef journal.
         resolve_apis: If True, call CrossRef/S2 when no CrossRef data given.
         catalog_db: Override catalog.db path (for testing).
+        scan_injections: If True, run prompt injection detection on page text.
 
     Returns:
         :class:`PreparedIngest` with everything needed to commit.
@@ -274,11 +276,20 @@ def prepare_ingest(
         doc_type=metrics.paper_type,
     )
 
+    # --- Phase 6: Prompt injection scan ---
+    if scan_injections:
+        from tome.validate_vault import check_prompt_injection
+
+        injection_gate = check_prompt_injection(page_texts)
+        validation.results.append(injection_gate)
+
     # Collect warnings from validation
     warnings: list[str] = []
     for gate in validation.results:
         if not gate.passed:
-            if gate.gate == "doi_title_match":
+            if gate.gate == "prompt_injection":
+                warnings.append(f"Prompt injection: {gate.message}")
+            elif gate.gate == "doi_title_match":
                 warnings.append(
                     f"DOI-title mismatch: {gate.message}. "
                     "The DOI may belong to a different paper."
@@ -293,9 +304,7 @@ def prepare_ingest(
                 warnings.append(f"Poor text extraction: {gate.message}")
 
     # DOI status
-    title_gate_passed = any(
-        g.passed for g in validation.results if g.gate == "doi_title_match"
-    )
+    title_gate_passed = any(g.passed for g in validation.results if g.gate == "doi_title_match")
     if not effective_doi:
         doi_status = "missing"
     elif crossref_title and title_gate_passed:

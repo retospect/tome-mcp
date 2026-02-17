@@ -380,7 +380,10 @@ def check_doi_author_match(
     # Pass 1: try full names with transposition
     for author in crossref_authors:
         score, snippet = find_in_pages(
-            author, page_texts, threshold=threshold, transpose_names=True,
+            author,
+            page_texts,
+            threshold=threshold,
+            transpose_names=True,
         )
         if score > best_score:
             best_score = score
@@ -394,7 +397,11 @@ def check_doi_author_match(
             gate="doi_author_match",
             passed=True,
             message=f"Author '{best_name}' found (score {best_score:.2f})",
-            data={"score": round(best_score, 3), "author": best_name, "snippet": best_snippet[:120]},
+            data={
+                "score": round(best_score, 3),
+                "author": best_name,
+                "snippet": best_snippet[:120],
+            },
         )
 
     # Pass 2: try surname only
@@ -415,7 +422,11 @@ def check_doi_author_match(
             gate="doi_author_match",
             passed=True,
             message=f"Author surname '{best_name}' found (score {best_score:.2f})",
-            data={"score": round(best_score, 3), "author": best_name, "snippet": best_snippet[:120]},
+            data={
+                "score": round(best_score, 3),
+                "author": best_name,
+                "snippet": best_snippet[:120],
+            },
         )
 
     return GateResult(

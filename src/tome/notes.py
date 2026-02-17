@@ -38,9 +38,7 @@ RELATED_SUFFIXES: tuple[str, ...] = (
 )
 
 # Regex matching any of the known suffixes (with optional numeric index).
-_SUFFIX_RE = re.compile(
-    r"^(.+?)_(" + "|".join(RELATED_SUFFIXES) + r")(?:_(\d+))?$"
-)
+_SUFFIX_RE = re.compile(r"^(.+?)_(" + "|".join(RELATED_SUFFIXES) + r")(?:_(\d+))?$")
 
 
 def parse_related_key(key: str) -> tuple[str, str, int | None] | None:
@@ -88,11 +86,13 @@ def find_related_keys(key: str, all_keys: set[str] | list[str]) -> list[dict[str
             continue
         child_parsed = parse_related_key(candidate)
         if child_parsed and child_parsed[0] == key:
-            results.append({
-                "key": candidate,
-                "relation": child_parsed[1],
-                "direction": "child",
-            })
+            results.append(
+                {
+                    "key": candidate,
+                    "relation": child_parsed[1],
+                    "direction": "child",
+                }
+            )
 
     return results
 
@@ -103,7 +103,9 @@ def find_parent_from_notes(tome_dir: Path, key: str) -> str | None:
     return data.get("parent") or None
 
 
-def find_children_from_notes(tome_dir: Path, all_keys: set[str] | list[str], parent_key: str) -> list[str]:
+def find_children_from_notes(
+    tome_dir: Path, all_keys: set[str] | list[str], parent_key: str
+) -> list[str]:
     """Find keys whose notes have ``parent`` set to *parent_key*."""
     children: list[str] = []
     for k in sorted(all_keys):

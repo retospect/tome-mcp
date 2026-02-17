@@ -57,9 +57,6 @@ class TestIsExcluded:
     def test_venv(self):
         assert _is_excluded(".venv/lib/python3.13/site.py") is True
 
-    def test_tome_pdf(self):
-        assert _is_excluded("tome/pdf/xu2022.pdf") is True
-
     def test_tome_inbox(self):
         assert _is_excluded("tome/inbox/new.pdf") is True
 

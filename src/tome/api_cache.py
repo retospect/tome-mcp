@@ -61,9 +61,9 @@ DEFAULT_TTLS: dict[str, int] = {
 
 # Proactive throttle: minimum seconds between API calls per service
 THROTTLE_SECONDS: dict[str, float] = {
-    "crossref": 0.1,   # CrossRef polite pool is generous
-    "s2": 1.0,         # S2 unauthenticated: 100/5min ≈ 1/3s, pad for safety
-    "openalex": 0.1,   # OpenAlex polite pool
+    "crossref": 0.1,  # CrossRef polite pool is generous
+    "s2": 1.0,  # S2 unauthenticated: 100/5min ≈ 1/3s, pad for safety
+    "openalex": 0.1,  # OpenAlex polite pool
 }
 
 # Track last API call time per service for proactive throttling
@@ -168,7 +168,9 @@ def get(
             fetched = datetime.fromisoformat(fetched_at)
             age_days = (datetime.now(UTC) - fetched).total_seconds() / 86400
             if age_days > ttl:
-                logger.debug("Cache expired for %s/%s/%s (%.1f days)", service, kind, identifier, age_days)
+                logger.debug(
+                    "Cache expired for %s/%s/%s (%.1f days)", service, kind, identifier, age_days
+                )
                 return None
         except (ValueError, TypeError):
             pass  # can't parse date → treat as valid

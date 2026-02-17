@@ -62,6 +62,7 @@ class TomeConfig:
     )
     track: list[TrackedPattern] = field(default_factory=list)
     needful_tasks: list[NeedfulTask] = field(default_factory=list)
+    prompt_injection_scan: bool = True
     paper_note_fields: list[str] = field(default_factory=lambda: list(DEFAULT_PAPER_FIELDS))
     file_note_fields: list[str] = field(default_factory=lambda: list(DEFAULT_FILE_FIELDS))
     sha256: str = ""  # checksum of the raw config file
@@ -241,6 +242,9 @@ def load_config(tome_dir: Path) -> TomeConfig:
         paper_nf = list(DEFAULT_PAPER_FIELDS)
         file_nf = list(DEFAULT_FILE_FIELDS)
 
+    # Prompt injection scanning (on by default, set false to disable)
+    prompt_injection_scan = bool(data.get("prompt_injection_scan", True))
+
     return TomeConfig(
         roots=roots,
         tex_globs=[
@@ -248,6 +252,7 @@ def load_config(tome_dir: Path) -> TomeConfig:
         ],
         track=tracked,
         needful_tasks=needful_tasks,
+        prompt_injection_scan=prompt_injection_scan,
         paper_note_fields=paper_nf,
         file_note_fields=file_nf,
         sha256=sha,

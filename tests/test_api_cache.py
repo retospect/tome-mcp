@@ -5,9 +5,6 @@ from __future__ import annotations
 import json
 import time
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
-
-import pytest
 
 from tome import api_cache
 
@@ -47,12 +44,16 @@ class TestGetPut:
         assert result["paperId"] == "abc123"
 
     def test_put_with_url(self):
-        api_cache.put("crossref", "", "10.1/x", {"msg": "ok"}, url="https://api.crossref.org/works/10.1/x")
+        api_cache.put(
+            "crossref", "", "10.1/x", {"msg": "ok"}, url="https://api.crossref.org/works/10.1/x"
+        )
         env = api_cache.get_envelope("crossref", "", "10.1/x")
         assert env["url"] == "https://api.crossref.org/works/10.1/x"
 
     def test_put_pagination_metadata(self):
-        api_cache.put("s2", "citations", "abc", {"data": []}, pagination_exhausted=False, pages_fetched=1)
+        api_cache.put(
+            "s2", "citations", "abc", {"data": []}, pagination_exhausted=False, pages_fetched=1
+        )
         env = api_cache.get_envelope("s2", "citations", "abc")
         assert env["pagination_exhausted"] is False
         assert env["pages_fetched"] == 1

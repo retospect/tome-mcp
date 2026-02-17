@@ -27,3 +27,5 @@ htmlcov/
 
 # Tome cache (in consumer projects)
 .tome/
+.tome-mcp/
+/tome/

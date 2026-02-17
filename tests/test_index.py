@@ -187,10 +187,7 @@ class TestRebuildIndex:
         dot_tome.mkdir()
         idx = tmp_path / "main.idx"
         idx.write_text(
-            r"\indexentry{MOF}{12}"
-            "\n"
-            r"\indexentry{DNA}{88}"
-            "\n",
+            r"\indexentry{MOF}{12}" "\n" r"\indexentry{DNA}{88}" "\n",
             encoding="utf-8",
         )
         index = rebuild_index(idx, dot_tome)
