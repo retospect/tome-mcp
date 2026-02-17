@@ -3,9 +3,10 @@ description: Best practices for filing tool issues
 ---
 # Reporting Issues
 
-Use `report_issue(tool, description, severity)` when a Tome tool
+Use `guide(report='severity: description')` when a Tome tool
 behaves unexpectedly. Issues are stored in `tome/issues.md`
-(git-tracked) and surfaced in `paper()` and `set_root()`.
+(git-tracked) and surfaced in `set_root()`. Every tool response
+includes a `report` hint as a reminder.
 
 ## Before reporting
 
@@ -15,13 +16,12 @@ behaves unexpectedly. Issues are stored in `tome/issues.md`
 
 ## Writing the description
 
-Structure: **what you did → what happened → what you expected**.
+Structure: **severity: what you did → what happened → what you expected**.
 
-Good: "Called search(query='MOF conductivity', key='sheberla2014').
-Returned 0 results. Expected ≥1 hit — paper discusses conductivity
-on p.3."
+Good: `guide(report="major: paper(search=['MOF conductivity']) returned
+0 results. Expected ≥1 hit — sheberla2014 discusses conductivity on p.3.")`
 
-Bad: "search doesn't work for sheberla2014"
+Bad: `guide(report="search doesn't work")`
 
 ### Include
 - Exact tool name and arguments.

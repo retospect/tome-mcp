@@ -473,7 +473,7 @@ class TestGetPaper:
 
 class TestReindexRouting:
     def _call(self, **kwargs):
-        return json.loads(server.reindex.__wrapped__(**kwargs))
+        return json.loads(server.reindex(**kwargs))
 
     def test_default_scope_is_all(self, mock_store):
         mock_store["get_indexed_files"] = MagicMock(return_value={})
@@ -515,7 +515,7 @@ class TestReindexRouting:
 
 class TestNotesFileSummary:
     def _call(self, **kwargs):
-        return json.loads(server.notes.__wrapped__(**kwargs))
+        return json.loads(server.notes(**kwargs))
 
     def test_write_summary_fields(self, fake_project, monkeypatch):
         sections = fake_project / "sections"
@@ -668,7 +668,7 @@ class TestNotesFileSummary:
 
 class TestDiscoverRouting:
     def _call(self, **kwargs):
-        return json.loads(server.discover.__wrapped__(**kwargs))
+        return json.loads(server.discover(**kwargs))
 
     def test_no_args_returns_error(self):
         result = self._call()
@@ -754,7 +754,7 @@ class TestDiscoverRouting:
 
 class TestExploreRouting:
     def _call(self, **kwargs):
-        return json.loads(server.explore.__wrapped__(**kwargs))
+        return json.loads(server.explore(**kwargs))
 
     def test_no_args_routes_to_list(self, monkeypatch):
         monkeypatch.setattr(
@@ -854,7 +854,7 @@ class TestExploreRouting:
 
 class TestPaperRouting:
     def _call(self, **kwargs):
-        return json.loads(server.paper.__wrapped__(**kwargs))
+        return json.loads(server.paper(**kwargs))
 
     def test_no_args_routes_to_stats(self, monkeypatch):
         monkeypatch.setattr(
@@ -1042,7 +1042,7 @@ class TestPaperRouting:
 
 class TestDoiRouting:
     def _call(self, **kwargs):
-        return json.loads(server.doi.__wrapped__(**kwargs))
+        return json.loads(server.doi(**kwargs))
 
     def test_no_args_routes_to_batch_check(self, monkeypatch):
         monkeypatch.setattr(

@@ -146,8 +146,28 @@ project-root/
 | Tier | Data | Location | Recovery |
 |------|------|----------|----------|
 | Source of truth | PDFs, figure screenshots | Vault (`~/.tome-mcp/pdf/`), `tome/figures/` | Unrecoverable |
+| Self-contained archives | `.tome` HDF5 files | Vault (`~/.tome-mcp/tome/`) | Unrecoverable (contain text + embeddings) |
 | Authoritative metadata | Bibliography | `tome/references.bib` | Git rollback |
-| Derived cache | Everything else | `.tome/` | `tome:rebuild` |
+| Derived cache | Everything else | `.tome-mcp/` | Rebuildable from `.tome` archives |
+
+### `.tome` archives — HDF5, not zip
+
+Each ingested paper produces a `.tome` file in the vault. These are **HDF5 archives**
+(opened with `h5py`, not `zipfile`). Each archive is fully self-contained:
+
+```python
+import h5py, json
+f = h5py.File('~/.tome-mcp/tome/x/xu2022.tome', 'r')
+meta = json.loads(f['meta'][()])       # key, title, authors, year, doi, ...
+pages = f['pages'][:]                  # extracted page text (one string per page)
+chunks = f['chunks/texts'][:]          # chunked text for search
+embeds = f['chunks/embeddings'][:]     # (N, 384) float32 vectors
+f.attrs['content_hash']               # SHA256 of the source PDF
+f.attrs['embedding_model']            # "all-MiniLM-L6-v2"
+f.close()
+```
+
+All databases (catalog.db, ChromaDB) can be rebuilt from `.tome` files alone.
 
 ### `references.bib` — authoritative
 

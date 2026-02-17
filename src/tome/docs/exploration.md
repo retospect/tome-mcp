@@ -1,51 +1,32 @@
 ---
-description: "Citation beam search — explore, triage, expand"
+description: "Citation graph exploration with paper(search=[...])"
 ---
 # Citation Exploration
 
-LLM-guided iterative exploration of the citation graph using
-Semantic Scholar. Think of it as beam search over citations.
+Explore the citation graph using the `paper` tool's search bag.
 
 ## Workflow
 
-1. **Seed**: `explore(key="sheberla2014")` — fetches
-   citing papers with abstracts. Each call = 2 S2 API requests.
-   Results are cached (7-day TTL).
+1. **Who cites this paper**: `paper(search=['cited_by:sheberla2014'])`
+   Returns citing papers with metadata.
 
-2. **Triage**: Present results as a table. For each paper, decide:
-   - `relevant` — worth expanding further
-   - `irrelevant` — dead end, prune this branch
-   - `deferred` — possibly relevant, revisit later
+2. **What this paper cites**: `paper(search=['cites:sheberla2014'])`
+   Returns referenced papers.
 
-3. **Mark**: `explore(s2_id=..., relevance="relevant", note="rationale")`
-   for each paper. Batch the calls.
+3. **Online discovery**: `paper(search=['MOF conductivity', 'online'])`
+   Federated search across S2 + OpenAlex.
 
-4. **Expand**: Call `explore(s2_id=<relevant_id>,
-   parent_s2_id=<parent>, depth=<n+1>)` on relevant papers
-   to go deeper.
+4. **Read a result**: `paper(id='key')` for metadata, then
+   `paper(id='key:page1')` for content.
 
-5. **Repeat** until you've found what you need or branches
-   are exhausted.
-
-## Session continuity
-
-`explore()` (no args) shows the full exploration state:
-- What you've explored
-- What's marked relevant (expand next)
-- What's deferred (revisit later)
-- Use `explore(action="expandable")` to see only relevant nodes not yet expanded
+5. **Take notes**: `notes(on='key', title='Relevance', content='...')`
 
 ## Tips
 
-- Be **narrow** (few relevant) for pointed searches.
-- Be **broader** for survey-style exploration.
-- `explore(action="clear")` resets session state without affecting
-  the main citation tree or dismissed candidates.
-
-## Related discover() scopes
-
-- **`discover(scope="refresh", key="...")`** — Cache citation graphs from S2.
-  With key: one paper. Without: batch refresh stale papers (30+ day).
-- **`discover(scope="shared_citers", min_shared=2)`** — Find non-library papers
-  citing ≥N of your references. Merges cite_tree + S2AG local data.
-- **`explore(s2_id="...", action="dismiss")`** — Permanently hide a candidate.
+- Follow the **hints** in every response — they suggest the next
+  logical action.
+- Use `paper(search=['cited_by:key'])` to go forward in time
+  (who builds on this work).
+- Use `paper(search=['cites:key'])` to go backward (what informed
+  this work).
+- Combine with `notes` to build institutional memory as you explore.

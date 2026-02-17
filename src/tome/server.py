@@ -46,6 +46,8 @@ from tome import (
     config as tome_config,
 )
 from tome import file_meta as file_meta_mod
+from tome import hints as hints_mod
+from tome.id_parser import IdKind, parse_id
 from tome import (
     git_diff as git_diff_mod,
 )
@@ -539,7 +541,7 @@ def _paper_summary(entry) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool()
+
 def ingest(
     path: str = "",
     key: str = "",
@@ -1385,7 +1387,7 @@ def _paper_get(key: str, page: int = 0) -> str:
 # list_requests, stats have been folded into paper().
 
 
-@mcp_server.tool()
+
 def paper(
     key: str = "",
     page: int = 0,
@@ -1465,7 +1467,7 @@ def paper(
     return _paper_get(key=key, page=page)
 
 
-@mcp_server.tool()
+
 def notes(
     key: str = "",
     file: str = "",
@@ -2116,7 +2118,7 @@ def _doi_check(key: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool()
+
 def search(
     query: str,
     scope: Literal["all", "papers", "corpus", "notes"] = "all",
@@ -2537,7 +2539,7 @@ def _search_all(
 # Use toc(locate="cite", query="key") for find_cites behavior.
 
 
-@mcp_server.tool()
+
 def reindex(
     scope: str = "all",
     key: str = "",
@@ -3165,7 +3167,7 @@ def _discover_lookup(doi: str, s2_id: str) -> dict[str, Any]:
     return result
 
 
-@mcp_server.tool()
+
 def discover(
     query: str = "",
     key: str = "",
@@ -3318,7 +3320,7 @@ def _doi_fetch(key: str) -> str:
     )
 
 
-@mcp_server.tool()
+
 def cite_graph(key: str = "", s2_id: str = "") -> str:
     """Get citation graph (who cites this paper, what it cites) from Semantic Scholar.
     Flags papers already in the library.
@@ -3379,7 +3381,7 @@ def cite_graph(key: str = "", s2_id: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool()
+
 def figure(
     key: str = "",
     figure: str = "",
@@ -3812,7 +3814,7 @@ def _doi_resolve(doi_str: str) -> str:
     return json.dumps(result, indent=2)
 
 
-@mcp_server.tool()
+
 def doi(
     key: str = "",
     doi: str = "",
@@ -4053,7 +4055,7 @@ def _paper_stats() -> str:
     return json.dumps(result, indent=2)
 
 
-@mcp_server.tool()
+
 def guide(topic: str = "") -> str:
     """On-demand usage guides. START HERE for new sessions.
 
@@ -4108,7 +4110,7 @@ def _resolve_root(root: str) -> str:
     return tex_path
 
 
-@mcp_server.tool()
+
 def toc(
     root: str = "default",
     locate: Literal["heading", "cite", "label", "index", "tree"] = "heading",
@@ -4309,7 +4311,7 @@ def _toc_locate_tree(root: str = "default") -> str:
     return "\n".join(lines)
 
 
-@mcp_server.tool()
+
 def doc_lint(root: str = "default", file: str = "") -> str:
     """Lint the document for structural issues. Uses built-in patterns
     (labels, refs, cites) plus any custom patterns from tome/config.yaml.
@@ -4364,7 +4366,7 @@ def doc_lint(root: str = "default", file: str = "") -> str:
     )
 
 
-@mcp_server.tool()
+
 def review_status(root: str = "default", file: str = "") -> str:
     """Show tracked marker counts from tome/config.yaml patterns."""
     cfg = _load_config()
@@ -4425,7 +4427,7 @@ def review_status(root: str = "default", file: str = "") -> str:
     )
 
 
-@mcp_server.tool()
+
 def dep_graph(file: str, root: str = "default") -> str:
     """Show dependency graph for a .tex file."""
     cfg = _load_config()
@@ -4484,7 +4486,7 @@ def dep_graph(file: str, root: str = "default") -> str:
     )
 
 
-@mcp_server.tool()
+
 def validate_deep_cites(file: str = "", key: str = "") -> str:
     """Verify deep citation quotes against source paper text in ChromaDB."""
     cfg = _load_config()
@@ -4789,7 +4791,7 @@ def _explore_clear() -> dict[str, Any]:
     return {"action": "clear", "status": "cleared", "removed": count}
 
 
-@mcp_server.tool()
+
 def explore(
     key: str = "",
     s2_id: str = "",
@@ -4850,7 +4852,7 @@ def explore(
     )
 
 
-@mcp_server.tool()
+
 def report_issue(
     tool: str, description: str, severity: Literal["minor", "major", "blocker"] = "minor"
 ) -> str:
@@ -5067,9 +5069,14 @@ def set_root(path: str, test_vault_root: str = "") -> str:
             "Review and resolve by deleting entries or prefixing with [RESOLVED]."
         )
 
-    response["guide_hint"] = (
-        "Call guide('getting-started') for first-session orientation and tool group overview."
-    )
+    # v2 self-describing hints
+    response["hints"] = {
+        "guide": "guide(topic='getting-started')",
+        "search": "paper(search=['your query'])",
+        "toc": "doc()",
+        "ingest": "paper(path='inbox/filename.pdf')",
+        "report": hints_mod._REPORT_HINT,
+    }
 
     return json.dumps(response, indent=2)
 
@@ -5079,7 +5086,7 @@ def set_root(path: str, test_vault_root: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool()
+
 def needful(n: int = 10, file: str = "", task: str = "", note: str = "") -> str:
     """List the N most needful things, or mark a task as done.
 
@@ -5200,7 +5207,7 @@ def needful(n: int = 10, file: str = "", task: str = "", note: str = "") -> str:
     )
 
 
-@mcp_server.tool()
+
 def file_diff(file: str, task: str = "", base: str = "") -> str:
     """Show what changed in a file since the last review."""
     project = _project_root()
@@ -5233,7 +5240,7 @@ def file_diff(file: str, task: str = "", base: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp_server.tool()
+
 def link_paper(
     key: str = "",
     action: str = "",
@@ -5285,6 +5292,856 @@ def link_paper(
         return json.dumps({"status": "linked", "key": key})
     except Exception as e:
         return json.dumps({"error": str(e)})
+
+
+# ---------------------------------------------------------------------------
+# v2 API — Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _resolve_doi_to_key(doi_str: str) -> str | None:
+    """Scan the bib library for an entry matching this DOI. Returns key or None."""
+    try:
+        lib = _load_bib()
+    except (NoBibFile, Exception):
+        return None
+    for entry in lib.entries:
+        entry_doi = bib.entry_to_dict(entry).get("doi", "")
+        if entry_doi and entry_doi.strip().lower() == doi_str.strip().lower():
+            return entry.key
+    return None
+
+
+def _resolve_s2_to_key(s2_id: str) -> str | None:
+    """Scan the manifest for a paper with this S2 ID. Returns key or None."""
+    data = _load_manifest()
+    for key, meta in data.get("papers", {}).items():
+        if meta.get("s2_id") == s2_id:
+            return key
+    return None
+
+
+def _count_raw_pages(key: str) -> int:
+    """Count how many extracted page files exist for a key."""
+    raw_dir = _raw_dir() / key
+    if not raw_dir.exists():
+        return 0
+    return len(list(raw_dir.glob(f"{key}.p*.txt")))
+
+
+def _get_paper_figures(key: str) -> list[str]:
+    """Get list of figure labels for a paper from manifest."""
+    data = _load_manifest()
+    paper_meta = manifest.get_paper(data, key)
+    if paper_meta and paper_meta.get("figures"):
+        return list(paper_meta["figures"].keys())
+    return []
+
+
+def _get_paper_note_titles(key: str) -> list[str]:
+    """Get note titles for a paper (v2 free-form notes)."""
+    notes_dir = _tome_dir() / "notes_v2"
+    if not notes_dir.exists():
+        return []
+    pattern = f"{key}__*.yaml"
+    return [
+        p.stem.split("__", 1)[1] if "__" in p.stem else p.stem
+        for p in sorted(notes_dir.glob(pattern))
+    ]
+
+
+# ---------------------------------------------------------------------------
+# v2 API — paper()
+# ---------------------------------------------------------------------------
+
+
+@mcp_server.tool(name="paper")
+def paper_v2(
+    id: str = "",
+    search: list[str] | None = None,
+    path: str = "",
+    meta: str = "",
+    delete: bool = False,
+) -> str:
+    """Everything about research papers in the vault.
+
+    Routing is purely compositional — which params are present determines the operation.
+
+    id format: slug | DOI (has /) | S2 hash (40 hex) | slug:pageN | slug:figN
+    search: smart bag — keywords, 'cited_by:key', 'cites:key', '2020+', 'online'
+    path: ingest paper PDF or figure screenshot (context from id)
+    meta: JSON string for setting metadata (bib fields, caption, tags)
+    delete: remove paper or figure
+    """
+    return _route_paper(id=id, search=search, path=path, meta=meta, delete=delete)
+
+
+def _route_paper(
+    id: str = "",
+    search: list[str] | None = None,
+    path: str = "",
+    meta: str = "",
+    delete: bool = False,
+) -> str:
+    search = search or []
+
+    # --- No args → hints ---
+    if not id and not search and not path:
+        return hints_mod.response(
+            {"message": "paper() — manage your research library."},
+            hints={
+                "search": "paper(search=['your query'])",
+                "list": "paper(search=['*'])",
+                "ingest": "paper(path='inbox/filename.pdf')",
+                "guide": "guide(topic='paper')",
+            },
+        )
+
+    # --- Search ---
+    if search:
+        return _paper_v2_search(search)
+
+    # --- Path without id → propose ingest ---
+    if path and not id:
+        return _paper_v2_ingest_propose(path)
+
+    # --- id present: parse it ---
+    try:
+        parsed = parse_id(id)
+    except ValueError as exc:
+        return hints_mod.error(str(exc))
+
+    # --- DOI resolution ---
+    if parsed.kind == IdKind.DOI:
+        resolved_key = _resolve_doi_to_key(parsed.doi)
+        if resolved_key:
+            # Re-parse as slug for downstream routing
+            parsed = parse_id(resolved_key)
+        else:
+            # Not in vault — try online lookup
+            return _paper_v2_doi_lookup(parsed.doi, path=path, meta=meta, delete=delete)
+
+    # --- S2 hash resolution ---
+    if parsed.kind == IdKind.S2:
+        resolved_key = _resolve_s2_to_key(parsed.s2_id)
+        if resolved_key:
+            parsed = parse_id(resolved_key)
+        else:
+            return hints_mod.error(
+                f"No paper with S2 ID '{parsed.s2_id}' in vault.",
+                hints={"search": "paper(search=['...'])"},
+            )
+
+    # --- Delete ---
+    if delete:
+        if parsed.kind == IdKind.FIGURE:
+            return _paper_v2_delete_figure(parsed.slug, parsed.figure)
+        return _paper_v2_delete(parsed.paper_id)
+
+    # --- id + path → commit ingest or register figure ---
+    if path:
+        if parsed.kind == IdKind.FIGURE:
+            return _paper_v2_register_figure(parsed.slug, parsed.figure, path)
+        return _paper_v2_ingest_commit(parsed.paper_id, path, meta)
+
+    # --- id + meta → update metadata ---
+    if meta:
+        if parsed.kind == IdKind.FIGURE:
+            return _paper_v2_update_figure(parsed.slug, parsed.figure, meta)
+        return _paper_v2_update_meta(parsed.paper_id, meta)
+
+    # --- Page text ---
+    if parsed.kind == IdKind.PAGE:
+        return _paper_v2_get_page(parsed.slug, parsed.page)
+
+    # --- Figure info ---
+    if parsed.kind == IdKind.FIGURE:
+        return _paper_v2_get_figure(parsed.slug, parsed.figure)
+
+    # --- Default: paper metadata ---
+    return _paper_v2_get(parsed.paper_id)
+
+
+def _paper_v2_get(key: str) -> str:
+    """Get paper metadata with hints."""
+    try:
+        lib = _load_bib()
+        entry = bib.get_entry(lib, key)
+    except (PaperNotFound, NoBibFile) as exc:
+        return hints_mod.error(str(exc), hints={"search": "paper(search=['...'])"})
+
+    result = _paper_summary(entry)
+    result["id"] = key
+
+    # Figures
+    result["has_figures"] = _get_paper_figures(key)
+
+    # Notes (v2 titles)
+    note_titles = _get_paper_note_titles(key)
+    # Also check legacy notes
+    legacy_note = notes_mod.load_note(_tome_dir(), key)
+    if legacy_note:
+        note_titles = note_titles or ["(legacy notes)"]
+    result["has_notes"] = note_titles
+
+    # Page count
+    total_pages = _count_raw_pages(key)
+    result["pages"] = total_pages
+
+    # Manifest extras
+    data = _load_manifest()
+    paper_meta = manifest.get_paper(data, key)
+    if paper_meta:
+        result["s2_id"] = paper_meta.get("s2_id")
+        result["citation_count"] = paper_meta.get("citation_count")
+        result["abstract"] = paper_meta.get("abstract")
+
+    # Related papers (errata, retractions)
+    all_keys = set(bib.list_keys(lib))
+    related = notes_mod.find_related_keys(key, all_keys)
+    if related:
+        result["related_papers"] = related
+        retraction_children = [
+            r for r in related if r["relation"] == "retraction" and r["direction"] == "child"
+        ]
+        if retraction_children:
+            result["warning"] = (
+                "⚠ RETRACTED — retraction notice: "
+                + ", ".join(r["key"] for r in retraction_children)
+            )
+
+    h = hints_mod.paper_hints(key)
+    if total_pages > 0:
+        h["page"] = f"paper(id='{key}:page1')"
+    else:
+        h.pop("page", None)
+    if result["has_figures"]:
+        fig = result["has_figures"][0]
+        h["figure"] = f"paper(id='{key}:{fig}')"
+
+    return hints_mod.response(result, hints=h)
+
+
+def _paper_v2_get_page(key: str, page: int) -> str:
+    """Get page text for a paper."""
+    try:
+        text = extract.read_page(_raw_dir(), key, page)
+    except TextNotExtracted:
+        return hints_mod.error(
+            f"Text not extracted for '{key}'. Ingest or reindex first.",
+            hints={"view": f"paper(id='{key}')"},
+        )
+    except Exception as exc:
+        return hints_mod.error(str(exc))
+
+    total_pages = _count_raw_pages(key)
+    result = {"id": key, "page": page, "total_pages": total_pages, "text": text}
+    return hints_mod.response(result, hints=hints_mod.page_hints(key, page, total_pages))
+
+
+def _paper_v2_get_figure(slug: str, figure: str) -> str:
+    """Get figure info for a paper."""
+    data = _load_manifest()
+    paper_meta = manifest.get_paper(data, slug)
+    fig_data = {}
+    if paper_meta:
+        fig_data = paper_meta.get("figures", {}).get(figure, {})
+    if not fig_data:
+        return hints_mod.error(
+            f"No figure '{figure}' for paper '{slug}'.",
+            hints={
+                "register": f"paper(id='{slug}:{figure}', path='path/to/screenshot.png')",
+                "back": f"paper(id='{slug}')",
+            },
+        )
+    result = {"id": slug, "figure": figure, **fig_data}
+    return hints_mod.response(result, hints=hints_mod.figure_hints(slug, figure))
+
+
+def _paper_v2_search(search_terms: list[str]) -> str:
+    """Route search bag to the appropriate backend."""
+    # Check for special prefixes
+    for term in search_terms:
+        if term.startswith("cited_by:"):
+            key = term.split(":", 1)[1]
+            return _paper_v2_cited_by(key, search_terms)
+        if term.startswith("cites:"):
+            key = term.split(":", 1)[1]
+            return _paper_v2_cites(key, search_terms)
+
+    # Check for 'online' flag
+    online = "online" in search_terms
+    query_terms = [t for t in search_terms if t != "online" and not t.startswith("page:")]
+
+    # Extract pagination
+    page_offset = 0
+    for t in search_terms:
+        if t.startswith("page:"):
+            try:
+                page_offset = (int(t.split(":")[1]) - 1) * 20
+            except (ValueError, IndexError):
+                pass
+
+    query = " ".join(query_terms)
+    if not query or query == "*":
+        # List all papers — wrap legacy response with hints
+        raw = _paper_list(tags="", status="", page=1)
+        try:
+            result = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            result = {"raw": raw}
+        return hints_mod.response(result, hints=hints_mod.search_hints(search_terms))
+
+    if online:
+        # Federated search
+        try:
+            result = _discover_search(query, n=20)
+            return hints_mod.response(result, hints=hints_mod.search_hints(search_terms, has_more=len(result.get("results", [])) >= 20))
+        except Exception as exc:
+            return hints_mod.error(f"Online search failed: {exc}")
+
+    # Local vault search (semantic)
+    try:
+        raw = _search_papers(query, "semantic", "", "", "", 20, 0, page_offset)
+        result = json.loads(raw)
+        has_more = result.get("count", 0) >= 20
+        return hints_mod.response(result, hints=hints_mod.search_hints(search_terms, has_more=has_more))
+    except Exception as exc:
+        return hints_mod.error(f"Search failed: {exc}")
+
+
+def _paper_v2_cited_by(key: str, search_terms: list[str]) -> str:
+    """Citation graph: who cites this paper."""
+    try:
+        result = _discover_graph(key=key, doi="", s2_id="")
+        # Filter to citations only
+        citations = result.get("citations", [])
+        out = {
+            "seed": key,
+            "direction": "cited_by",
+            "results": citations,
+            "citations_count": result.get("citations_count", len(citations)),
+        }
+        return hints_mod.response(
+            out,
+            hints={
+                "reverse": f"paper(search=['cites:{key}'])",
+                **hints_mod.search_hints(search_terms, has_more=len(citations) >= 20),
+            },
+        )
+    except Exception as exc:
+        return hints_mod.error(f"Citation graph failed: {exc}")
+
+
+def _paper_v2_cites(key: str, search_terms: list[str]) -> str:
+    """Reference graph: what this paper cites."""
+    try:
+        result = _discover_graph(key=key, doi="", s2_id="")
+        references = result.get("references", [])
+        out = {
+            "seed": key,
+            "direction": "cites",
+            "results": references,
+            "references_count": result.get("references_count", len(references)),
+        }
+        return hints_mod.response(
+            out,
+            hints={
+                "reverse": f"paper(search=['cited_by:{key}'])",
+                **hints_mod.search_hints(search_terms, has_more=len(references) >= 20),
+            },
+        )
+    except Exception as exc:
+        return hints_mod.error(f"Reference graph failed: {exc}")
+
+
+def _paper_v2_ingest_propose(path_str: str) -> str:
+    """Propose ingest from inbox file."""
+    try:
+        pdf_path = _project_root() / path_str
+        result = _propose_ingest(pdf_path)
+        suggested = result.get("suggested_key", result.get("key", "unknown"))
+        return hints_mod.response(
+            result,
+            hints=hints_mod.ingest_propose_hints(suggested, path_str),
+        )
+    except Exception as exc:
+        return hints_mod.error(f"Ingest proposal failed: {exc}")
+
+
+def _paper_v2_ingest_commit(key: str, path_str: str, meta: str) -> str:
+    """Commit ingest: key chosen, optional meta overrides."""
+    try:
+        pdf_path = _project_root() / path_str
+        # Parse meta for tags/dois if provided
+        tags = ""
+        dois = ""
+        if meta:
+            try:
+                m = json.loads(meta)
+                tags = m.pop("tags", "")
+                dois = m.pop("dois", "")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+        result = _commit_ingest(pdf_path, key, tags, dois=dois)
+        return hints_mod.response(result, hints=hints_mod.ingest_commit_hints(key))
+    except Exception as exc:
+        return hints_mod.error(f"Ingest commit failed: {exc}")
+
+
+def _paper_v2_update_meta(key: str, meta_str: str) -> str:
+    """Update paper metadata from a JSON string."""
+    try:
+        m = json.loads(meta_str)
+    except json.JSONDecodeError:
+        return hints_mod.error(
+            f"meta must be valid JSON. Got: {meta_str[:100]}",
+            hints={"example": f"paper(id='{key}', meta='{{\"title\": \"New Title\"}}')"},
+        )
+
+    try:
+        result = _paper_set(
+            key=key,
+            title=m.get("title", ""),
+            author=m.get("author", ""),
+            year=m.get("year", ""),
+            journal=m.get("journal", ""),
+            doi=m.get("doi", ""),
+            tags=m.get("tags", ""),
+            entry_type=m.get("entry_type", "article"),
+            raw_field=m.get("raw_field", ""),
+            raw_value=m.get("raw_value", ""),
+        )
+        r = json.loads(result)
+        return hints_mod.response(r, hints={"view": f"paper(id='{key}')"})
+    except Exception as exc:
+        return hints_mod.error(str(exc))
+
+
+def _paper_v2_update_figure(slug: str, figure: str, meta_str: str) -> str:
+    """Update figure metadata (e.g. caption)."""
+    try:
+        m = json.loads(meta_str)
+    except json.JSONDecodeError:
+        return hints_mod.error("meta must be valid JSON.")
+
+    data = _load_manifest()
+    paper_meta = manifest.get_paper(data, slug) or {}
+    figs = paper_meta.get("figures", {})
+    fig_data = figs.get(figure, {})
+    fig_data.update(m)
+    figs[figure] = fig_data
+    paper_meta["figures"] = figs
+    manifest.set_paper(data, slug, paper_meta)
+    _save_manifest(data)
+
+    return hints_mod.response(
+        {"status": "updated", "id": slug, "figure": figure, "meta": fig_data},
+        hints=hints_mod.figure_hints(slug, figure),
+    )
+
+
+def _paper_v2_delete(key: str) -> str:
+    """Remove a paper and all associated data."""
+    try:
+        result = json.loads(_paper_remove(key))
+        return hints_mod.response(result, hints={"search": "paper(search=['...'])"})
+    except Exception as exc:
+        return hints_mod.error(str(exc))
+
+
+def _paper_v2_delete_figure(slug: str, figure: str) -> str:
+    """Remove a single figure from a paper."""
+    data = _load_manifest()
+    paper_meta = manifest.get_paper(data, slug) or {}
+    figs = paper_meta.get("figures", {})
+    if figure in figs:
+        del figs[figure]
+        paper_meta["figures"] = figs
+        manifest.set_paper(data, slug, paper_meta)
+        _save_manifest(data)
+    return hints_mod.response(
+        {"status": "deleted", "id": slug, "figure": figure},
+        hints={"back": f"paper(id='{slug}')"},
+    )
+
+
+def _paper_v2_register_figure(slug: str, figure: str, path_str: str) -> str:
+    """Register a figure screenshot for a paper."""
+    data = _load_manifest()
+    paper_meta = manifest.get_paper(data, slug) or {}
+    figs = paper_meta.get("figures", {})
+    figs[figure] = {"path": path_str, "status": "captured"}
+    paper_meta["figures"] = figs
+    manifest.set_paper(data, slug, paper_meta)
+    _save_manifest(data)
+
+    return hints_mod.response(
+        {"status": "figure_ingested", "id": slug, "figure": figure, "path": path_str},
+        hints=hints_mod.figure_hints(slug, figure),
+    )
+
+
+def _paper_v2_doi_lookup(doi_str: str, path: str = "", meta: str = "", delete: bool = False) -> str:
+    """DOI not in vault — lookup online, or ingest if path provided."""
+    if path:
+        # User is ingesting with a DOI hint
+        return _paper_v2_ingest_propose_with_doi(doi_str, path, meta)
+
+    # Online lookup
+    try:
+        result = _discover_lookup(doi_str, "")
+        result["in_vault"] = False
+        return hints_mod.response(
+            result,
+            hints={
+                "ingest": f"paper(id='{doi_str}', path='inbox/filename.pdf')",
+            },
+        )
+    except Exception as exc:
+        return hints_mod.error(f"DOI lookup failed: {exc}")
+
+
+def _paper_v2_ingest_propose_with_doi(doi_str: str, path_str: str, meta: str) -> str:
+    """Propose ingest with a DOI as the id hint."""
+    try:
+        pdf_path = _project_root() / path_str
+        result = _propose_ingest(pdf_path, dois=doi_str)
+        suggested = result.get("suggested_key", "unknown")
+        return hints_mod.response(
+            result,
+            hints=hints_mod.ingest_propose_hints(suggested, path_str),
+        )
+    except Exception as exc:
+        return hints_mod.error(f"Ingest proposal failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# v2 API — notes()
+# ---------------------------------------------------------------------------
+
+
+def _notes_v2_dir() -> Path:
+    """Return the v2 notes directory, creating it if needed."""
+    d = _tome_dir() / "notes_v2"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def _notes_v2_safe_on(on: str) -> str:
+    """Sanitize the 'on' identifier for use in filenames."""
+    return re.sub(r"[^\w\s.-]", "_", on).strip()[:80]
+
+
+def _notes_v2_path(on: str, title: str) -> Path:
+    """Return the file path for a specific note."""
+    safe_on = _notes_v2_safe_on(on)
+    safe_title = re.sub(r"[^\w\s-]", "", title).strip().replace(" ", "_")[:80]
+    return _notes_v2_dir() / f"{safe_on}__{safe_title}.yaml"
+
+
+@mcp_server.tool(name="notes")
+def notes_v2(
+    on: str = "",
+    title: str = "",
+    content: str = "",
+    delete: bool = False,
+) -> str:
+    """Read, write, or delete notes on papers or files.
+
+    on: slug, DOI, or tex filename — auto-detected
+    title: note title
+    content: note body (omit to read)
+    delete: delete this note
+    """
+    return _route_notes(on=on, title=title, content=content, delete=delete)
+
+
+def _route_notes(
+    on: str = "",
+    title: str = "",
+    content: str = "",
+    delete: bool = False,
+) -> str:
+    import yaml
+
+    # --- No args → hints ---
+    if not on:
+        return hints_mod.response(
+            {"message": "notes() — read, write, or delete notes."},
+            hints={
+                "example_read": "notes(on='smith2024')",
+                "example_write": "notes(on='smith2024', title='Summary', content='...')",
+                "guide": "guide(topic='notes')",
+            },
+        )
+
+    # Auto-detect DOI → resolve to slug (DOIs start with "10.")
+    if "/" in on and on.startswith("10."):
+        resolved = _resolve_doi_to_key(on)
+        if resolved:
+            on = resolved
+        else:
+            return hints_mod.error(f"No paper with DOI '{on}' in vault.")
+
+    # --- Delete ---
+    if delete:
+        if title:
+            # Delete specific note
+            note_path = _notes_v2_path(on, title)
+            if note_path.exists():
+                note_path.unlink()
+            return hints_mod.response(
+                {"status": "deleted", "on": on, "title": title},
+                hints=hints_mod.notes_list_hints(on),
+            )
+        else:
+            # Delete ALL notes for this paper/file
+            notes_dir = _notes_v2_dir()
+            deleted = 0
+            for p in notes_dir.glob(f"{_notes_v2_safe_on(on)}__*.yaml"):
+                p.unlink()
+                deleted += 1
+            return hints_mod.response(
+                {"status": "deleted", "on": on, "deleted_count": deleted},
+                hints={"paper": f"paper(id='{on}')"},
+            )
+
+    # --- Write ---
+    if title and content:
+        note_path = _notes_v2_path(on, title)
+        note_data = {"title": title, "content": content, "on": on}
+        note_path.write_text(yaml.dump(note_data, default_flow_style=False), encoding="utf-8")
+        return hints_mod.response(
+            {"status": "saved", "on": on, "title": title},
+            hints={
+                "read": f"notes(on='{on}', title='{title}')",
+                "paper": f"paper(id='{on}')",
+            },
+        )
+
+    # --- Read specific note ---
+    if title:
+        note_path = _notes_v2_path(on, title)
+        if not note_path.exists():
+            return hints_mod.error(
+                f"No note titled '{title}' for '{on}'.",
+                hints={
+                    "create": f"notes(on='{on}', title='{title}', content='...')",
+                    "list": f"notes(on='{on}')",
+                },
+            )
+        note_data = yaml.safe_load(note_path.read_text(encoding="utf-8"))
+        return hints_mod.response(
+            {"on": on, "title": title, "content": note_data.get("content", "")},
+            hints={
+                "edit": f"notes(on='{on}', title='{title}', content='updated...')",
+                "delete": f"notes(on='{on}', title='{title}', delete=true)",
+            },
+        )
+
+    # --- List notes for this paper/file ---
+    notes_dir = _notes_v2_dir()
+    notes_list = []
+    for p in sorted(notes_dir.glob(f"{_notes_v2_safe_on(on)}__*.yaml")):
+        try:
+            d = yaml.safe_load(p.read_text(encoding="utf-8"))
+            notes_list.append({"title": d.get("title", p.stem), "preview": d.get("content", "")[:80]})
+        except Exception:
+            notes_list.append({"title": p.stem, "preview": "(unreadable)"})
+
+    return hints_mod.response(
+        {"on": on, "notes": notes_list},
+        hints=hints_mod.notes_list_hints(on),
+    )
+
+
+# ---------------------------------------------------------------------------
+# v2 API — doc()
+# ---------------------------------------------------------------------------
+
+
+@mcp_server.tool()
+def doc(
+    root: str = "default",
+    search: list[str] | None = None,
+    context: str = "",
+    page: int = 1,
+) -> str:
+    """Navigate and search the document you're writing.
+
+    root: root tex file or named root (also scopes to a single file)
+    search: smart search list — keywords, labels, cites, filenames, semantic
+    context: how much to return: '3'=±3 paras, '+5'=5 after, '500c'=±500 chars
+    page: result page (pagination)
+    """
+    return _route_doc(root=root, search=search, context=context, page=page)
+
+
+def _route_doc(
+    root: str = "default",
+    search: list[str] | None = None,
+    context: str = "",
+    page: int = 1,
+) -> str:
+    search = search or []
+
+    # --- No args → TOC + hints ---
+    if not search:
+        try:
+            root_tex = _resolve_root(root)
+            toc_text = toc_mod.build_toc(_project_root(), root_tex)
+            toc_text = _paginate_toc(toc_text, page)
+            return hints_mod.response(
+                {"toc": toc_text},
+                hints=hints_mod.doc_hints(),
+            )
+        except Exception as exc:
+            return hints_mod.error(str(exc), hints=hints_mod.doc_hints())
+
+    # --- Smart search ---
+    return _doc_smart_search(search, root, context, page)
+
+
+def _doc_smart_search(search_terms: list[str], root: str, context: str, page: int) -> str:
+    """Route search terms to the appropriate search backend."""
+    results = []
+
+    for term in search_terms:
+        # Detect: cite key (looks like a bib key used in \cite{})
+        if re.match(r"^[a-z][a-z0-9_-]*\d{4}", term, re.IGNORECASE) and not term.startswith("%"):
+            cite_result = _toc_locate_cite(term, root)
+            results.append({"term": term, "type": "cite", "matches": cite_result})
+            continue
+
+        # Detect: label (\label{...} or starts with label-like prefix)
+        if term.startswith("\\label{") or term.startswith("\\ref{"):
+            label_prefix = term.replace("\\label{", "").replace("\\ref{", "").rstrip("}")
+            label_result = _toc_locate_label(label_prefix)
+            results.append({"term": term, "type": "label", "matches": label_result})
+            continue
+
+        # Detect: file path (contains .tex)
+        if ".tex" in term:
+            # Show TOC for that file
+            try:
+                root_tex = _resolve_root(term)
+                toc_text = toc_mod.build_toc(_project_root(), root_tex)
+                results.append({"term": term, "type": "file", "matches": toc_text})
+            except Exception as exc:
+                results.append({"term": term, "type": "file", "matches": str(exc)})
+            continue
+
+        # Detect: marker/pattern search (starts with % or \)
+        if term.startswith("%") or term.startswith("\\"):
+            grep_result = _search_corpus_exact(term, "", _parse_context_paras(context))
+            results.append({"term": term, "type": "marker", "matches": grep_result})
+            continue
+
+        # Default: semantic search over corpus
+        try:
+            paras = _parse_context_paras(context)
+            raw = _search_corpus(term, "semantic", "", False, False, 20, paras)
+            corpus_result = json.loads(raw)
+            results.append({"term": term, "type": "semantic", "matches": corpus_result})
+        except Exception as exc:
+            results.append({"term": term, "type": "semantic", "matches": str(exc)})
+
+    out = {"results": results, "search": search_terms}
+    h = {"back": "doc()"}
+    if context:
+        h["more_context"] = f"doc(search={search_terms!r}, context='{_bump_context(context)}')"
+    return hints_mod.response(out, hints=h)
+
+
+def _parse_context_paras(context: str) -> int:
+    """Parse context string to paragraph count (simple case only)."""
+    if not context:
+        return 0
+    # Strip c suffix for chars (not yet implemented, fall back to 0)
+    if "c" in context:
+        return 0
+    try:
+        return abs(int(context.strip().lstrip("+-")))
+    except ValueError:
+        return 0
+
+
+def _bump_context(context: str) -> str:
+    """Increase context for the 'more_context' hint."""
+    if not context:
+        return "3"
+    try:
+        n = abs(int(context.strip().lstrip("+-")))
+        return str(n + 2)
+    except ValueError:
+        return context
+
+
+# ---------------------------------------------------------------------------
+# v2 API — guide()
+# ---------------------------------------------------------------------------
+
+
+@mcp_server.tool(name="guide")
+def guide_v2(topic: str = "", report: str = "") -> str:
+    """Usage guides and issue reporting.
+
+    topic: guide topic or tool name
+    report: free-text issue report (e.g. 'major: search returns dupes')
+    """
+    return _route_guide(topic=topic, report=report)
+
+
+def _route_guide(topic: str = "", report: str = "") -> str:
+    # --- Report ---
+    if report:
+        try:
+            # Parse severity from prefix if present
+            severity = "minor"
+            description = report
+            for sev in ("blocker:", "major:", "minor:"):
+                if report.lower().startswith(sev):
+                    severity = sev.rstrip(":")
+                    description = report[len(sev):].strip()
+                    break
+            issues_mod.append_issue(_tome_dir(), "api", description, severity)
+            return hints_mod.response(
+                {"status": "reported", "severity": severity},
+                hints={"guides": "guide()"},
+            )
+        except Exception as exc:
+            return hints_mod.error(f"Failed to file report: {exc}")
+
+    # --- Topic ---
+    if topic:
+        try:
+            text = guide_mod.get_topic(_project_root(), topic)
+            return hints_mod.response(
+                {"topic": topic, "guide": text},
+                hints={"index": "guide()"},
+            )
+        except Exception:
+            return hints_mod.error(
+                f"No guide for topic '{topic}'.",
+                hints={"index": "guide()"},
+            )
+
+    # --- No args → topic index ---
+    try:
+        topic_list = guide_mod.list_topics(_project_root())
+        topics = [t["slug"] for t in topic_list]
+    except Exception:
+        topics = ["getting-started", "paper", "notes", "doc", "search", "ingest"]
+
+    return hints_mod.response(
+        {"topics": topics},
+        hints={
+            "start": "guide(topic='getting-started')",
+            "paper_help": "guide(topic='paper')",
+            "doc_help": "guide(topic='doc')",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

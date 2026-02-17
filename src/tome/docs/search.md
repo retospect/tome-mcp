@@ -1,5 +1,5 @@
 ---
-description: "Unified search and toc — two tools for all finding/navigating"
+description: "Search papers and documents with paper() and doc()"
 ---
 # Search Workflow
 
@@ -7,133 +7,103 @@ description: "Unified search and toc — two tools for all finding/navigating"
 
 All content search and structural navigation is handled by two tools:
 
-- **`search`** — find content (ranked results)
-- **`toc`** — navigate structure (hierarchical tree or structural lookups)
+- **`paper(search=[...])`** — find papers (semantic, citation graph, online)
+- **`doc(search=[...])`** — find content in your LaTeX document (TOC, labels, cites, markers, semantic)
 
-## search(query, scope, mode, ...)
+## paper(search=[...])
 
-| scope | mode=semantic | mode=exact |
-|-------|---------------|------------|
-| `all` | Both collections merged by distance | Grep both PDFs + .tex |
-| `papers` | ChromaDB paper chunks | Normalized grep over raw PDF text |
-| `corpus` | ChromaDB corpus chunks | Normalized match in .tex source |
-| `notes` | Paper notes only (ChromaDB) | — |
+The `search` parameter is a smart bag — keywords plus optional modifiers:
 
-**Filters** (apply to relevant scopes):
-- `key`, `keys`, `tags` — restrict to specific papers (papers/notes)
-- `paths` — glob pattern for .tex files (corpus)
-- `labels_only`, `cites_only` — metadata filters (corpus, semantic)
-- `context` — chars (papers) or lines (corpus) for exact mode
-- `paragraphs` — cleaned paragraph output (papers, exact, single key)
+| Modifier | Effect |
+|----------|--------|
+| plain keywords | Semantic search across vault papers |
+| `online` | Include S2 + OpenAlex federated results |
+| `cited_by:key` | Who cites this paper |
+| `cites:key` | What this paper cites |
+| `*` | List all papers |
+| `page:N` | Result pagination |
 
-## toc(locate, query, ...)
+## doc(search=[...])
 
-| locate | query meaning | replaces |
-|--------|---------------|----------|
-| `heading` | Substring filter on heading text | old `toc` |
-| `cite` | Bib key to find | old `find_cites` |
-| `label` | Label prefix filter (e.g. 'fig:') | old `list_labels` |
-| `index` | Search term (empty = list all) | old `search_doc_index` / `list_doc_index` |
-| `tree` | (ignored) | old `doc_tree` |
+The `search` parameter auto-detects term type:
+
+| Term pattern | Detection | Example |
+|--------------|-----------|---------|
+| `key2024...` | Citation key → find `\cite{key}` | `doc(search=['xu2022'])` |
+| `\label{...}` / `\ref{...}` | Label → find definition | `doc(search=['\label{fig:'])` |
+| `sections/file.tex` | File → show TOC for that file | `doc(search=['sections/intro.tex'])` |
+| `%TODO`, `\fixme` | Marker → grep for pattern | `doc(search=['%TODO'])` |
+| other text | Semantic search over corpus | `doc(search=['molecular switching'])` |
+
+Use `context` parameter to control surrounding text: `'3'`=±3 paragraphs.
 
 ## Mandatory search order
 
-1. **`search(query)`** — searches everything (scope='all'). **Always first.**
-2. Narrow with `scope='papers'` or `scope='corpus'` if needed.
-3. Switch to `mode='exact'` for quote verification.
-4. **Semantic Scholar** (`discover(query=...)`, `discover(key=...)`) — citation expansion.
-5. **Perplexity** (`perplexity_ask`) — broad discovery.
+1. **`paper(search=['query'])`** — vault search. **Always first.**
+2. **`doc(search=['query'])`** — find in .tex source.
+3. **`paper(search=['query', 'online'])`** — federated online search.
+4. **Perplexity** (`perplexity_ask`) — broad discovery.
 
 ## Examples
 
-### search — find content
+### paper — find papers
 
 ```python
-# Semantic search across everything (default)
-search("molecular switching")
+# Semantic search across all vault papers
+paper(search=['molecular switching'])
 
-# Restrict to one paper
-search("conductance bistability", scope="papers", key="xu2022")
+# Federated search (S2 + OpenAlex)
+paper(search=['MOF conductivity', 'online'])
 
-# Multiple papers by key
-search("NDR peak", scope="papers", keys="li2019b,yin2025")
+# Citation graph — who cites this paper
+paper(search=['cited_by:xu2022'])
 
-# All papers tagged "assembly"
-search("face code", scope="papers", tags="assembly")
+# Citation graph — what this paper cites
+paper(search=['cites:xu2022'])
 
-# Search .tex project files only
-search("functionally complete", scope="corpus")
-
-# Corpus: only chunks containing \label{}
-search("introduction", scope="corpus", labels_only=True)
-
-# Corpus: only chunks containing \cite{}
-search("self-assembly", scope="corpus", cites_only=True)
-
-# Search notes only
-search("limitations", scope="notes")
-search("retraction", scope="notes", key="chen2023")
-
-# Exact match — verify a quote in a paper's PDF text
-search("2.1 nm channel", scope="papers", mode="exact", key="sheberla2014")
-
-# Exact match — get cleaned paragraphs around the hit
-search("peak-to-valley ratio", scope="papers", mode="exact",
-       key="yin2025", paragraphs=1)
-
-# Exact match — find text in .tex source (PDF copy-paste)
-search("functionally complete", scope="corpus", mode="exact")
-
-# Exact match — both PDFs and .tex at once
-search("nanoparticle synthesis", scope="all", mode="exact")
+# List all papers
+paper(search=['*'])
 ```
 
-### toc — navigate structure
+### doc — find in document
 
 ```python
-# Show table of contents (default)
-toc()
-
-# Filter headings by text
-toc(query="assembly")
-
-# Show only section-level depth
-toc(depth="section")
+# Show table of contents
+doc()
 
 # Find where a paper is cited
-toc(locate="cite", query="xu2022")
+doc(search=['xu2022'])
 
-# List all labels
-toc(locate="label")
+# Find TODO markers
+doc(search=['%TODO'])
 
-# Labels with prefix filter
-toc(locate="label", query="fig:")
+# Semantic search in .tex source
+doc(search=['functionally complete'])
 
-# Search back-of-book index
-toc(locate="index", query="molecular switch")
+# Search with context
+doc(search=['self-assembly'], context='3')
 
-# List all index terms
-toc(locate="index")
-
-# Show ordered file tree
-toc(locate="tree")
+# Multiple search terms
+doc(search=['%TODO', '\fixme', 'PLACEHOLDER'])
 ```
 
 ### paper — retrieve metadata + content
 
 ```python
-# Metadata + notes (notes always included)
-paper(key="xu2022")
+# Metadata + has_figures + has_notes
+paper(id='xu2022')
 
-# Include raw text of page 3
-paper(key="xu2022", page=3)
+# Read page 3 text
+paper(id='xu2022:page3')
+
+# View a figure
+paper(id='xu2022:fig1')
 ```
 
 ## Tips
 
-- `scope='all'` merges paper and corpus results sorted by distance.
-- `mode='exact'` normalizes ligatures, smart quotes, and hyphenation —
-  ideal for verifying copy-pasted quotes from compiled PDFs.
-- `paragraphs=N` requires a single `key` and `mode='exact'`.
-- `toc(locate='cite')` requires `query` (the bib key to find).
-- `paper(key=...)` always includes notes — no separate `get_notes` needed.
+- Every response includes **hints** for next actions — follow them.
+- `paper(search=['*'])` lists all papers with pagination.
+- `doc()` with no search shows the table of contents.
+- Use `context` in `doc()` to get surrounding paragraphs.
+- `paper(id='key')` shows `has_notes` — check before adding duplicate notes.

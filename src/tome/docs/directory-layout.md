@@ -16,7 +16,55 @@ Tome uses two directories at the project root:
 | `tome/config.yaml` | Project configuration |
 | `tome/issues.md` | LLM-reported tool issues |
 
-## `.tome/` — gitignored cache (always rebuildable)
+## `~/.tome-mcp/` — shared vault (cross-project)
+
+The vault stores paper data shared across all projects:
+
+| Path | Contents |
+|------|----------|
+| `~/.tome-mcp/pdf/<shard>/` | Original PDFs (sharded by first letter of key) |
+| `~/.tome-mcp/tome/<shard>/` | `.tome` archives (sharded same way) |
+| `~/.tome-mcp/chroma/` | ChromaDB vector database |
+| `~/.tome-mcp/catalog.db` | SQLite catalog of all papers |
+| `~/.tome-mcp/cache/` | API response cache (S2, CrossRef, OpenAlex) |
+
+### `.tome` files are HDF5 archives
+
+`.tome` files are **HDF5** (not zip/gzip). Each archive is fully
+self-contained — you can rebuild all databases from the `.tome`
+files alone.
+
+Inspect with `h5py`:
+
+```python
+import h5py, json
+
+f = h5py.File('~/.tome-mcp/tome/x/xu2022.tome', 'r')
+
+# Metadata
+meta = json.loads(f['meta'][()])
+print(meta['key'], meta['title'])
+
+# Pages
+print(f'Pages: {len(f["pages"])}')
+print(f'Page 1: {f["pages"][0][:200]}...')  # first 200 chars
+
+# Embeddings
+if 'chunks' in f:
+    print(f'Chunks: {len(f["chunks/texts"])}')
+    print(f'Embedding shape: {f["chunks/embeddings"].shape}')  # (N, 384)
+
+# Archive attributes
+print(f'Format: {f.attrs["format_version"]}')
+print(f'Hash: {f.attrs["content_hash"]}')
+print(f'Model: {f.attrs["embedding_model"]}')
+
+f.close()
+```
+
+**Do not open `.tome` files with `zipfile`** — they are HDF5, not zip.
+
+## `.tome-mcp/` — gitignored project cache (always rebuildable)
 
 | Path | Contents |
 |------|----------|
@@ -52,9 +100,9 @@ BibTeX ignores unknown fields — Tome uses them for tracking:
 - `x-doi-status = {valid|unchecked|rejected|missing}`
 - `x-tags = {tag1, tag2}` — Comma-separated tags
 
-### Rebuilding `.tome/`
-If cache becomes corrupt: `reindex(scope="papers")` re-extracts text, re-embeds,
-and rebuilds ChromaDB from vault archives and `tome/references.bib`.
+### Rebuilding
+If the project cache becomes corrupt, delete `.tome-mcp/` and re-run
+`set_root` — it rebuilds from the vault `.tome` archives.
 
-**Never edit files in `.tome/` directly.** Everything under `.tome/`
-is auto-generated and rebuildable from `tome/`.
+**Never edit files in `.tome-mcp/` or `~/.tome-mcp/` directly.**
+Everything is auto-generated and rebuildable.

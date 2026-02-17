@@ -1,0 +1,123 @@
+"""Self-describing response builder for the v2 API.
+
+Every response includes contextual ``hints`` showing the LLM what to do next,
+plus a persistent ``report`` hint for UX telemetry.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+_REPORT_HINT = "If this wasn't helpful: guide(report='describe what you expected')"
+
+
+def response(data: dict[str, Any], hints: dict[str, str] | None = None) -> str:
+    """Build a JSON response with self-describing hints.
+
+    Args:
+        data: The response payload.
+        hints: Optional contextual hints (next actions).
+
+    Returns:
+        JSON string with ``hints`` appended (including the report hint).
+    """
+    if hints:
+        hints["report"] = _REPORT_HINT
+        data["hints"] = hints
+    else:
+        data["hints"] = {"report": _REPORT_HINT}
+    return json.dumps(data, indent=2)
+
+
+def error(message: str, hints: dict[str, str] | None = None) -> str:
+    """Build a JSON error response with hints.
+
+    Args:
+        message: The error message.
+        hints: Optional hints for recovery.
+
+    Returns:
+        JSON string with ``error`` key and hints.
+    """
+    return response({"error": message}, hints=hints)
+
+
+def paper_hints(slug: str) -> dict[str, str]:
+    """Standard hints for a paper metadata response."""
+    return {
+        "page": f"paper(id='{slug}:page1')",
+        "cited_by": f"paper(search=['cited_by:{slug}'])",
+        "cites": f"paper(search=['cites:{slug}'])",
+        "notes": f"notes(on='{slug}')",
+        "update": f"paper(id='{slug}', meta={{...}})",
+        "delete": f"paper(id='{slug}', delete=true)",
+    }
+
+
+def page_hints(slug: str, page: int, total_pages: int) -> dict[str, str]:
+    """Hints for a page text response."""
+    h: dict[str, str] = {"back": f"paper(id='{slug}')"}
+    if page < total_pages:
+        h["next_page"] = f"paper(id='{slug}:page{page + 1}')"
+    if page > 1:
+        h["prev_page"] = f"paper(id='{slug}:page{page - 1}')"
+    return h
+
+
+def figure_hints(slug: str, figure: str) -> dict[str, str]:
+    """Hints for a figure response."""
+    return {
+        "set_caption": f"paper(id='{slug}:{figure}', meta={{caption: '...'}})",
+        "delete": f"paper(id='{slug}:{figure}', delete=true)",
+        "back": f"paper(id='{slug}')",
+    }
+
+
+def search_hints(query_terms: list[str], has_more: bool = False) -> dict[str, str]:
+    """Hints for a search response."""
+    terms_str = ", ".join(f"'{t}'" for t in query_terms)
+    h: dict[str, str] = {}
+    if has_more:
+        h["next"] = f"paper(search=[{terms_str}, 'page:2'])"
+    return h
+
+
+def ingest_propose_hints(suggested_id: str, path: str) -> dict[str, str]:
+    """Hints after an ingest proposal."""
+    return {
+        "confirm": f"paper(id='{suggested_id}', path='{path}')",
+        "confirm_with_edits": f"paper(id='{suggested_id}', path='{path}', meta={{...}})",
+    }
+
+
+def ingest_commit_hints(slug: str) -> dict[str, str]:
+    """Hints after a successful ingest commit."""
+    return {
+        "view": f"paper(id='{slug}')",
+        "add_notes": f"notes(on='{slug}', title='...', content='...')",
+    }
+
+
+def notes_list_hints(on: str) -> dict[str, str]:
+    """Hints for a notes list response."""
+    return {
+        "create": f"notes(on='{on}', title='...', content='...')",
+        "paper": f"paper(id='{on}')",
+    }
+
+
+def doc_hints() -> dict[str, str]:
+    """Hints for no-args doc() call."""
+    return {
+        "search": "doc(search=['your query'])",
+        "find_todos": "doc(search=['%TODO'])",
+        "find_cites": "doc(search=['smith2024'])",
+    }
+
+
+def no_args_hints(tool: str) -> dict[str, str]:
+    """Hints when a tool is called with no arguments."""
+    return {
+        "guide": f"guide(topic='{tool}')",
+    }

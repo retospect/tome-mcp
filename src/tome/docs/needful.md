@@ -1,54 +1,33 @@
 ---
-description: Task tracking, scoring, mark-done cycle
+description: Task tracking and review workflow
 ---
-# Needful System
+# Task Tracking
 
-The needful system tracks recurring tasks (reviews, syncs, summaries)
-and ranks them by urgency so you always know what to work on next.
+With the v2 API, task tracking is managed through the LLM's context
+window rather than a dedicated tool. Use `doc()` and `notes()` for
+review workflows.
+
+## Review workflow
+
+1. **`doc()`** — See document structure.
+2. **`doc(search=['%TODO', '\fixme'])`** — Find remaining markers.
+3. Do the work (review, verify citations, fix issues).
+4. **Commit** your changes to git.
+5. **`notes(on='sections/file.tex', title='Review', content='Reviewed on date. Fixed X, Y.')`**
 
 ## Configuration
 
-Define tasks in `tome/config.yaml` under `needful:`:
+Define tracked patterns in `tome/config.yaml` under `track:`:
 
 ```yaml
-needful:
-  tasks:
-    - name: review_pass_a
-      globs: ["sections/*.tex"]
-      cadence: 168h          # weekly
-    - name: reindex_corpus
-      globs: ["sections/*.tex", "appendix/*.tex"]
-      cadence: 0             # hash-only (re-do when file changes)
+track:
+  - name: todo
+    pattern: '%\s*TODO'
+  - name: fixme
+    pattern: '\\fixme'
+  - name: review_finding
+    pattern: '\\mrev\{([^}]+)\}\{([^}]+)\}\{([^}]+)\}'
+    groups: [id, severity, text]
 ```
 
-- **`cadence: Nh`** — Task becomes due N hours after last completion.
-- **`cadence: 0`** — Task is due only when the file's content changes.
-
-## Tools
-
-- **`needful(n=10)`** — List the N most urgent items, ranked by score.
-- **`needful(task, file, note="")`** — Mark a task as done on a file.
-
-## Scoring (higher = more needful)
-
-| Condition | Score |
-|-----------|-------|
-| Never done | 1000.0 |
-| File changed since last done | 100.0 + time_ratio |
-| Time overdue (cadence > 0) | hours_elapsed / cadence_hours |
-| Up to date | 0 (excluded from results) |
-
-## Workflow
-
-1. Call `needful()` to see what's most urgent.
-2. Do the work (review, sync, summarize, etc.).
-3. **Commit your changes** to git.
-4. Call `needful(task=task, file=file)` — this snapshots the git SHA.
-5. Future `needful()` calls use the SHA for diff targeting.
-
-## Diff targeting
-
-Each mark-done stores the git HEAD SHA. On subsequent reviews,
-use `file_diff(file, task=task_name)` to see only what changed
-since the last review — focus on modified paragraphs instead of
-re-reading the entire file.
+Use `doc(search=['%TODO'])` to find all occurrences.

@@ -1,0 +1,114 @@
+% tome-deepcite.sty — Deep-citation macros for use with Tome MCP
+%
+% Provides five macros that Tome's validate_deep_cites tool recognises:
+%
+%   \mciteboxp{key}{page}{quote}   Block quote with page number
+%   \mcitebox{key}{quote}          Block quote (no page)
+%   \citeqp{key}{page}{quote}      Inline quote with page number
+%   \citeq{key}{quote}             Inline quote (no page)
+%   \citeqm{key}{quote}            Inline quote, source in margin note
+%
+% SETUP — add to your preamble:
+%
+%   \usepackage{tome-deepcite}          % footnotes on (default)
+%   \usepackage[nofootnotes]{tome-deepcite}  % footnotes off
+%
+% Or toggle at any point in the document:
+%
+%   \tomedeepcitefootnotefalse          % stop footnotes
+%   \tomedeepcitefootnotetrue           % resume footnotes
+%
+% VALIDATE — in Tome, add this to tome/config.yaml under `track:`:
+%
+%   - name: deep_cite
+%     pattern: '\\mciteboxp\{([^}]+)\}\{([^}]+)\}\{([^}]+)\}'
+%     groups: [key, page, quote]
+%
+% Then run: validate_deep_cites()
+%
+% Requires: xcolor (for the quote box shading)
+% Optional: marginnote (only needed if you use \citeqm)
+
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{tome-deepcite}[2025/01/01 Tome deep-citation macros]
+
+\RequirePackage{xcolor}
+
+% ── Option: nofootnotes ──────────────────────────────────────────────
+\newif\iftomedeepcitefootnote
+\tomedeepcitefootnotetrue
+
+\DeclareOption{nofootnotes}{\tomedeepcitefootnotefalse}
+\ProcessOptions\relax
+
+% ── Colours (override in preamble if you like) ───────────────────────
+\providecolor{tomedeepcitebg}{gray}{0.95}
+\providecolor{tomedeepcitefg}{gray}{0.35}
+
+% ── Internal: attribution line ───────────────────────────────────────
+% #1 = key, #2 = page (may be empty)
+\newcommand{\tome@attrib}[2]{%
+  \begingroup\small\color{tomedeepcitefg}%
+    --- \cite{#1}%
+    \ifx\relax#2\relax\else, p.\,#2\fi
+  \endgroup
+}
+
+% ── Internal: optional footnote ──────────────────────────────────────
+% #1 = key, #2 = page (may be empty), #3 = quote
+\newcommand{\tome@footnote}[3]{%
+  \iftomedeepcitefootnote
+    \footnote{%
+      Verbatim from \cite{#1}%
+      \ifx\relax#2\relax\else, p.\,#2\fi
+      : ``#3''%
+    }%
+  \fi
+}
+
+% ══════════════════════════════════════════════════════════════════════
+% PUBLIC MACROS
+% ══════════════════════════════════════════════════════════════════════
+
+% \mciteboxp{key}{page}{quote} — shaded block quote with page
+\newcommand{\mciteboxp}[3]{%
+  \par\medskip\noindent
+  \colorbox{tomedeepcitebg}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+    \small``#3''\par
+    \tome@attrib{#1}{#2}%
+  }}%
+  \tome@footnote{#1}{#2}{#3}%
+  \par\medskip
+}
+
+% \mcitebox{key}{quote} — shaded block quote, no page
+\newcommand{\mcitebox}[2]{%
+  \mciteboxp{#1}{}{#2}%
+}
+
+% \citeqp{key}{page}{quote} — inline "quote" (Author, YYYY, p. N)
+\newcommand{\citeqp}[3]{%
+  ``#3''\nobreak~\cite{#1}%
+  \tome@footnote{#1}{#2}{#3}%
+}
+
+% \citeq{key}{quote} — inline "quote" (Author, YYYY)
+\newcommand{\citeq}[2]{%
+  ``#2''\nobreak~\cite{#1}%
+  \tome@footnote{#1}{}{#2}%
+}
+
+% \citeqm{key}{quote} — inline "quote" with source in margin
+\newcommand{\citeqm}[2]{%
+  ``#2''%
+  \@ifundefined{marginnote}{%
+    \tome@footnote{#1}{}{#2}%  fallback if marginnote not loaded
+  }{%
+    \marginnote{\scriptsize\cite{#1}}%
+    \iftomedeepcitefootnote
+      \footnote{Verbatim from \cite{#1}: ``#2''}%
+    \fi
+  }%
+}
+
+\endinput

@@ -340,21 +340,44 @@ def write_archive(
     return archive_path
 
 
+class CorruptArchive(Exception):
+    """A .tome archive is corrupt or unreadable."""
+
+    def __init__(self, path: Path, reason: str):
+        super().__init__(f"Corrupt archive {path.name}: {reason}")
+        self.path = path
+        self.reason = reason
+
+
 def read_archive_meta(archive_path: Path) -> PaperMeta:
-    """Read metadata from a .tome archive. Fast — reads one dataset."""
-    with h5py.File(archive_path, "r") as f:
-        raw = f["meta"][()]
-        data = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
+    """Read metadata from a .tome archive. Fast — reads one dataset.
+
+    Raises:
+        CorruptArchive: If the file is not a valid HDF5 archive or lacks metadata.
+    """
+    try:
+        with h5py.File(archive_path, "r") as f:
+            raw = f["meta"][()]
+            data = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
+    except (OSError, KeyError, json.JSONDecodeError) as exc:
+        raise CorruptArchive(archive_path, str(exc)) from exc
     return PaperMeta.from_json(data)
 
 
 def read_archive_pages(archive_path: Path) -> list[str]:
-    """Read all page texts from a .tome archive."""
-    with h5py.File(archive_path, "r") as f:
-        if "pages" not in f:
-            return []
-        pages = f["pages"][:]
-        return [p if isinstance(p, str) else p.decode("utf-8") for p in pages]
+    """Read all page texts from a .tome archive.
+
+    Raises:
+        CorruptArchive: If the file is not a valid HDF5 archive.
+    """
+    try:
+        with h5py.File(archive_path, "r") as f:
+            if "pages" not in f:
+                return []
+            pages = f["pages"][:]
+            return [p if isinstance(p, str) else p.decode("utf-8") for p in pages]
+    except OSError as exc:
+        raise CorruptArchive(archive_path, str(exc)) from exc
 
 
 def read_archive_chunks(archive_path: Path) -> dict[str, Any]:
@@ -365,23 +388,26 @@ def read_archive_chunks(archive_path: Path) -> dict[str, Any]:
         chunk_pages (ndarray), chunk_char_starts (ndarray), chunk_char_ends (ndarray).
         Missing keys omitted.
     """
-    with h5py.File(archive_path, "r") as f:
-        if "chunks" not in f:
-            return {}
-        g = f["chunks"]
-        result: dict[str, Any] = {}
-        if "texts" in g:
-            raw = g["texts"][:]
-            result["chunk_texts"] = [t if isinstance(t, str) else t.decode("utf-8") for t in raw]
-        if "embeddings" in g:
-            result["chunk_embeddings"] = g["embeddings"][:]
-        if "pages" in g:
-            result["chunk_pages"] = g["pages"][:]
-        if "char_starts" in g:
-            result["chunk_char_starts"] = g["char_starts"][:]
-        if "char_ends" in g:
-            result["chunk_char_ends"] = g["char_ends"][:]
-        return result
+    try:
+        with h5py.File(archive_path, "r") as f:
+            if "chunks" not in f:
+                return {}
+            g = f["chunks"]
+            result: dict[str, Any] = {}
+            if "texts" in g:
+                raw = g["texts"][:]
+                result["chunk_texts"] = [t if isinstance(t, str) else t.decode("utf-8") for t in raw]
+            if "embeddings" in g:
+                result["chunk_embeddings"] = g["embeddings"][:]
+            if "pages" in g:
+                result["chunk_pages"] = g["pages"][:]
+            if "char_starts" in g:
+                result["chunk_char_starts"] = g["char_starts"][:]
+            if "char_ends" in g:
+                result["chunk_char_ends"] = g["char_ends"][:]
+            return result
+    except OSError as exc:
+        raise CorruptArchive(archive_path, str(exc)) from exc
 
 
 # ---------------------------------------------------------------------------

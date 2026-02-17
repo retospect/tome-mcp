@@ -7,91 +7,68 @@ description: "Request \u2192 ingest \u2192 search \u2192 cite pipeline"
 
 Find papers relevant to your research:
 
-- **`discover(query="...")`** — Federated search (S2 + OpenAlex, merged).
-- **`discover(scope="shared_citers", min_shared=2)`** — Find papers citing
-  multiple library entries (merges cite_tree + S2AG).
-- **`explore(key="...")`** — Iterative beam search over citation
-  graph for deep exploration.
+- **`paper(search=['topic', 'online'])`** — Federated search (S2 + OpenAlex, merged).
+- **`paper(search=['cited_by:key'])`** — Who cites this paper.
+- **`paper(search=['cites:key'])`** — What this paper cites.
 
-## 2. Match DOIs to PDFs
+## 2. Lookup by DOI
 
-When you have a list of DOIs but unidentified PDFs:
+When you have a DOI but the paper isn't in the vault:
 
 ```
-doi(action="resolve", doi="10.1038/nature15537")
+paper(id='10.1038/nature15537')
 ```
 
-This fetches metadata from **CrossRef, S2, and OpenAlex** (all cached
-after first call), then fuzzy-matches title/author/year against vault
-and bib entries. Returns ranked candidates — review the top 3 and
-confirm the match.
+This looks up the DOI online (CrossRef, S2, OpenAlex) and returns
+metadata with an ingest hint. If the DOI matches a vault paper,
+it resolves automatically to that paper's metadata.
 
-All API responses are cached in `~/.tome-mcp/cache/`. Repeated calls
-for the same DOI are instant.
-
-## 3. Request
-
-Track papers you want but don't have:
-
-```
-paper(action="request", key="smith2024", doi="10.1234/example",
-     tentative_title="Smith et al. on MOF conductivity",
-     reason="Need for signal-domains section")
-```
-
-View open requests: `paper(action="requests")`.
-
-## 4. Obtain & Ingest
+## 3. Obtain & Ingest
 
 **Never edit `tome/references.bib` directly.** Tome manages it with
-roundtrip-safe writes and lock files. Use `paper(key=..., title=...)` to update
-metadata, `ingest` to add entries, `paper(key=..., action="remove")` to delete.
+roundtrip-safe writes and lock files. Use `paper(id=..., meta=...)` to update
+metadata, `paper(id=..., delete=true)` to delete.
 
 Drop PDFs into `tome/inbox/`, then:
 
 ```
-ingest()                    # scan all inbox PDFs, propose keys
-ingest(path="inbox/smith2024.pdf", key="smith2024", confirm=True)
+paper(path='inbox/smith2024.pdf')                    # propose key
+paper(id='smith2024', path='inbox/smith2024.pdf')    # commit
 ```
 
 Ingest extracts text, computes embeddings, indexes into ChromaDB,
 and creates a bib entry in `tome/references.bib`.
 
-## 5. Verify & Enrich
+## 4. Verify & Enrich
 
 After ingesting, **always verify**:
 
-- **`doi(key="...")`** — Verify the DOI via CrossRef. Run after
-  **every** ingest. AI-discovered DOIs are frequently wrong
-  (~10% hallucination rate from LLM-based search tools).
-- **`paper(key="...", page=1)`** — Read page 1 and confirm title/authors
+- **`paper(id='key:page1')`** — Read page 1 and confirm title/authors
   match the bib entry. Zotero and DOI lookups sometimes deliver
   the wrong PDF entirely.
 
 Then enrich:
 
-- **`notes(key, summary=..., claims=...)`** — Add research notes.
-- **`doi(key="...", action="fetch")`** — Try to fetch open-access PDF via Unpaywall.
-- **`discover(scope="refresh", key="...")`** — Cache citation graph from S2.
+- **`notes(on='key', title='Summary', content='...')`** — Add research notes.
+- **`paper(search=['cited_by:key'])`** — Explore citation graph.
 
-## 6. Search & Use
+## 5. Search & Use
 
-- **`search(query, key="")`** — Semantic search across papers.
-- **`paper(key="...", page=N)`** — Read raw extracted text of a page.
-- **`search(query, key="", mode="exact")`** — Normalized text search across PDFs.
+- **`paper(search=['query'])`** — Semantic search across papers.
+- **`paper(id='key:page3')`** — Read raw extracted text of a page.
+- **`paper(search=['query', 'online'])`** — Federated online search.
 
-## 7. Cite in LaTeX
+## 6. Cite in LaTeX
 
-Use `toc(locate='cite', query=key)` to see where a paper is already cited.
-Use `search(query, scope='corpus')` to find where to add new citations.
+Use `doc(search=['key'])` to see where a paper is already cited.
+Use `doc(search=['topic'])` to find where to add new citations.
 
 ## Building institutional memory
 
-After reading any paper (via `search`, `paper`, or quote
-verification), call `notes(key, ...)` with summary, relevance,
-claims, and quality. Check `paper(key="...")` first (notes always
-included) to avoid duplicates. This prevents future sessions from
-re-reading and re-verifying the same papers.
+After reading any paper, call `notes(on='key', title='Summary', content='...')`
+with summary, relevance, claims, and quality. Check `paper(id='key')` first
+(notes are listed under `has_notes`) to avoid duplicates. This prevents
+future sessions from re-reading and re-verifying the same papers.
 
 ## Errata, Retractions & Related Documents
 
@@ -108,15 +85,14 @@ Examples: `miller1999slug_errata_1`, `smith2020quantum_retraction`.
 ### Ingest workflow
 
 1. Drop the erratum/retraction PDF into `tome/inbox/`.
-2. `ingest()` auto-detects the document type from its title
+2. `paper(path='inbox/erratum.pdf')` auto-detects the document type from its title
    (e.g. "Erratum", "Correction to", "Retraction Notice") and
    suggests candidate parent papers from the library.
-3. Override the suggested key: `ingest(path='...', key='miller1999slug_errata_1', confirm=true)`.
-4. Store the parent link: `notes(key='miller1999slug_errata_1', fields='{"parent": "miller1999slug"}')`.
+3. Override the suggested key: `paper(id='miller1999slug_errata_1', path='inbox/erratum.pdf')`.
 
 ### Retrieval-time surfacing
 
-When `paper(key="miller1999slug")` is called:
+When `paper(id='miller1999slug')` is called:
 - Child documents (errata, corrigenda, etc.) are listed under `related_papers`.
 - **Retractions** trigger a loud `⚠ RETRACTED` warning.
 - **Errata/corrigenda** show an informational notice to check corrections before citing.
@@ -139,7 +115,7 @@ Year in key must match the `year` field. Three valid forms:
 All three forms coexist. Do not rename existing keys — they are
 stable identifiers referenced across `.tex`, notes, and PDFs.
 
-The `ingest` tool auto-suggests `authorYYYY` keys. Override with
-`key="smith2024ndr"` to use a slug.
+The ingest flow auto-suggests `authorYYYY` keys. Override with
+`paper(id='smith2024ndr', path='inbox/file.pdf')` to use a slug.
 
 Datasheets use `manufacturer_partid` (e.g., `thorlabs_m365l4`).

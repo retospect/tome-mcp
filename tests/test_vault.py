@@ -174,6 +174,60 @@ class TestArchive:
 
 
 # ---------------------------------------------------------------------------
+# Corrupt archive handling
+# ---------------------------------------------------------------------------
+
+
+class TestCorruptArchive:
+    def test_meta_garbage_file(self, tmp_path):
+        """A non-HDF5 file raises CorruptArchive on meta read."""
+        from tome.vault import CorruptArchive
+
+        bad = tmp_path / "garbage.tome"
+        bad.write_bytes(b"this is not an HDF5 file at all")
+        with __import__("pytest").raises(CorruptArchive, match="garbage.tome"):
+            read_archive_meta(bad)
+
+    def test_pages_garbage_file(self, tmp_path):
+        from tome.vault import CorruptArchive
+
+        bad = tmp_path / "garbage.tome"
+        bad.write_bytes(b"not hdf5")
+        with __import__("pytest").raises(CorruptArchive):
+            read_archive_pages(bad)
+
+    def test_chunks_garbage_file(self, tmp_path):
+        from tome.vault import CorruptArchive
+
+        bad = tmp_path / "garbage.tome"
+        bad.write_bytes(b"not hdf5")
+        with __import__("pytest").raises(CorruptArchive):
+            read_archive_chunks(bad)
+
+    def test_meta_missing_key(self, tmp_path):
+        """An HDF5 file without a 'meta' dataset raises CorruptArchive."""
+        import h5py
+
+        from tome.vault import CorruptArchive
+
+        bad = tmp_path / "nometa.tome"
+        with h5py.File(bad, "w") as f:
+            f.attrs["format_version"] = 1
+        with __import__("pytest").raises(CorruptArchive):
+            read_archive_meta(bad)
+
+    def test_corrupt_archive_has_path(self, tmp_path):
+        from tome.vault import CorruptArchive
+
+        bad = tmp_path / "test.tome"
+        bad.write_bytes(b"junk")
+        with __import__("pytest").raises(CorruptArchive) as exc_info:
+            read_archive_meta(bad)
+        assert exc_info.value.path == bad
+        assert exc_info.value.reason
+
+
+# ---------------------------------------------------------------------------
 # catalog.db
 # ---------------------------------------------------------------------------
 

@@ -1,5 +1,5 @@
 ---
-description: "TOC, linting, dependency graphs, text search, deep cite validation"
+description: "Document navigation, search, and analysis with doc()"
 ---
 # Document Analysis Tools
 
@@ -7,41 +7,30 @@ description: "TOC, linting, dependency graphs, text search, deep cite validation
 
 Start a session by understanding the document structure:
 
-- **`toc()`** — Hierarchical document map from compiled `.toc`/`.lof`/`.lot`.
-  Reads output of LaTeX compilation. Source file:line attribution requires
-  the `\tomeinfo` currfile patch in the preamble. Without it, headings
-  and page numbers still work but file attribution is omitted.
-- **`toc(locate='tree')`** — Ordered file list from the `\input{}`/`\include{}`
-  tree. Use at session start to see which files belong to a root.
-- **`notes(file="...")`** — Stored content summaries with git-based staleness tracking.
+- **`doc()`** — Table of contents from compiled `.toc`/`.lof`/`.lot`.
+  Source file:line attribution requires the `\tomeinfo` currfile patch
+  in the preamble.
+- **`doc(search=['sections/intro.tex'])`** — TOC scoped to a single file.
 
 ## Structural checks
 
-- **`doc_lint()`** — Finds undefined refs, orphan labels, shallow high-use
-  cites (≥3× with no deep quote), plus tracked pattern counts from
-  `tome/config.yaml`.
-- **`dep_graph(file)`** — Labels defined, outgoing refs (what this file
-  references), incoming refs (what references this file), and citations
-  with deep/shallow flag.
-- **`review_status()`** — Counts tracked markers (TODOs, open questions,
-  review findings) grouped by type and file.
+Use `doc(search=[...])` with marker patterns to find issues:
+
+- **`doc(search=['%TODO'])`** — Find TODO markers.
+- **`doc(search=['\fixme'])`** — Find fixme commands.
+- **`doc(search=['%TODO', '\fixme', 'PLACEHOLDER'])`** — Multiple patterns.
 
 ### Review findings tip
 
 Track review findings by adding a `review_finding` pattern for
-`\mrev{id}{severity}{text}` in config.yaml's `track:` section. Then
-`review_status()` counts open findings by severity and file. Use
-`search("RIG-CON-001", scope='corpus', mode='exact')` to locate a specific finding by ID.
+`\mrev{id}{severity}{text}` in config.yaml's `track:` section. Use
+`doc(search=['RIG-CON-001'])` to locate a specific finding by ID.
 
 ## Text search
 
-- **`search(query, scope='corpus', mode='exact')`** — Normalized search
-  across `.tex` source. Strips LaTeX commands, case-folds, collapses
-  whitespace, normalizes unicode and smart quotes. Use when you have text
-  copied from the compiled PDF and need to find the `.tex` source location.
-- **`search(query, scope='papers', mode='exact', key="")`** — Same
-  normalization over raw PDF text extractions. Also rejoins hyphenated
-  line breaks. Ideal for verifying copy-pasted quotes against source PDFs.
+- **`doc(search=['query'])`** — Semantic search across `.tex` source.
+- **`doc(search=['query'], context='3')`** — With surrounding paragraphs.
+- **`paper(search=['query'])`** — Semantic search across PDF extractions.
 
 ### Paragraph mode (`paragraphs=N`)
 
@@ -113,28 +102,22 @@ command.
 
 ### Validation
 
-**`validate_deep_cites(file="", key="")`** — Extracts all deep-cite
-macros from `.tex` source and searches ChromaDB for each quote against
-the cited paper's text. Reports match score — low scores may indicate
-misquotes or wrong pages. Live check, no cache. Requires papers to be
-indexed first (run `reindex` if needed).
+Deep cite validation can be performed by reading page text with
+`paper(id='key:pageN')` and comparing against the quoted text in your
+`.tex` source.
 
 ### Writing deep cites
 
-Use `search(query, scope="papers", mode="exact", key="...", paragraphs=1)`
-to find quote-ready text from a paper. The paragraph mode returns cleaned
-text with hyphens rejoined and whitespace collapsed — paste directly into
-`\mciteboxp{key}{page}{...}`.
+Use `paper(id='key:page3')` to read page text from a paper, then copy
+the relevant quote into `\mciteboxp{key}{page}{...}`.
 
-## File summaries
+## File notes
 
-**`notes(file, summary="...", short="...", sections="[...]")`** — Stores
-content-level descriptions. You MUST read the file before calling this,
-and the file must be committed (summaries use git history for staleness).
+**`notes(on='sections/bg.tex', title='Summary', content='...')`** — Store
+content-level descriptions for `.tex` files.
 
-Each section description should summarize *content* (key claims, quantities,
+Each note should summarize *content* (key claims, quantities,
 methods), not just repeat the heading. Bad: "Signal domains". Good:
 "Analyzes five physical signal domains; ranks electronic+optical as primary".
 
-Read back with `notes(file)` — includes summary, meta, and staleness
-(fresh/stale + commits since last summary).
+Read back with `notes(on='sections/bg.tex')` — lists all notes for that file.

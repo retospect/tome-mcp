@@ -22,7 +22,8 @@ Run this after code changes to the Tome MCP server. Requires MCP server restart 
 - All vault I/O (PDFs, .tome archives, catalog, chroma) goes to `/tmp/tome-smoke-vault/` — real `~/.tome-mcp/` is untouched
 
 ## Phase 2: Ingest 3 PDFs
-- `ingest(path='inbox/test01.pdf', key='...', confirm=true)` × 3
+- `paper(path='inbox/test01.pdf')` → propose (get suggested_key)
+- `paper(id='<suggested_key>', path='inbox/test01.pdf')` → commit × 3
 - **Verify**: `embedded: true` on all, correct years, 3 DOI states (verified/unchecked/mismatch)
 
 ## Phase 3: Vault Files & Data Provenance
@@ -55,7 +56,7 @@ f['chunks/embeddings'].shape # → (N, 384) float32
 - **Catalog**: `sqlite3 /tmp/tome-smoke-vault/catalog.db "SELECT count(*) FROM documents;"` → matches ingested count
 - **ChromaDB**: `du -sh /tmp/tome-smoke-vault/chroma/` → non-empty
 - **Inbox cleanup**: `ls tome/inbox/` → ingested PDFs removed
-- **Page text**: `paper(key='...', page=1)` → text returned
+- **Page text**: `paper(id='...:page1')` → text returned
 
 ## Phase 4: Catalog
 - `sqlite3 /tmp/tome-smoke-vault/catalog.db "SELECT key, substr(content_hash,1,16), doi, year, vault_path FROM documents ORDER BY key;"`
@@ -63,84 +64,79 @@ f['chunks/embeddings'].shape # → (N, 384) float32
 - **Verify**: `vault_path` uses sharded format `tome/<initial>/<key>.tome`
 
 ## Phase 5: Dedup
-- **5a**: Re-ingest same key → expect `"error": "Key '...' already exists"`
-- **5b**: Re-ingest same PDF with different key → expect `"error": "Validation failed: Duplicate: already in vault as '...'"`
+- **5a**: Re-ingest same key → `paper(id='existingkey', path='inbox/test.pdf')` → expect error
+- **5b**: Re-ingest same PDF with different key → expect duplicate content hash error
 
 ## Phase 6: Notes CRUD
-- **Write**: `notes(key='...', summary='...', relevance='...', tags='...')`
-- **Read**: `notes(key='...')` → verify fields persisted
-- **Update**: `notes(key='...', summary='updated text')` → verify only summary changed
-- **Clear**: `notes(key='...', clear='tags')` → verify tags removed, others intact
+- **Write**: `notes(on='...', title='Summary', content='Key claims...')`
+- **Read**: `notes(on='...', title='Summary')` → verify content persisted
+- **List**: `notes(on='...')` → verify title appears in list
+- **Update**: `notes(on='...', title='Summary', content='updated text')` → verify overwritten
+- **Delete**: `notes(on='...', title='Summary', delete=true)` → verify removed
 
 ## Phase 7: Semantic Search
-- 3 queries targeting different papers
-- **Verify**: correct paper appears as top result each time
+- `paper(search=['specific topic'])` × 3 queries targeting different papers
+- **Verify**: correct paper appears as top result each time, hints include report
 
-## Phase 8: Paragraph Citation Search
-- `search(query='specific claim text', scope='papers', paragraphs=1)` → paragraph-level context
-- `search(query='another topic', scope='papers', context=3)` → surrounding lines
-- **Verify**: results include `bib_key`, `page`, sufficient text for citation
+## Phase 8: Citation Graph
+- `paper(search=['cited_by:<key>'])` → who cites this paper
+- `paper(search=['cites:<key>'])` → what this paper cites
+- **Verify**: results include paper titles, reverse hint present
 
-## Phase 9: DOI Verify
-- `doi(key='...')` on an unchecked paper
-- **Verify**: status updates to `valid`, `x-doi-status` persisted in bib
+## Phase 9: Paper API
+- `paper(id='...')` → full metadata + has_figures + has_notes
+- `paper(search=['*'])` → list all papers
+- `paper(id='...:page1')` → page text with next_page hint
+- `paper(id='...', meta='{"tags": "test"}')` → update metadata
+- **Verify**: all responses have hints.report
 
-## Phase 10: Paper API
-- `paper(key='...')` → full metadata + notes
-- `paper(action='list')` → paginated list
-- `paper(key='...', page=1)` → page text extraction
+## Phase 10: Document Search
+- `doc()` → TOC with hints
+- `doc(search=['%TODO'])` → find markers
+- `doc(search=['<key>'])` → find citations
+- **Verify**: results typed (cite/marker/semantic)
 
-## Phase 11: Workflow — Literature Search
-- `search(query='topic', scope='all')` → find relevant paper
-- `cite_graph(key='...')` on found paper → verify citations/references returned
+## Phase 11: Guide & Reporting
+- `guide()` → topic index
+- `guide(topic='paper')` → tool guide
+- `guide(report='minor: smoke test issue')` → file issue
+- **Verify**: issue appended to tome/issues.md
 
-## Phase 12: Workflow — Full Enrichment
-- `notes(key='...', summary='...', claims='...', relevance='...', quality='...', tags='...')`
-- `doi(key='...')` to verify DOI
-- `paper(key='...')` → verify full enriched record with all fields
-
-## Phase 13: Paper Remove
-- `paper(key='<test_key>', action='remove')` → success
+## Phase 12: Paper Remove
+- `paper(id='<test_key>', delete=true)` → success
 - **Verify**: sharded PDF + .tome files deleted, catalog row gone, ChromaDB chunks gone
-- To re-key a paper: remove old → re-ingest from inbox with new key
 
-## Phase 14: report_issue & Call Logs
-- `report_issue(tool='ingest', description='...', severity='minor')`
-- **Verify**: file at `/tmp/tome-smoke-vault/llm-requests/*.md`
+## Phase 13: Call Logs
 - **Verify**: logs in `.tome-mcp/logs/*.jsonl` have entries for all tool calls, all `status=ok`
 
-## Phase 15: DB Rebuild from .tome Archives
+## Phase 14: DB Rebuild from .tome Archives
 Tests that catalog.db and ChromaDB can be fully rebuilt from `.tome` HDF5 archives alone.
+(Reindex is now transparent — server auto-detects stale indexes.)
 
-### 15a: Capture baseline
+### 14a: Capture baseline
 ```bash
 sqlite3 /tmp/tome-smoke-vault/catalog.db "SELECT key, content_hash, doi FROM documents ORDER BY key;" > /tmp/baseline_catalog.txt
 ```
-- Run 2 search queries, record top-result key
+- Run 2 `paper(search=['...'])` queries, record top-result key
 
-### 15b: Delete catalog (NOT chroma — ChromaDB singleton can't survive rmtree)
+### 14b: Delete catalog (NOT chroma)
 ```bash
 rm -f /tmp/tome-smoke-vault/catalog.db
 ```
-**Do NOT `rm -rf` chroma/ — ChromaDB PersistentClient is a singleton per path.
-External deletion makes the cached client permanently stale within the process.
-`reindex(scope='papers')` clears collections via the client API instead.**
+**Do NOT `rm -rf` chroma/ — ChromaDB PersistentClient is a singleton per path.**
 
-### 15c: Rebuild
-- `reindex(scope='papers')`
-- **Verify**: no errors, no "readonly database"
-- **Verify**: result shows `from_archive > 0` and `from_pdf == 0` (used stored embeddings)
+### 14c: Trigger rebuild
+- Any `paper(search=['...'])` call should auto-rebuild
 - **Verify**: catalog row count matches baseline
-- **Verify**: content hashes identical to baseline
 
-### 15d: Verify search works post-rebuild
-- Re-run same 2 search queries from 15a
+### 14d: Verify search works post-rebuild
+- Re-run same 2 search queries from 14a
 - **Verify**: same top-result keys returned
 
-### 15e: Verify page text serves from archive
-- `paper(key='...', page=1)` → text returned
+### 14e: Verify page text serves from archive
+- `paper(id='...:page1')` → text returned
 
-## Phase 16: Vault Audit
+## Phase 15: Vault Audit
 Programmatic check for data quality issues.
 
 ```python
@@ -179,12 +175,12 @@ for pdf_file in sorted(vault_pdf.rglob('*.pdf')):
 
 **Verify**: zero empty titles, zero orphans, zero page mismatches, all archives have chunks + embeddings
 
-## Phase 17: Filesystem Safety
-- Ingest with key containing special chars: `ingest(key='test/2024:bad*key')` → verify sanitized
+## Phase 16: Filesystem Safety
+- Ingest with key containing special chars: `paper(id='test/2024:bad*key', path='inbox/test.pdf')` → verify sanitized
 - **Verify**: resulting key has no `/\:*?"<>|` characters
 - **Verify**: shard directory is ASCII alphanumeric (non-ASCII → `_/`)
 
-## Phase 18: Test Safety
+## Phase 17: Test Safety
 Verify the pytest suite does NOT touch the live vault or project directories.
 
 ```bash
