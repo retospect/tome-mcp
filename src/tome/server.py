@@ -500,11 +500,15 @@ def ingest(
     key: str = "",
     confirm: bool = False,
     tags: str = "",
+    dois: str = "",
 ) -> str:
     """Process PDFs from tome/inbox/. Without confirm: proposes key and metadata
     from PDF analysis and CrossRef/S2 lookup. With confirm=true: commits the paper.
     Auto-detects errata, retractions, corrigenda from title and suggests
     parent-linked key format (e.g. parentkey_errata_1).
+
+    dois: Comma-separated candidate DOIs. Each is looked up via CrossRef and
+    fuzzy-matched against the PDF's first pages to find the best match.
     """
     inbox = _tome_dir() / "inbox"
     inbox.mkdir(parents=True, exist_ok=True)
@@ -522,7 +526,7 @@ def ingest(
                 }
             )
         first = pdfs[0]
-        proposal = _propose_ingest(first)
+        proposal = _propose_ingest(first, dois=dois)
         response: dict[str, Any] = {
             "status": "proposal",
             "inbox_total": len(pdfs),
@@ -546,10 +550,10 @@ def ingest(
         return json.dumps({"error": f"File not found: {path}"})
 
     if not confirm:
-        return json.dumps(_propose_ingest(pdf_path), indent=2)
+        return json.dumps(_propose_ingest(pdf_path, dois=dois), indent=2)
 
     # Commit phase
-    return json.dumps(_commit_ingest(pdf_path, key, tags), indent=2)
+    return json.dumps(_commit_ingest(pdf_path, key, tags, dois=dois), indent=2)
 
 
 def _detect_related_doc_type(api_title: str | None, pdf_title: str | None) -> str | None:
@@ -585,12 +589,99 @@ def _find_parent_candidates(
     return [k for k in sorted(existing_keys) if k.startswith(prefix)]
 
 
-def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
+def _match_dois_to_pdf(
+    doi_list: list[str], first_page_text: str, pdf_title: str | None, pdf_authors: str | None
+) -> list[dict[str, Any]]:
+    """Fetch CrossRef metadata for each DOI and fuzzy-match against the PDF.
+
+    Returns a list of dicts sorted by match score (best first), each with:
+    doi, title, authors, year, journal, score, and any error.
+    """
+    from tome import crossref
+    from tome.errors import DOIResolutionFailed
+
+    candidates: list[dict[str, Any]] = []
+    for doi_str in doi_list:
+        doi_str = doi_str.strip()
+        if not doi_str:
+            continue
+        entry: dict[str, Any] = {"doi": doi_str}
+        try:
+            cr = crossref.check_doi(doi_str)
+            entry["title"] = cr.title
+            entry["authors"] = cr.authors
+            entry["year"] = cr.year
+            entry["journal"] = cr.journal
+
+            # Score: match CrossRef metadata against PDF first-page text + title
+            # Use title tokens from the first page as the candidate title for matching
+            score = _match_score(
+                doi_title=cr.title,
+                doi_authors=cr.authors,
+                doi_year=cr.year,
+                candidate_title=first_page_text[:3000],  # broader text for token overlap
+                candidate_author=pdf_authors,
+                candidate_year=None,  # we don't reliably know year from PDF text
+            )
+            # Also compute a tighter title-vs-title score if we have a PDF title
+            if pdf_title:
+                title_score = _match_score(
+                    doi_title=cr.title,
+                    doi_authors=cr.authors,
+                    doi_year=cr.year,
+                    candidate_title=pdf_title,
+                    candidate_author=pdf_authors,
+                    candidate_year=None,
+                )
+                score = max(score, title_score)
+            entry["score"] = round(score, 3)
+        except DOIResolutionFailed as e:
+            entry["error"] = f"CrossRef lookup failed (HTTP {e.status_code})"
+            entry["score"] = 0.0
+        except Exception as e:
+            entry["error"] = str(e)[:200]
+            entry["score"] = 0.0
+        candidates.append(entry)
+
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    return candidates
+
+
+def _propose_ingest(pdf_path: Path, *, dois: str = "") -> dict[str, Any]:
     """Phase 1: Extract metadata, query APIs, propose key."""
     try:
         result, crossref_result, s2_result = resolve_metadata(pdf_path)
     except Exception as e:
         return {"source_file": str(pdf_path.name), "status": "failed", "reason": _sanitize_exc(e)}
+
+    # --- DOI list matching: fuzzy-match candidate DOIs against the PDF ---
+    doi_matches: list[dict[str, Any]] = []
+    if dois:
+        doi_list = [d.strip() for d in dois.split(",") if d.strip()]
+        if doi_list:
+            doi_matches = _match_dois_to_pdf(
+                doi_list,
+                result.first_page_text,
+                result.title_from_pdf,
+                result.authors_from_pdf,
+            )
+            # If best candidate scores well and we don't already have a CrossRef result,
+            # adopt it as the primary metadata source
+            if doi_matches and doi_matches[0]["score"] >= 0.3 and not doi_matches[0].get("error"):
+                best = doi_matches[0]
+                from tome.crossref import CrossRefResult
+
+                if not crossref_result or not result.doi:
+                    crossref_result = CrossRefResult(
+                        doi=best["doi"],
+                        title=best.get("title"),
+                        authors=best.get("authors", []),
+                        year=best.get("year"),
+                        journal=best.get("journal"),
+                        status_code=200,
+                    )
+                    result.doi = best["doi"]
+                    result.doi_source = "dois_param"
 
     # Determine suggested key using slug.make_key() when title is available
     suggested_key = None
@@ -731,6 +822,8 @@ def _propose_ingest(pdf_path: Path) -> dict[str, Any]:
         proposal["doc_type_hint"] = doc_type_hint
     if doi_warning:
         proposal["warning"] = doi_warning
+    if doi_matches:
+        proposal["doi_candidates"] = doi_matches
     return proposal
 
 
@@ -744,7 +837,7 @@ def _disambiguate_key(key: str, existing_keys: set[str]) -> str:
     raise ValueError(f"Exhausted key suffixes for '{key}'")
 
 
-def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
+def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> dict[str, Any]:
     """Phase 2: Commit — validate, extract, embed, write bib, move file.
 
     Uses :func:`tome.ingest.prepare_ingest` for the shared analysis core
@@ -763,11 +856,45 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str) -> dict[str, Any]:
     if key in existing_keys:
         key = _disambiguate_key(key, existing_keys)
 
+    # --- Resolve DOI from candidate list if provided ---
+    override_doi: str | None = None
+    override_crossref_title: str | None = None
+    override_crossref_authors: list[str] | None = None
+    override_crossref_year: int | None = None
+    override_crossref_journal: str | None = None
+
+    if dois:
+        doi_list = [d.strip() for d in dois.split(",") if d.strip()]
+        if doi_list:
+            from tome.identify import identify_pdf
+
+            id_result = identify_pdf(pdf_path)
+            doi_matches = _match_dois_to_pdf(
+                doi_list,
+                id_result.first_page_text,
+                id_result.title_from_pdf,
+                id_result.authors_from_pdf,
+            )
+            if doi_matches and doi_matches[0]["score"] >= 0.3 and not doi_matches[0].get("error"):
+                best = doi_matches[0]
+                override_doi = best["doi"]
+                override_crossref_title = best.get("title")
+                override_crossref_authors = best.get("authors")
+                override_crossref_year = best.get("year")
+                override_crossref_journal = best.get("journal")
+
     # --- Shared core: extract, resolve, validate, pick best metadata ---
     cfg = _load_config()
     try:
         prep = prepare_ingest(
-            pdf_path, resolve_apis=True, scan_injections=cfg.prompt_injection_scan
+            pdf_path,
+            doi=override_doi,
+            crossref_title=override_crossref_title,
+            crossref_authors=override_crossref_authors,
+            crossref_year=override_crossref_year,
+            crossref_journal=override_crossref_journal,
+            resolve_apis=True,
+            scan_injections=cfg.prompt_injection_scan,
         )
     except Exception as e:
         return {"error": f"Ingest preparation failed: {_sanitize_exc(e)}"}
