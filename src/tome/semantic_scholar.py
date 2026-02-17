@@ -227,7 +227,7 @@ def _get_connected(
     if cached is not None:
         paper_key = "citingPaper" if direction == "citations" else "citedPaper"
         papers = []
-        for item in cached.get("data", []):
+        for item in (cached.get("data") or []):
             paper_data = item.get(paper_key, {})
             if paper_data:
                 papers.append(_parse_paper(paper_data))
