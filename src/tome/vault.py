@@ -151,12 +151,16 @@ def ensure_vault_dirs() -> None:
 
 
 def ensure_catalog_populated() -> int:
-    """Auto-rebuild catalog.db from .tome archives if it exists but is empty.
+    """Ensure catalog.db schema exists; rebuild from .tome archives if empty.
 
     Returns number of documents in catalog (0 if no archives exist).
     Skips rebuild if catalog already has rows.
     """
     db_path = catalog_path()
+
+    # Always ensure schema exists
+    init_catalog(db_path)
+
     tome_dir = vault_root() / VAULT_TOME_DIR
 
     # No archives → nothing to rebuild from
@@ -166,7 +170,6 @@ def ensure_catalog_populated() -> int:
     # Check if catalog has any rows
     try:
         with _db(db_path) as conn:
-            conn.executescript(_SCHEMA)
             row = conn.execute("SELECT count(*) FROM documents").fetchone()
             if row and row[0] > 0:
                 return row[0]
