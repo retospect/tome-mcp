@@ -130,37 +130,61 @@ f['chunks/embeddings'].shape # → (N, 384) float32
 - `paper(id='<test_key>', delete=true)` → success
 - **Verify**: sharded PDF + .tome files deleted, catalog row gone, ChromaDB chunks gone
 
-## Phase 13: Call Logs
+## Phase 13: Advisories (Freshness Checks)
+Every `doc()` and `paper()` call now includes an `advisories` array when
+there's something the LLM should know (corpus stale, build artifacts out of
+sync, etc.). Test that these surface correctly.
+
+### 13a: Corpus freshness
+- `doc()` → check `advisories` array in response
+- If corpus is indexed and current: expect `corpus_current` advisory
+- If corpus not yet indexed: expect `corpus_empty` with `action: "reindex(scope='corpus')"`
+- Touch a .tex file, call `doc(search=['...'])` → expect `corpus_stale` advisory
+
+### 13b: Build artifact staleness
+- If .toc/.idx/.aux exist and are older than .tex files: expect `build_stale` advisory
+- If no build artifacts exist: no `build_stale` advisory
+
+### 13c: Bib freshness
+- `paper()` → check `advisories` array
+- Edit `references.bib` (touch it), call `paper(search=['*'])` → expect `bib_modified`
+
+### 13d: Advisory contract
+- Advisories must **never** block the request — they are informational only
+- Each advisory has `category` (string) and `message` (string), optionally `action`
+- Advisories are drained per-response (not sticky across calls)
+
+## Phase 14: Call Logs
 - **Verify**: logs in `.tome-mcp/logs/*.jsonl` have entries for all tool calls, all `status=ok`
 
-## Phase 14: DB Rebuild from .tome Archives
+## Phase 15: DB Rebuild from .tome Archives
 Tests that catalog.db and ChromaDB can be fully rebuilt from `.tome` HDF5 archives alone.
 (Reindex is now transparent — server auto-detects stale indexes.)
 
-### 14a: Capture baseline
+### 15a: Capture baseline
 ```bash
 sqlite3 /tmp/tome-smoke-vault/catalog.db "SELECT key, content_hash, doi FROM documents ORDER BY key;" > /tmp/baseline_catalog.txt
 ```
 - Run 2 `paper(search=['...'])` queries, record top-result key
 
-### 14b: Delete catalog (NOT chroma)
+### 15b: Delete catalog (NOT chroma)
 ```bash
 rm -f /tmp/tome-smoke-vault/catalog.db
 ```
 **Do NOT `rm -rf` chroma/ — ChromaDB PersistentClient is a singleton per path.**
 
-### 14c: Trigger rebuild
+### 15c: Trigger rebuild
 - Any `paper(search=['...'])` call should auto-rebuild
 - **Verify**: catalog row count matches baseline
 
-### 14d: Verify search works post-rebuild
+### 15d: Verify search works post-rebuild
 - Re-run same 2 search queries from 14a
 - **Verify**: same top-result keys returned
 
-### 14e: Verify page text serves from archive
+### 15e: Verify page text serves from archive
 - `paper(id='...:page1')` → text returned
 
-## Phase 15: Vault Audit
+## Phase 16: Vault Audit
 Programmatic check for data quality issues.
 
 ```python
@@ -199,12 +223,12 @@ for pdf_file in sorted(vault_pdf.rglob('*.pdf')):
 
 **Verify**: zero empty titles, zero orphans, zero page mismatches, all archives have chunks + embeddings
 
-## Phase 16: Filesystem Safety
+## Phase 17: Filesystem Safety
 - Ingest with key containing special chars: `paper(id='test/2024:bad*key', path='inbox/test.pdf')` → verify sanitized
 - **Verify**: resulting key has no `/\:*?"<>|` characters
 - **Verify**: shard directory is ASCII alphanumeric (non-ASCII → `_/`)
 
-## Phase 17: Test Safety
+## Phase 18: Test Safety
 Verify the pytest suite does NOT touch the live vault or project directories.
 
 ```bash
