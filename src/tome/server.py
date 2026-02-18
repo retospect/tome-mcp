@@ -3633,16 +3633,13 @@ def set_root(path: str, test_vault_root: str = "") -> str:
             "Review and resolve by deleting entries or prefixing with [RESOLVED]."
         )
 
-    # v2 self-describing hints
-    response["hints"] = {
+    # v2 self-describing hints — use hints_mod.response() to drain advisories
+    return hints_mod.response(response, hints={
         "guide": "guide(topic='getting-started')",
         "search": "paper(search=['your query'])",
         "toc": "doc()",
         "ingest": "paper(path='inbox/filename.pdf')",
-        "report": hints_mod._REPORT_HINT,
-    }
-
-    return json.dumps(response, indent=2)
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -3910,7 +3907,7 @@ def _paper_get_page(key: str, page: int) -> str:
             hints={"view": f"paper(id='{key}')", "guide": "guide('paper-id')"},
         )
     except Exception as exc:
-        return hints_mod.error(str(exc))
+        return hints_mod.error(str(exc), hints={"view": f"paper(id='{key}')", "guide": "guide('paper-id')"})
 
     total_pages = _count_raw_pages(key)
     result = {"id": key, "page": page, "total_pages": total_pages, "text": text}
@@ -4102,7 +4099,7 @@ def _paper_update_meta(key: str, meta_str: str) -> str:
         r = json.loads(result)
         return hints_mod.response(r, hints={"view": f"paper(id='{key}')"})
     except Exception as exc:
-        return hints_mod.error(str(exc))
+        return hints_mod.error(str(exc), hints={"view": f"paper(id='{key}')", "guide": "guide('paper-metadata')"})
 
 
 def _paper_update_figure(slug: str, figure: str, meta_str: str) -> str:
@@ -4134,7 +4131,7 @@ def _paper_delete(key: str) -> str:
         result = json.loads(_paper_remove(key))
         return hints_mod.response(result, hints={"search": "paper(search=['...'])"})
     except Exception as exc:
-        return hints_mod.error(str(exc))
+        return hints_mod.error(str(exc), hints={"search": "paper(search=['...'])", "guide": "guide('paper')"})
 
 
 def _paper_delete_figure(slug: str, figure: str) -> str:
@@ -4468,7 +4465,12 @@ def _doc_smart_search(search_terms: list[str], root: str, context: str, page: in
             results.append({"term": term, "type": "semantic", "matches": str(exc)})
 
     out = {"results": results, "search": search_terms}
-    h = {"back": "doc()", "guide": "guide('doc-search')"}
+    total_matches = sum(1 for r in results if r.get("matches"))
+    h = hints_mod.doc_search_hints(
+        has_context=bool(context),
+        search_terms=search_terms,
+        result_count=total_matches,
+    )
     if context:
         h["more_context"] = f"doc(search={search_terms!r}, context='{_bump_context(context)}')"
     return hints_mod.response(out, hints=h)

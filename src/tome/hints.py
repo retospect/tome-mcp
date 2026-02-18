@@ -137,18 +137,23 @@ def doc_hints() -> dict[str, str]:
     """Hints for no-args doc() call."""
     return {
         "search": "doc(search=['your query'])",
+        "find_section": "doc(search=['§2.1'])",
         "find_todos": "doc(search=['%TODO'])",
         "find_cites": "doc(search=['smith2024'])",
         "guide": "guide('doc')",
     }
 
 
-def doc_search_hints(has_context: bool = False, search_terms: list[str] | None = None) -> dict[str, str]:
+def doc_search_hints(has_context: bool = False, search_terms: list[str] | None = None, result_count: int = 0) -> dict[str, str]:
     """Hints for a doc search response."""
     h: dict[str, str] = {
         "back": "doc()",
         "guide": "guide('doc-search')",
     }
+    if not has_context and result_count > 0:
+        h["add_context"] = "doc(search=[...], context='3')"
+    if result_count == 0:
+        h["try_semantic"] = "doc(search=['broader keywords'])"
     return h
 
 

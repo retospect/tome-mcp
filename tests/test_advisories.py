@@ -286,3 +286,73 @@ class TestCheckAll:
             tmp_path / "nodottome",
         )
         advisories.drain()
+
+
+# ---------------------------------------------------------------------------
+# Papers empty / inbox pending advisories
+# ---------------------------------------------------------------------------
+
+class TestPapersEmpty:
+    """check_papers_empty detects when no papers have been ingested."""
+
+    def setup_method(self):
+        advisories.drain()
+
+    def test_no_raw_dir(self, tmp_path):
+        dot = tmp_path / ".tome-mcp"
+        dot.mkdir()
+        advisories.check_papers_empty(dot)
+        advs = advisories.drain()
+        assert any(a["category"] == "papers_empty" for a in advs)
+
+    def test_empty_raw_dir(self, tmp_path):
+        dot = tmp_path / ".tome-mcp"
+        dot.mkdir()
+        (dot / "raw").mkdir()
+        advisories.check_papers_empty(dot)
+        advs = advisories.drain()
+        assert any(a["category"] == "papers_empty" for a in advs)
+
+    def test_has_papers(self, tmp_path):
+        dot = tmp_path / ".tome-mcp"
+        dot.mkdir()
+        raw = dot / "raw"
+        raw.mkdir()
+        (raw / "smith2024").mkdir()
+        advisories.check_papers_empty(dot)
+        assert advisories.drain() == []
+
+
+class TestInboxPending:
+    """check_inbox_pending detects PDFs waiting in tome/inbox/."""
+
+    def setup_method(self):
+        advisories.drain()
+
+    def test_no_inbox(self, tmp_path):
+        advisories.check_inbox_pending(tmp_path)
+        assert advisories.drain() == []
+
+    def test_empty_inbox(self, tmp_path):
+        (tmp_path / "tome" / "inbox").mkdir(parents=True)
+        advisories.check_inbox_pending(tmp_path)
+        assert advisories.drain() == []
+
+    def test_pdfs_pending(self, tmp_path):
+        inbox = tmp_path / "tome" / "inbox"
+        inbox.mkdir(parents=True)
+        (inbox / "paper1.pdf").write_text("fake")
+        (inbox / "paper2.pdf").write_text("fake")
+        advisories.check_inbox_pending(tmp_path)
+        advs = advisories.drain()
+        assert any(a["category"] == "inbox_pending" for a in advs)
+        msg = [a for a in advs if a["category"] == "inbox_pending"][0]["message"]
+        assert "2 PDF" in msg
+        assert "paper1.pdf" in msg
+
+    def test_non_pdf_ignored(self, tmp_path):
+        inbox = tmp_path / "tome" / "inbox"
+        inbox.mkdir(parents=True)
+        (inbox / "notes.txt").write_text("not a pdf")
+        advisories.check_inbox_pending(tmp_path)
+        assert advisories.drain() == []

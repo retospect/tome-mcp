@@ -198,6 +198,32 @@ def check_all_doc(
     return needs_reindex
 
 
+def check_papers_empty(dot_tome: Path) -> None:
+    """Push advisory if no papers have been ingested yet."""
+    raw_dir = dot_tome / "raw"
+    if not raw_dir.is_dir() or not any(raw_dir.iterdir()):
+        add(
+            "papers_empty",
+            "No papers ingested yet. Use paper(path='inbox/filename.pdf') to add papers.",
+        )
+
+
+def check_inbox_pending(project_root: Path) -> None:
+    """Push advisory if there are PDFs waiting in tome/inbox/."""
+    inbox = project_root / "tome" / "inbox"
+    if not inbox.is_dir():
+        return
+    pdfs = [p for p in inbox.iterdir() if p.suffix.lower() == ".pdf"]
+    if pdfs:
+        names = [p.name for p in pdfs[:3]]
+        suffix = f" (+{len(pdfs) - 3} more)" if len(pdfs) > 3 else ""
+        add(
+            "inbox_pending",
+            f"{len(pdfs)} PDF(s) waiting in tome/inbox/: "
+            f"{', '.join(names)}{suffix}",
+        )
+
+
 def check_all_paper(
     project_root: Path,
     dot_tome: Path,
@@ -205,5 +231,13 @@ def check_all_paper(
     """Run paper-related freshness checks.  Safe + cheap."""
     try:
         check_bib_freshness(project_root, dot_tome)
+    except Exception:
+        pass
+    try:
+        check_papers_empty(dot_tome)
+    except Exception:
+        pass
+    try:
+        check_inbox_pending(project_root)
     except Exception:
         pass
