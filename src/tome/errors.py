@@ -18,9 +18,8 @@ class PaperNotFound(TomeError):
             suggestions = ", ".join(f"'{k}'" for k in near[:5])
             msg += f" Similar keys: {suggestions}."
         msg += (
-            " Use paper(action='list') to browse keys,"
-            " search(query='...') to find by topic,"
-            " or paper(key='...', title='...') to create one."
+            " Use paper(search=['keyword']) to find by topic,"
+            " or paper(id='...', meta='{\"title\": \"...\"}') to create one."
         )
         super().__init__(msg)
         self.key = key
@@ -46,8 +45,9 @@ class DuplicateKey(TomeError):
     def __init__(self, key: str):
         super().__init__(
             f"Key '{key}' already exists. "
-            f"Use paper(key='{key}', title='...') to update it, "
-            f"paper(action='rename', key='{key}', new_key='...') to rename it, "
+            f"Use paper(id='{key}', meta='{{\"title\": \"...\"}}')"
+            f" to update it, "
+            f"paper(id='{key}', delete=True) then re-create with the new key, "
             f"or choose a different key (e.g. '{key}a')."
         )
         self.key = key
@@ -61,7 +61,7 @@ class DuplicateDOI(TomeError):
         super().__init__(
             f"DOI '{doi}' already exists in the vault{extra}. "
             f"This PDF may be a duplicate. "
-            f"Use paper(key='...') to inspect the existing entry, "
+            f"Use paper(id='...') to inspect the existing entry, "
             f"or ingest with a different key if this is a distinct document."
         )
         self.doi = doi
@@ -89,9 +89,9 @@ class DOIResolutionFailed(TomeError):
             msg = (
                 f"DOI '{doi}' does not exist (CrossRef 404). "
                 f"This DOI may be hallucinated (~10%% of AI-sourced DOIs are wrong). "
-                f"Use discover(query='<paper title>') to find the real DOI, "
-                f"paper(key='...', doi='<correct>') to fix it, "
-                f"or doi(action='reject', doi='{doi}') to reject it."
+                f"Use paper(search=['<paper title>']) to find the real DOI, "
+                f"paper(id='...', meta='{{\"doi\": \"<correct>\"}}')"
+                f" to fix it."
             )
         elif status_code == 429:
             msg = (
@@ -102,7 +102,7 @@ class DOIResolutionFailed(TomeError):
             msg = (
                 f"CrossRef returned HTTP {status_code} for DOI '{doi}'. "
                 f"This may be a transient error. Try again later. "
-                f"If this persists, use report_issue to log it — see guide('reporting-issues')."
+                f"If this persists, use guide(report='describe the problem') to log it."
             )
         super().__init__(msg)
         self.doi = doi
@@ -116,10 +116,11 @@ class IngestFailed(TomeError):
         super().__init__(
             f"Could not ingest '{path}': {reason}. "
             f"The file remains in inbox/. "
-            f"Try: ingest(path='{path}', key='authorYYYYslug') to assign a key manually, "
-            f"or use paper(key='authorYYYYslug', title='...') to create the bib entry first. "
-            f"See guide('paper-workflow') for the full pipeline. "
-            f"If the PDF looks valid, use report_issue to log a bug — see guide('reporting-issues')."
+            f"Try: paper(id='authorYYYYslug', path='{path}') to assign a key manually, "
+            f"or use paper(id='authorYYYYslug', meta='{{\"title\": \"...\"}}')"
+            f" to create the bib entry first. "
+            f"See guide('paper-ingest') for the full pipeline. "
+            f"If the PDF looks valid, use guide(report='describe the problem') to log a bug."
         )
         self.path = path
         self.reason = reason
@@ -134,7 +135,7 @@ class BibParseError(TomeError):
             f"Check the file for syntax errors (unmatched braces, missing commas). "
             f"The file was not modified. "
             f"Try: git diff {path} to see recent changes. "
-            f"If the file looks correct, use report_issue to log a bug — see guide('reporting-issues')."
+            f"If the file looks correct, use guide(report='describe the problem') to log a bug."
         )
         self.path = path
         self.detail = detail
@@ -148,7 +149,7 @@ class BibWriteError(TomeError):
             f"Bib write aborted for '{path}': {detail}. "
             f"A roundtrip parse-serialize-parse test detected unexpected changes. "
             f"The file was not modified. A backup exists at .tome-mcp/tome.json.bak. "
-            f"If this recurs, use report_issue to log a bug — see guide('reporting-issues')."
+            f"If this recurs, use guide(report='describe the problem') to log a bug."
         )
         self.path = path
         self.detail = detail
@@ -160,8 +161,8 @@ class FigureNotFound(TomeError):
     def __init__(self, key: str, figure: str):
         super().__init__(
             f"No figure '{figure}' registered for paper '{key}'. "
-            f"Use figure(key='{key}', figure='...', reason='...') to request it, "
-            f"or figure() to list existing figures."
+            f"Use paper(id='{key}', path='screenshot.png') to register a figure, "
+            f"or paper(id='{key}') to see existing figures."
         )
         self.key = key
         self.figure = figure
@@ -174,8 +175,8 @@ class TextNotExtracted(TomeError):
         if has_pdf is False:
             msg = (
                 f"No PDF for paper '{key}'. "
-                f"Place the PDF in tome/inbox/ and run ingest, "
-                f"or try doi(key='{key}', action='fetch') for open-access retrieval."
+                f"Place the PDF in tome/inbox/ and use paper(path='inbox/filename.pdf'), "
+                f"or check open-access availability."
             )
         elif has_pdf is True:
             msg = (
@@ -205,7 +206,7 @@ class APIError(TomeError):
             msg = (
                 f"{service} server error (HTTP {status_code}) after retries. "
                 f"The service may be temporarily down. Try again later. "
-                f"If this persists, use report_issue to log it — see guide('reporting-issues'). {detail}"
+                f"If this persists, use guide(report='describe the problem') to log it. {detail}"
             )
         elif status_code == 0:
             msg = (
@@ -283,9 +284,10 @@ class NoBibFile(ConfigError):
         super().__init__(
             f"Bibliography file not found at {bib_path}",
             hint=(
-                "The library is empty. Use paper(key='...', title='...') to create "
-                "the first entry, or place a PDF in tome/inbox/ and run ingest. "
-                "See guide('paper-workflow') for the full pipeline."
+                "The library is empty. Use paper(id='...', meta='{\"title\": \"...\"}') to create "
+                "the first entry, or place a PDF in tome/inbox/ and use "
+                "paper(path='inbox/filename.pdf'). "
+                "See guide('paper-ingest') for the full pipeline."
             ),
         )
 

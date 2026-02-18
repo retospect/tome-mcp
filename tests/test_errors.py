@@ -90,8 +90,8 @@ class TestPaperNotFound:
         e = PaperNotFound("xu2022")
         msg = str(e)
         assert "xu2022" in msg
-        assert "paper(action='list')" in msg
-        assert "search(query=" in msg
+        assert "paper(id=" in msg
+        assert "paper(search=" in msg
 
     def test_near_suggestions(self):
         e = PaperNotFound("xu2022", near=["xu2022mof", "xu2023"])
@@ -146,8 +146,8 @@ class TestDOIResolutionFailed:
         assert e.doi == "10.1/fake"
         assert e.status_code == 404
         assert "hallucinated" in str(e)
-        assert "discover(query=" in str(e)
-        assert "doi(action='reject'" in str(e)
+        assert "paper(search=" in str(e)
+        assert "meta=" in str(e)
 
     def test_429(self):
         e = DOIResolutionFailed("10.1/x", 429)
@@ -192,7 +192,7 @@ class TestFigureNotFound:
         e = FigureNotFound("xu2022", "fig3")
         assert e.key == "xu2022"
         assert e.figure == "fig3"
-        assert "figure(key=" in str(e)
+        assert "paper(id='xu2022'" in str(e)
 
 
 class TestTextNotExtracted:
@@ -210,7 +210,7 @@ class TestTextNotExtracted:
     def test_has_pdf_false(self):
         e = TextNotExtracted("xu2022", has_pdf=False)
         assert "No PDF" in str(e)
-        assert "doi(key='xu2022', action='fetch')" in str(e)
+        assert "paper(path=" in str(e)
         assert "inbox" in str(e)
 
 
@@ -297,7 +297,7 @@ class TestNoBibFile:
         assert isinstance(e, ConfigError)
         msg = str(e)
         assert "references.bib" in msg
-        assert "paper(key=" in msg
+        assert "paper(id=" in msg
         assert "ingest" in msg
 
 

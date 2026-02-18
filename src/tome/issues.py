@@ -25,7 +25,7 @@ _HELP_TEXT = """\
 ## Writing the description
 Structure: **what you did → what happened → what you expected**.
 
-Good: "Called search(query='MOF conductivity', key='sheberla2014'). \
+Good: "Called paper(search=['MOF conductivity'], id='sheberla2014'). \
 Returned 0 results. Expected ≥1 hit — paper discusses conductivity on p.3."
 
 Bad: "search doesn't work for sheberla2014"
@@ -55,19 +55,19 @@ When in doubt, use **major** — wrong results are worse than crashes \
 ## Examples
 
 ### Good minor
-tool='search', severity='minor'
-"search(query='DNA origami') returns results sorted alphabetically \
+tool='paper', severity='minor'
+"paper(search=['DNA origami']) returns results sorted alphabetically \
 instead of by relevance score. Results are correct but ordering is unhelpful."
 
 ### Good major
-tool='ingest', severity='major'
-"ingest(path='inbox/smith2024.pdf', confirm=True) succeeded but wrote \
+tool='paper', severity='major'
+"paper(id='smith2024', path='inbox/smith2024.pdf') succeeded but wrote \
 year='2023' in the bib entry. PDF title page clearly says 2024. \
 DOI 10.1234/example confirms 2024."
 
 ### Good blocker
-tool='reindex', severity='blocker'
-"reindex(key='jones2021') raises KeyError: 'pages'. Traceback ends at \
+tool='paper', severity='blocker'
+"paper(search=['jones2021']) raises KeyError: 'pages'. Traceback ends at \
 store.py line 142. Paper has 8 extracted pages in .tome-mcp/raw/jones2021/. \
 Happens on every retry."
 """

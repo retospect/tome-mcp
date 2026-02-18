@@ -76,7 +76,7 @@ class TestGetEntry:
         with pytest.raises(PaperNotFound) as exc_info:
             get_entry(lib, "nonexistent")
         assert "nonexistent" in str(exc_info.value)
-        assert "paper(action='list')" in str(exc_info.value)
+        assert "paper(id=" in str(exc_info.value) or "create one" in str(exc_info.value)
 
 
 class TestListKeys:
@@ -143,7 +143,7 @@ class TestAddEntry:
         with pytest.raises(DuplicateKey) as exc_info:
             add_entry(lib, "xu2022")
         assert "xu2022" in str(exc_info.value)
-        assert "paper(key=" in str(exc_info.value)
+        assert "paper(id=" in str(exc_info.value)
 
     def test_add_with_no_fields(self, small_bib: Path):
         lib = parse_bib(small_bib)

@@ -170,25 +170,11 @@ def _cap_response(result: str, name: str) -> str:
 # Map tool names → relevant guide topics for error hints.
 # When a tool raises TomeError, the hint tells the LLM where to look.
 _TOOL_GUIDE: dict[str, str] = {
-    "paper": "paper-workflow",
-    "ingest": "paper-workflow",
-    "doi": "paper-workflow",
+    "paper": "paper",
     "notes": "notes",
-    "search": "search",
-    "toc": "document-analysis",
-    "doc_lint": "document-analysis",
-    "dep_graph": "document-analysis",
-    "review_status": "document-analysis",
-    "reindex": "search",
-    "needful": "needful",
+    "toc": "doc",
     "set_root": "getting-started",
     "guide": "getting-started",
-    "discover": "exploration",
-    "explore": "exploration",
-    "report_issue": "reporting-issues",
-    "figure": "paper-workflow",
-    "validate_deep_cites": "search",
-    "file_diff": "review-cycle",
 }
 
 
@@ -292,8 +278,7 @@ def _logging_tool(**kwargs):
                 raise TomeError(
                     f"Internal error in {name}: {type(exc).__name__}: "
                     f"{_sanitize_exc(exc)}.{hint} "
-                    f"If this persists, use report_issue to log it — "
-                    f"see guide('reporting-issues')."
+                    f"If this persists, use guide(report='describe the problem') to log it."
                 ) from exc
             finally:
                 clear_token()
@@ -778,7 +763,7 @@ def _propose_ingest(pdf_path: Path, *, dois: str = "") -> dict[str, Any]:
         doc_type_hint = (
             "This looks like a datasheet or vendor document (no DOI, no academic "
             "metadata). Provide key and metadata manually: "
-            "ingest(path='...', key='vendor_partnum', doc_type='datasheet')."
+            "paper(id='vendor_partnum', path='...') to ingest with a manual key."
         )
 
     # Detect errata / corrigendum / retraction / addendum
@@ -795,7 +780,7 @@ def _propose_ingest(pdf_path: Path, *, dois: str = "") -> dict[str, Any]:
                 f"Use the key format: <parentkey>_{related_doc_type}_1 "
                 f"(e.g. '{sorted(candidates)[0]}_{related_doc_type}_1'). "
                 f"After ingesting, store the link: "
-                f"notes(key='<new_key>', fields='{{\"parent\": \"<parentkey>\"}}')."
+                f"notes(on='<new_key>', title='parent', content='<parentkey>')."
             )
         else:
             related_hint = (
@@ -823,7 +808,7 @@ def _propose_ingest(pdf_path: Path, *, dois: str = "") -> dict[str, Any]:
         "s2_year": s2_result.year if s2_result else None,
         "next_steps": (
             f"Review the match. To confirm, call: "
-            f"ingest(path='{pdf_path.name}', key='<key>', confirm=true). "
+            f"paper(id='<key>', path='{pdf_path.name}'). "
             f"Suggested key: '{suggested_key or 'authorYYYYslug'}'. "
             f"Prefer authorYYYYslug format — pick 1-2 distinctive words "
             f"from the title as a slug (e.g. 'smith2024ndr')."
@@ -1114,12 +1099,12 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
         "DOI verified (CrossRef + title match). "
         if prep.doi_status == "verified"
         else (
-            f"⚠ DOI-title mismatch — verify with doi(key='{key}'). "
+            f"⚠ DOI-title mismatch — verify with paper(id='{key}'). "
             if prep.doi_status == "mismatch"
             else (
-                f"DOI unchecked (S2 only) — verify: doi(key='{key}'). "
+                f"DOI unchecked (S2 only) — verify: paper(id='{key}'). "
                 if prep.doi_status == "unchecked"
-                else f"No DOI — add manually: paper(key='{key}', doi='...'). "
+                else f"No DOI — add manually: paper(id='{key}', meta='{{\"doi\": \"...\"}}'). "
             )
         )
     )
@@ -1129,7 +1114,7 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
         parent_key, relation, _ = parsed_child
         parent_hint = (
             f"This is a {relation} — link to parent: "
-            f"notes(key='{key}', parent='{parent_key}'). "
+            f"notes(on='{key}', title='parent', content='{parent_key}'). "
         )
     else:
         parent_hint = ""
@@ -1149,8 +1134,8 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
         "next_steps": (
             f"{doi_hint}"
             f"{parent_hint}"
-            f"Enrich: notes(key='{key}', summary='...'). "
-            f"See guide('paper-workflow') for the full pipeline."
+            f"Enrich: notes(on='{key}', title='summary', content='...'). "
+            f"See guide('paper-ingest') for the full pipeline."
         ),
     }
     if parsed_child:
@@ -1358,8 +1343,8 @@ def _paper_list(tags: str = "", status: str = "", page: int = 1) -> str:
     }
     if total == 0:
         result["hint"] = (
-            "Library is empty. Use ingest() to add papers from tome/inbox/, "
-            "or paper(key='...', title='...') to create entries."
+            "Library is empty. Use paper(path='inbox/filename.pdf') to add papers, "
+            "or paper(id='key', meta='{\"title\": \"...\"}') to create entries."
         )
     elif page < total_pages:
         result["hint"] = f"Use page={page + 1} for more."
@@ -1857,9 +1842,8 @@ def _search_all(
     )
 
 
-# list_labels and find_cites have been folded into the unified toc() tool.
-# Use toc(locate="label") for list_labels behavior.
-# Use toc(locate="cite", query="key") for find_cites behavior.
+# list_labels → toc(search=['\label{prefix}'])
+# find_cites → toc(search=['key2024'])
 
 
 
@@ -1975,7 +1959,7 @@ def _reindex_corpus(paths: str) -> dict[str, Any]:
         corpus_result["stale_summaries"] = stale
         corpus_result["hint"] = (
             "Some file summaries are stale or missing. Use "
-            "notes(file=<path>) to check, then update with summary/short/sections params."
+            "notes(on=<filename>) to check, then update with title/content params."
         )
     return corpus_result
 
@@ -1985,18 +1969,8 @@ def _reindex_corpus(paths: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-# rebuild_doc_index has been folded into toc(locate="index").
-# The index auto-rebuilds from .idx when stale (mtime check).
-
-
-# search_doc_index and list_doc_index have been folded into toc(locate="index").
-# Use toc(locate="index", query="term") for search_doc_index behavior.
-# Use toc(locate="index") with no query for list_doc_index behavior.
-
-
-# summarize_file and get_summary have been folded into notes(file=...).
-# Use notes(file="x.tex", summary="...", short="...", sections="[...]") to write.
-# Use notes(file="x.tex") to read (includes summary + staleness via git).
+# rebuild_doc_index, search_doc_index, list_doc_index → toc(search=['\index{term}'])
+# summarize_file, get_summary → notes(on='file.tex', ...)
 
 
 # ---------------------------------------------------------------------------
@@ -2513,7 +2487,7 @@ def _doi_fetch(key: str) -> str:
                 "is_oa": result.is_oa,
                 "oa_status": result.oa_status,
                 "message": "No open-access PDF available.",
-                "hint": "Try paper(action='request', key='...') to track it, or manually place the PDF in tome/inbox/.",
+                "hint": "Place the PDF in tome/inbox/ and use paper(path='inbox/filename.pdf') to ingest.",
             }
         )
 
@@ -2541,7 +2515,7 @@ def _doi_fetch(key: str) -> str:
                 "doi": doi,
                 "message": f"PDF already in inbox: tome/inbox/{key}.pdf",
                 "oa_url": result.best_oa_url,
-                "next_step": f"Run ingest(path='inbox/{key}.pdf', key='{key}', confirm=True) to process it.",
+                "next_step": f"Run paper(id='{key}', path='inbox/{key}.pdf') to process it.",
             }
         )
 
@@ -2562,7 +2536,7 @@ def _doi_fetch(key: str) -> str:
             "oa_url": result.best_oa_url,
             "saved": f"tome/inbox/{key}.pdf",
             "size_bytes": dest.stat().st_size,
-            "next_step": f"Run ingest(path='inbox/{key}.pdf', key='{key}', confirm=True) to process it.",
+            "next_step": f"Run paper(id='{key}', path='inbox/{key}.pdf') to process it.",
         }
     )
 
@@ -2643,7 +2617,7 @@ def _doi_list_rejected() -> str:
     return json.dumps({"count": len(entries), "rejected": entries}, indent=2)
 
 
-# check_doi, reject_doi, list_rejected_dois, fetch_oa have been folded into doi().
+# check_doi, reject_doi, list_rejected_dois, fetch_oa — internal helpers for paper() routing.
 
 
 # ---------------------------------------------------------------------------
@@ -2917,9 +2891,7 @@ def _doi_resolve(doi_str: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-# rebuild has been folded into reindex(scope="papers").
-# Use reindex(key="smith2024") to rebuild one paper.
-# Use reindex(scope="papers") to rebuild all papers.
+# Paper reindex — called automatically when search index is stale.
 
 
 def _reset_vault_chroma() -> None:
@@ -3279,20 +3251,14 @@ def _toc_locate_tree(root: str = "default") -> str:
 
 
 
-# find_text and grep_raw have been folded into the unified search() tool.
-# Use search(scope="corpus", mode="exact") for find_text behavior.
-# Use search(scope="papers", mode="exact") for grep_raw behavior.
+# find_text, grep_raw — internal helpers for paper(search=[...]) and toc(search=[...]).
 
 
 # ---------------------------------------------------------------------------
 # Exploration — unified LLM-guided citation beam search
 # ---------------------------------------------------------------------------
 
-# build_cite_tree, discover_citing, dismiss_citing, explore_citations,
-# mark_explored, list_explorations, clear_explorations have been folded
-# into discover() and explore().
-# Use discover(scope="refresh") for build_cite_tree behavior.
-# Use discover(scope="shared_citers") for discover_citing behavior.
+# Citation exploration helpers — used internally by paper(search=['cited_by:key']) etc.
 
 
 def _explore_fetch(
@@ -3476,7 +3442,7 @@ def _explore_clear() -> dict[str, Any]:
 
 _EMPTY_BIB = """\
 % Tome bibliography — managed by Tome MCP server.
-% Add entries via ingest(), paper(key=..., title=...), or edit directly.
+% Add entries via paper(path='inbox/file.pdf') or edit directly.
 
 """
 
@@ -3617,7 +3583,7 @@ def set_root(path: str, test_vault_root: str = "") -> str:
         response["scaffold_hint"] = (
             "Created standard Tome directory structure. "
             "Add .tome-mcp/ to .gitignore (it is a rebuildable cache). "
-            "Drop PDFs in tome/inbox/ and run ingest(). "
+            "Drop PDFs in tome/inbox/ and use paper(path='inbox/filename.pdf'). "
             "See guide('configuration') for config options. "
             "Consider adding project rules (e.g. .windsurf/rules/) to codify "
             "bib key format, DOI verification, and citation conventions — "
@@ -4590,14 +4556,14 @@ def _route_guide(topic: str = "", report: str = "") -> str:
         topic_list = guide_mod.list_topics(_project_root())
         topics = [t["slug"] for t in topic_list]
     except Exception:
-        topics = ["getting-started", "paper", "notes", "doc", "search", "ingest"]
+        topics = ["getting-started", "paper", "notes", "doc", "internals"]
 
     return hints_mod.response(
         {"topics": topics},
         hints={
             "start": "guide(topic='getting-started')",
             "paper_help": "guide(topic='paper')",
-            "doc_help": "guide(topic='doc')",
+            "toc_help": "guide(topic='doc')",
         },
     )
 
@@ -4650,12 +4616,7 @@ def main():
         raise
 
 
-# s2ag_stats, s2ag_lookup, s2ag_shared_citers, s2ag_incremental have been
-# folded into discover().
-# Use discover(scope="stats") for s2ag_stats behavior.
-# Use discover(scope="lookup", doi="...") for s2ag_lookup behavior.
-# Use discover(scope="shared_citers") for s2ag_shared_citers behavior.
-# Use discover(scope="refresh") for s2ag_incremental behavior.
+# s2ag helpers — used internally by paper(search=['cited_by:key', 'cites:key']) etc.
 
 
 if __name__ == "__main__":
