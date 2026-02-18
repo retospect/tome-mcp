@@ -180,13 +180,12 @@ class TextNotExtracted(TomeError):
         elif has_pdf is True:
             msg = (
                 f"PDF exists for '{key}' but text not yet extracted. "
-                f"Run reindex(key='{key}') to extract and index it."
+                f"Re-ingest with paper(id='{key}', path='...') to extract and index it."
             )
         else:
             msg = (
                 f"Text not yet extracted for paper '{key}'. "
-                f"Run reindex(key='{key}') to extract text from the PDF, "
-                f"or check that the PDF exists in the vault (use paper(key='{key}') to verify)."
+                f"Check that the PDF exists in the vault with paper(id='{key}')."
             )
         super().__init__(msg)
         self.key = key
@@ -315,9 +314,8 @@ class ChromaDBError(TomeError):
             f"ChromaDB error: {detail}. "
             f"Paper chunks live in ~/.tome-mcp/chroma/ (vault), "
             f"corpus chunks in .tome-mcp/chroma/ (project). "
-            f"Try: reindex(scope='all') to rebuild. "
-            f"If that fails, delete the relevant chroma/ dir and reindex again. "
-            f"If this persists, use report_issue to log it — see guide('reporting-issues')."
+            f"Try deleting the relevant chroma/ dir — it will be rebuilt automatically. "
+            f"If this persists, use guide(report='...') to log it."
         )
         self.detail = detail
 

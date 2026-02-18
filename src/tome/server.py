@@ -1322,8 +1322,8 @@ def _paper_remove(key: str) -> str:
     return json.dumps({"status": "removed", "key": key})
 
 
-def _paper_get(key: str, page: int = 0) -> str:
-    """Get full metadata for a paper in the library.
+def _paper_get_legacy(key: str, page: int = 0) -> str:
+    """DEAD CODE — old v1 paper get. Kept temporarily for reference.
 
     Args:
         key: Bib key (e.g. 'miller1999'). Same as used in \\cite{}.
@@ -2233,7 +2233,7 @@ def _search_papers_exact(
             {
                 "error": "No raw text directory (.tome-mcp/raw/) found. "
                 "No papers have been ingested yet, or the cache was deleted. "
-                "Use ingest to add papers, or run reindex(scope='papers') to regenerate from vault archives."
+                "Use paper(path='inbox/filename.pdf') to ingest papers."
             }
         )
 
@@ -2339,8 +2339,8 @@ def _search_corpus(
     }
     if not results:
         response["hint"] = (
-            "No results. Run reindex(scope='corpus') to index files, "
-            "or check tex_globs in tome/config.yaml."
+            "No results. Check that tex_globs in tome/config.yaml "
+            "covers your source files."
         )
     return json.dumps(response, indent=2)
 
@@ -3448,56 +3448,6 @@ def figure(
 # ---------------------------------------------------------------------------
 
 
-def _paper_request(
-    key: str,
-    doi: str = "",
-    reason: str = "",
-    tentative_title: str = "",
-) -> str:
-    """Track a paper you want but don't have the PDF for.
-
-    Args:
-        key: Bib key (may be tentative, e.g. 'ouyang2025').
-        doi: DOI if known (helps retrieval).
-        reason: Why you need this paper.
-        tentative_title: Best-guess title.
-    """
-    # Warn if DOI is known-bad
-    warning = None
-    if doi:
-        rejected = rejected_dois_mod.is_rejected(_tome_dir(), doi)
-        if rejected:
-            warning = (
-                f"⚠ DOI {doi} was previously rejected: "
-                f"{rejected.get('reason', 'unknown')} "
-                f"(key: {rejected.get('key', '?')}, date: {rejected.get('date', '?')}). "
-                f"Request created anyway — remove with doi(doi='...', action='reject') if confirmed bad."
-            )
-
-    data = _load_manifest()
-    req: dict[str, Any] = {
-        "doi": doi or None,
-        "tentative_title": tentative_title or None,
-        "reason": reason or None,
-        "added": manifest.now_iso(),
-        "resolved": None,
-    }
-    manifest.set_request(data, key, req)
-    _save_manifest(data)
-    result: dict[str, Any] = {"status": "requested", "key": key, **req}
-    if warning:
-        result["warning"] = warning
-    return json.dumps(result, indent=2)
-
-
-def _paper_list_requests() -> str:
-    """Show all open paper requests (papers wanted but not yet obtained)."""
-    data = _load_manifest()
-    opens = manifest.list_open_requests(data)
-    results = [{"key": k, **v} for k, v in opens.items()]
-    return json.dumps({"count": len(results), "requests": results}, indent=2)
-
-
 # ---------------------------------------------------------------------------
 # Rejected DOIs
 # ---------------------------------------------------------------------------
@@ -4020,68 +3970,6 @@ def _dir_info(p: Path) -> dict[str, Any]:
             info["items"] = -1
     return info
 
-
-def _paper_stats() -> str:
-    """Library statistics: paper counts, DOI status summary, pending figures and requests."""
-    lib = _load_bib()
-    data = _load_manifest()
-
-    doi_stats: dict[str, int] = {}
-    has_pdf = 0
-    for entry in lib.entries:
-        ds = bib.get_x_field(entry, "x-doi-status") or "missing"
-        doi_stats[ds] = doi_stats.get(ds, 0) + 1
-        if bib.get_x_field(entry, "x-pdf") == "true":
-            has_pdf += 1
-
-    pending_figs = len(figures.list_figures(data, status="requested"))
-    open_reqs = len(manifest.list_open_requests(data))
-
-    open_issues = issues_mod.count_open(_tome_dir())
-    notes_count = len(notes_mod.list_notes(_tome_dir()))
-
-    proj = _project_root()
-    paths_info: dict[str, Any] = {
-        "home": _dir_info(tome_paths.home_dir()),
-        "project_cache": _dir_info(tome_paths.project_dir(proj)),
-        "tome": _dir_info(proj / "tome"),
-    }
-
-    result: dict[str, Any] = {
-        "total_papers": len(lib.entries),
-        "with_pdf": has_pdf,
-        "doi_status": doi_stats,
-        "pending_figures": pending_figs,
-        "open_requests": open_reqs,
-        "papers_with_notes": notes_count,
-        "open_issues": open_issues,
-        "paths": paths_info,
-    }
-    if not lib.entries:
-        result["hint"] = (
-            "Library is empty. Drop PDFs in tome/inbox/ and run ingest(), "
-            "or use paper(key='...', title='...') to create entries."
-        )
-    return json.dumps(result, indent=2)
-
-
-
-def guide(topic: str = "") -> str:
-    """On-demand usage guides. START HERE for new sessions.
-
-    Call without args for the topic index. Key topics:
-    'getting-started', 'paper-workflow', 'search', 'needful', 'exploration'.
-    Works before set_root.
-    """
-    try:
-        proj = _project_root()
-    except TomeError:
-        # No root yet — use a dummy path so only built-in docs are found
-        proj = Path("/nonexistent")
-    if not topic:
-        topics = guide_mod.list_topics(proj)
-        return guide_mod.render_index(topics)
-    return guide_mod.get_topic(proj, topic)
 
 
 # ---------------------------------------------------------------------------
@@ -5366,7 +5254,7 @@ def _get_paper_note_titles(key: str) -> list[str]:
 
 
 @mcp_server.tool(name="paper")
-def paper_v2(
+def paper(
     id: str = "",
     search: list[str] | None = None,
     path: str = "",
@@ -5417,11 +5305,11 @@ def _route_paper(
 
     # --- Search ---
     if search:
-        return _paper_v2_search(search)
+        return _paper_search(search)
 
     # --- Path without id → propose ingest ---
     if path and not id:
-        return _paper_v2_ingest_propose(path)
+        return _paper_ingest_propose(path)
 
     # --- id present: parse it ---
     try:
@@ -5437,7 +5325,7 @@ def _route_paper(
             parsed = parse_id(resolved_key)
         else:
             # Not in vault — try online lookup
-            return _paper_v2_doi_lookup(parsed.doi, path=path, meta=meta, delete=delete)
+            return _paper_doi_lookup(parsed.doi, path=path, meta=meta, delete=delete)
 
     # --- S2 hash resolution ---
     if parsed.kind == IdKind.S2:
@@ -5453,34 +5341,34 @@ def _route_paper(
     # --- Delete ---
     if delete:
         if parsed.kind == IdKind.FIGURE:
-            return _paper_v2_delete_figure(parsed.slug, parsed.figure)
-        return _paper_v2_delete(parsed.paper_id)
+            return _paper_delete_figure(parsed.slug, parsed.figure)
+        return _paper_delete(parsed.paper_id)
 
     # --- id + path → commit ingest or register figure ---
     if path:
         if parsed.kind == IdKind.FIGURE:
-            return _paper_v2_register_figure(parsed.slug, parsed.figure, path)
-        return _paper_v2_ingest_commit(parsed.paper_id, path, meta)
+            return _paper_register_figure(parsed.slug, parsed.figure, path)
+        return _paper_ingest_commit(parsed.paper_id, path, meta)
 
     # --- id + meta → update metadata ---
     if meta:
         if parsed.kind == IdKind.FIGURE:
-            return _paper_v2_update_figure(parsed.slug, parsed.figure, meta)
-        return _paper_v2_update_meta(parsed.paper_id, meta)
+            return _paper_update_figure(parsed.slug, parsed.figure, meta)
+        return _paper_update_meta(parsed.paper_id, meta)
 
     # --- Page text ---
     if parsed.kind == IdKind.PAGE:
-        return _paper_v2_get_page(parsed.slug, parsed.page)
+        return _paper_get_page(parsed.slug, parsed.page)
 
     # --- Figure info ---
     if parsed.kind == IdKind.FIGURE:
-        return _paper_v2_get_figure(parsed.slug, parsed.figure)
+        return _paper_get_figure(parsed.slug, parsed.figure)
 
     # --- Default: paper metadata ---
-    return _paper_v2_get(parsed.paper_id)
+    return _paper_get(parsed.paper_id)
 
 
-def _paper_v2_get(key: str) -> str:
+def _paper_get(key: str) -> str:
     """Get paper metadata with hints."""
     try:
         lib = _load_bib()
@@ -5540,13 +5428,13 @@ def _paper_v2_get(key: str) -> str:
     return hints_mod.response(result, hints=h)
 
 
-def _paper_v2_get_page(key: str, page: int) -> str:
+def _paper_get_page(key: str, page: int) -> str:
     """Get page text for a paper."""
     try:
         text = extract.read_page(_raw_dir(), key, page)
     except TextNotExtracted:
         return hints_mod.error(
-            f"Text not extracted for '{key}'. Ingest or reindex first.",
+            f"Text not extracted for '{key}'. Re-ingest the PDF to extract text.",
             hints={"view": f"paper(id='{key}')", "guide": "guide('paper-id')"},
         )
     except Exception as exc:
@@ -5557,7 +5445,7 @@ def _paper_v2_get_page(key: str, page: int) -> str:
     return hints_mod.response(result, hints=hints_mod.page_hints(key, page, total_pages))
 
 
-def _paper_v2_get_figure(slug: str, figure: str) -> str:
+def _paper_get_figure(slug: str, figure: str) -> str:
     """Get figure info for a paper."""
     data = _load_manifest()
     paper_meta = manifest.get_paper(data, slug)
@@ -5577,16 +5465,16 @@ def _paper_v2_get_figure(slug: str, figure: str) -> str:
     return hints_mod.response(result, hints=hints_mod.figure_hints(slug, figure))
 
 
-def _paper_v2_search(search_terms: list[str]) -> str:
+def _paper_search(search_terms: list[str]) -> str:
     """Route search bag to the appropriate backend."""
     # Check for special prefixes
     for term in search_terms:
         if term.startswith("cited_by:"):
             key = term.split(":", 1)[1]
-            return _paper_v2_cited_by(key, search_terms)
+            return _paper_cited_by(key, search_terms)
         if term.startswith("cites:"):
             key = term.split(":", 1)[1]
-            return _paper_v2_cites(key, search_terms)
+            return _paper_cites(key, search_terms)
 
     # Check for 'online' flag
     online = "online" in search_terms
@@ -5629,7 +5517,7 @@ def _paper_v2_search(search_terms: list[str]) -> str:
         return hints_mod.error(f"Search failed: {exc}")
 
 
-def _paper_v2_cited_by(key: str, search_terms: list[str]) -> str:
+def _paper_cited_by(key: str, search_terms: list[str]) -> str:
     """Citation graph: who cites this paper."""
     try:
         result = _discover_graph(key=key, doi="", s2_id="")
@@ -5652,7 +5540,7 @@ def _paper_v2_cited_by(key: str, search_terms: list[str]) -> str:
         return hints_mod.error(f"Citation graph failed: {exc}", hints={"guide": "guide('paper-cite-graph')"})
 
 
-def _paper_v2_cites(key: str, search_terms: list[str]) -> str:
+def _paper_cites(key: str, search_terms: list[str]) -> str:
     """Reference graph: what this paper cites."""
     try:
         result = _discover_graph(key=key, doi="", s2_id="")
@@ -5674,7 +5562,7 @@ def _paper_v2_cites(key: str, search_terms: list[str]) -> str:
         return hints_mod.error(f"Reference graph failed: {exc}", hints={"guide": "guide('paper-cite-graph')"})
 
 
-def _paper_v2_ingest_propose(path_str: str) -> str:
+def _paper_ingest_propose(path_str: str) -> str:
     """Propose ingest from inbox file."""
     try:
         pdf_path = _project_root() / path_str
@@ -5688,7 +5576,7 @@ def _paper_v2_ingest_propose(path_str: str) -> str:
         return hints_mod.error(f"Ingest proposal failed: {exc}", hints={"guide": "guide('paper-ingest')"})
 
 
-def _paper_v2_ingest_commit(key: str, path_str: str, meta: str) -> str:
+def _paper_ingest_commit(key: str, path_str: str, meta: str) -> str:
     """Commit ingest: key chosen, optional meta overrides."""
     try:
         pdf_path = _project_root() / path_str
@@ -5716,7 +5604,7 @@ def _paper_v2_ingest_commit(key: str, path_str: str, meta: str) -> str:
         return hints_mod.error(f"Ingest commit failed: {exc}", hints={"guide": "guide('paper-ingest')"})
 
 
-def _paper_v2_update_meta(key: str, meta_str: str) -> str:
+def _paper_update_meta(key: str, meta_str: str) -> str:
     """Update paper metadata from a JSON string."""
     try:
         m = json.loads(meta_str)
@@ -5745,7 +5633,7 @@ def _paper_v2_update_meta(key: str, meta_str: str) -> str:
         return hints_mod.error(str(exc))
 
 
-def _paper_v2_update_figure(slug: str, figure: str, meta_str: str) -> str:
+def _paper_update_figure(slug: str, figure: str, meta_str: str) -> str:
     """Update figure metadata (e.g. caption)."""
     try:
         m = json.loads(meta_str)
@@ -5768,7 +5656,7 @@ def _paper_v2_update_figure(slug: str, figure: str, meta_str: str) -> str:
     )
 
 
-def _paper_v2_delete(key: str) -> str:
+def _paper_delete(key: str) -> str:
     """Remove a paper and all associated data."""
     try:
         result = json.loads(_paper_remove(key))
@@ -5777,7 +5665,7 @@ def _paper_v2_delete(key: str) -> str:
         return hints_mod.error(str(exc))
 
 
-def _paper_v2_delete_figure(slug: str, figure: str) -> str:
+def _paper_delete_figure(slug: str, figure: str) -> str:
     """Remove a single figure from a paper."""
     data = _load_manifest()
     paper_meta = manifest.get_paper(data, slug) or {}
@@ -5793,7 +5681,7 @@ def _paper_v2_delete_figure(slug: str, figure: str) -> str:
     )
 
 
-def _paper_v2_register_figure(slug: str, figure: str, path_str: str) -> str:
+def _paper_register_figure(slug: str, figure: str, path_str: str) -> str:
     """Register a figure screenshot for a paper."""
     data = _load_manifest()
     paper_meta = manifest.get_paper(data, slug) or {}
@@ -5809,11 +5697,11 @@ def _paper_v2_register_figure(slug: str, figure: str, path_str: str) -> str:
     )
 
 
-def _paper_v2_doi_lookup(doi_str: str, path: str = "", meta: str = "", delete: bool = False) -> str:
+def _paper_doi_lookup(doi_str: str, path: str = "", meta: str = "", delete: bool = False) -> str:
     """DOI not in vault — lookup online, or ingest if path provided."""
     if path:
         # User is ingesting with a DOI hint
-        return _paper_v2_ingest_propose_with_doi(doi_str, path, meta)
+        return _paper_ingest_propose_with_doi(doi_str, path, meta)
 
     # Online lookup
     try:
@@ -5829,7 +5717,7 @@ def _paper_v2_doi_lookup(doi_str: str, path: str = "", meta: str = "", delete: b
         return hints_mod.error(f"DOI lookup failed: {exc}")
 
 
-def _paper_v2_ingest_propose_with_doi(doi_str: str, path_str: str, meta: str) -> str:
+def _paper_ingest_propose_with_doi(doi_str: str, path_str: str, meta: str) -> str:
     """Propose ingest with a DOI as the id hint."""
     try:
         pdf_path = _project_root() / path_str
@@ -5848,27 +5736,27 @@ def _paper_v2_ingest_propose_with_doi(doi_str: str, path_str: str, meta: str) ->
 # ---------------------------------------------------------------------------
 
 
-def _notes_v2_dir() -> Path:
+def _notes_dir() -> Path:
     """Return the v2 notes directory, creating it if needed."""
     d = _tome_dir() / "notes_v2"
     d.mkdir(exist_ok=True)
     return d
 
 
-def _notes_v2_safe_on(on: str) -> str:
+def _notes_safe_on(on: str) -> str:
     """Sanitize the 'on' identifier for use in filenames."""
     return re.sub(r"[^\w\s.-]", "_", on).strip()[:80]
 
 
-def _notes_v2_path(on: str, title: str) -> Path:
+def _notes_path(on: str, title: str) -> Path:
     """Return the file path for a specific note."""
-    safe_on = _notes_v2_safe_on(on)
+    safe_on = _notes_safe_on(on)
     safe_title = re.sub(r"[^\w\s-]", "", title).strip().replace(" ", "_")[:80]
-    return _notes_v2_dir() / f"{safe_on}__{safe_title}.yaml"
+    return _notes_dir() / f"{safe_on}__{safe_title}.yaml"
 
 
 @mcp_server.tool(name="notes")
-def notes_v2(
+def notes(
     on: str = "",
     title: str = "",
     content: str = "",
@@ -5915,7 +5803,7 @@ def _route_notes(
     if delete:
         if title:
             # Delete specific note
-            note_path = _notes_v2_path(on, title)
+            note_path = _notes_path(on, title)
             if note_path.exists():
                 note_path.unlink()
             return hints_mod.response(
@@ -5924,9 +5812,9 @@ def _route_notes(
             )
         else:
             # Delete ALL notes for this paper/file
-            notes_dir = _notes_v2_dir()
+            notes_dir = _notes_dir()
             deleted = 0
-            for p in notes_dir.glob(f"{_notes_v2_safe_on(on)}__*.yaml"):
+            for p in notes_dir.glob(f"{_notes_safe_on(on)}__*.yaml"):
                 p.unlink()
                 deleted += 1
             return hints_mod.response(
@@ -5936,7 +5824,7 @@ def _route_notes(
 
     # --- Write ---
     if title and content:
-        note_path = _notes_v2_path(on, title)
+        note_path = _notes_path(on, title)
         note_data = {"title": title, "content": content, "on": on}
         note_path.write_text(yaml.dump(note_data, default_flow_style=False), encoding="utf-8")
         return hints_mod.response(
@@ -5949,7 +5837,7 @@ def _route_notes(
 
     # --- Read specific note ---
     if title:
-        note_path = _notes_v2_path(on, title)
+        note_path = _notes_path(on, title)
         if not note_path.exists():
             return hints_mod.error(
                 f"No note titled '{title}' for '{on}'.",
@@ -5969,9 +5857,9 @@ def _route_notes(
         )
 
     # --- List notes for this paper/file ---
-    notes_dir = _notes_v2_dir()
+    notes_dir = _notes_dir()
     notes_list = []
-    for p in sorted(notes_dir.glob(f"{_notes_v2_safe_on(on)}__*.yaml")):
+    for p in sorted(notes_dir.glob(f"{_notes_safe_on(on)}__*.yaml")):
         try:
             d = yaml.safe_load(p.read_text(encoding="utf-8"))
             notes_list.append({"title": d.get("title", p.stem), "preview": d.get("content", "")[:80]})
@@ -6016,13 +5904,23 @@ def _route_doc(
 
     search = search or []
 
-    # Freshness checks — cheap mtime comparisons, pushed into advisory accumulator
+    # Freshness checks — auto-reindex if corpus is stale or empty
     try:
         cfg = _load_config()
         root_tex = _resolve_root(root)
-        advisories.check_all_doc(
+        needs_reindex = advisories.check_all_doc(
             _project_root(), _chroma_dir(), cfg.tex_globs, root_tex,
         )
+        if needs_reindex:
+            try:
+                result = _reindex_corpus(",".join(cfg.tex_globs))
+                n = result.get("indexed", 0)
+                advisories.add(
+                    "corpus_auto_reindexed",
+                    f"Auto-reindexed {n} file(s) to bring corpus up to date.",
+                )
+            except Exception:
+                pass  # best-effort: don't block the request
     except Exception:
         pass  # never block the request
 
@@ -6134,7 +6032,7 @@ def _bump_context(context: str) -> str:
 
 
 @mcp_server.tool(name="guide")
-def guide_v2(topic: str = "", report: str = "") -> str:
+def guide(topic: str = "", report: str = "") -> str:
     """Usage guides and issue reporting.
 
     topic: guide topic or tool name

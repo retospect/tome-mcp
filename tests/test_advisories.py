@@ -97,7 +97,7 @@ class TestCorpusFreshness:
         advisories.drain()
 
     def test_corpus_empty(self, tmp_path):
-        """No chroma.sqlite3 → corpus_empty advisory."""
+        """No chroma.sqlite3 → returns True (needs reindex)."""
         proj = tmp_path / "proj"
         proj.mkdir()
         (proj / "sections").mkdir()
@@ -105,13 +105,10 @@ class TestCorpusFreshness:
         chroma = tmp_path / "chroma"
         chroma.mkdir()
 
-        advisories.check_corpus_freshness(proj, chroma, ["sections/*.tex"])
-        advs = advisories.drain()
-        assert any(a["category"] == "corpus_empty" for a in advs)
-        assert "reindex" in advs[0].get("action", "")
+        assert advisories.check_corpus_freshness(proj, chroma, ["sections/*.tex"]) is True
 
     def test_corpus_current(self, tmp_path):
-        """All files older than chroma → corpus_current advisory."""
+        """All files older than chroma → returns False (up to date)."""
         proj = tmp_path / "proj"
         proj.mkdir()
         (proj / "sections").mkdir()
@@ -127,12 +124,10 @@ class TestCorpusFreshness:
         time.sleep(0.05)
         db.write_text("db")
 
-        advisories.check_corpus_freshness(proj, chroma, ["sections/*.tex"])
-        advs = advisories.drain()
-        assert any(a["category"] == "corpus_current" for a in advs)
+        assert advisories.check_corpus_freshness(proj, chroma, ["sections/*.tex"]) is False
 
     def test_corpus_stale(self, tmp_path):
-        """Tex file newer than chroma → corpus_stale advisory."""
+        """Tex file newer than chroma → returns True (needs reindex)."""
         proj = tmp_path / "proj"
         proj.mkdir()
         (proj / "sections").mkdir()
@@ -147,23 +142,16 @@ class TestCorpusFreshness:
         time.sleep(0.05)
         tex.write_text("newer content")
 
-        advisories.check_corpus_freshness(proj, chroma, ["sections/*.tex"])
-        advs = advisories.drain()
-        cats = [a["category"] for a in advs]
-        assert "corpus_stale" in cats
-        stale = [a for a in advs if a["category"] == "corpus_stale"][0]
-        assert "intro.tex" in stale["message"]
-        assert "reindex" in stale.get("action", "")
+        assert advisories.check_corpus_freshness(proj, chroma, ["sections/*.tex"]) is True
 
     def test_no_source_files(self, tmp_path):
-        """No matching files → no advisory at all."""
+        """No matching files → returns False."""
         proj = tmp_path / "proj"
         proj.mkdir()
         chroma = tmp_path / "chroma"
         chroma.mkdir()
 
-        advisories.check_corpus_freshness(proj, chroma, ["sections/*.tex"])
-        assert advisories.drain() == []
+        assert advisories.check_corpus_freshness(proj, chroma, ["sections/*.tex"]) is False
 
 
 # ---------------------------------------------------------------------------

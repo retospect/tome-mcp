@@ -8,25 +8,23 @@ merges advisories into the JSON response under an ``"advisories"`` key.
 Usage from deep code::
 
     from tome import advisories
-    advisories.add("corpus_stale", "3 files changed since last index",
-                    action="reindex(scope='corpus')")
+    advisories.add("corpus_auto_reindexed",
+                    "Auto-reindexed 5 file(s) to bring corpus up to date.")
 
 The LLM sees::
 
     {
       "results": [...],
       "advisories": [
-        {"category": "corpus_stale",
-         "message": "3 files changed since last index",
-         "action": "reindex(scope='corpus')"}
+        {"category": "corpus_auto_reindexed",
+         "message": "Auto-reindexed 5 file(s) to bring corpus up to date."}
       ],
       "hints": {...}
     }
 
 Categories (by convention — not enforced):
 
-- ``corpus_stale``  — tex/py files changed since last ChromaDB index
-- ``corpus_empty``  — no corpus files indexed yet
+- ``corpus_auto_reindexed`` — corpus was stale/empty, auto-reindexed
 - ``build_stale``   — .toc/.idx/.aux/.bbl older than source .tex files
 - ``bib_modified``  — references.bib changed since last manifest sync
 - ``vault_stale``   — paper archives changed since last catalog rebuild
@@ -82,10 +80,12 @@ def check_corpus_freshness(
     project_root: Path,
     chroma_dir: Path,
     tex_globs: list[str],
-) -> None:
+) -> bool:
     """Compare tex/py file mtimes against corpus ChromaDB mtime.
 
-    Pushes ``corpus_stale`` or ``corpus_empty`` advisories as needed.
+    Returns ``True`` if the corpus needs reindexing (empty or stale).
+    Does **not** push advisories — the caller is expected to auto-reindex
+    and emit an informational advisory afterwards.
     """
     chroma_db = chroma_dir / "chroma.sqlite3"
 
@@ -97,33 +97,14 @@ def check_corpus_freshness(
         )
 
     if not source_files:
-        return  # nothing to check
+        return False  # nothing to check
 
     if not chroma_db.exists():
-        add(
-            "corpus_empty",
-            f"{len(source_files)} source files found but corpus not yet indexed.",
-            action="reindex(scope='corpus')",
-        )
-        return
+        return True
 
     index_mtime = chroma_db.stat().st_mtime
     stale = [p for p in source_files if p.stat().st_mtime > index_mtime]
-
-    if stale:
-        names = [str(p.relative_to(project_root)) for p in stale[:5]]
-        suffix = f" (+{len(stale) - 5} more)" if len(stale) > 5 else ""
-        add(
-            "corpus_stale",
-            f"{len(stale)} file(s) changed since last index: "
-            f"{', '.join(names)}{suffix}",
-            action="reindex(scope='corpus')",
-        )
-    else:
-        add(
-            "corpus_current",
-            f"Corpus index current ({len(source_files)} files).",
-        )
+    return bool(stale)
 
 
 def check_build_freshness(
@@ -200,16 +181,21 @@ def check_all_doc(
     chroma_dir: Path,
     tex_globs: list[str],
     root_tex: str = "main.tex",
-) -> None:
-    """Run all doc-related freshness checks.  Safe + cheap for every doc() call."""
+) -> bool:
+    """Run all doc-related freshness checks.  Safe + cheap for every doc() call.
+
+    Returns ``True`` if the corpus needs reindexing.
+    """
+    needs_reindex = False
     try:
-        check_corpus_freshness(project_root, chroma_dir, tex_globs)
+        needs_reindex = check_corpus_freshness(project_root, chroma_dir, tex_globs)
     except Exception:
         pass  # never crash the request
     try:
         check_build_freshness(project_root, root_tex)
     except Exception:
         pass
+    return needs_reindex
 
 
 def check_all_paper(

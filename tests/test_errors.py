@@ -196,16 +196,16 @@ class TestFigureNotFound:
 
 
 class TestTextNotExtracted:
-    def test_message_suggests_reindex(self):
+    def test_message_suggests_paper_check(self):
         e = TextNotExtracted("xu2022")
         assert e.key == "xu2022"
         assert e.has_pdf is None
-        assert "reindex" in str(e)
+        assert "paper(id='xu2022')" in str(e)
 
     def test_has_pdf_true(self):
         e = TextNotExtracted("xu2022", has_pdf=True)
         assert "PDF exists" in str(e)
-        assert "reindex" in str(e)
+        assert "paper(id='xu2022'" in str(e)
 
     def test_has_pdf_false(self):
         e = TextNotExtracted("xu2022", has_pdf=False)
@@ -312,13 +312,13 @@ class TestNoTexFiles:
 
 
 class TestChromaDBError:
-    def test_message_suggests_reindex(self):
+    def test_message_suggests_recovery(self):
         e = ChromaDBError("collection not found")
         assert isinstance(e, TomeError)
         assert e.detail == "collection not found"
         msg = str(e)
         assert "collection not found" in msg
-        assert "reindex" in msg
+        assert "rebuilt automatically" in msg
         assert ".tome-mcp/chroma/" in msg
 
 
