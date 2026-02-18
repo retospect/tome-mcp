@@ -5393,7 +5393,15 @@ def _route_paper(
     meta: str = "",
     delete: bool = False,
 ) -> str:
+    from tome import advisories
+
     search = search or []
+
+    # Freshness checks for paper operations
+    try:
+        advisories.check_all_paper(_project_root(), _dot_tome())
+    except Exception:
+        pass
 
     # --- No args → hints ---
     if not id and not search and not path:
@@ -6004,7 +6012,19 @@ def _route_doc(
     context: str = "",
     page: int = 1,
 ) -> str:
+    from tome import advisories
+
     search = search or []
+
+    # Freshness checks — cheap mtime comparisons, pushed into advisory accumulator
+    try:
+        cfg = _load_config()
+        root_tex = _resolve_root(root)
+        advisories.check_all_doc(
+            _project_root(), _chroma_dir(), cfg.tex_globs, root_tex,
+        )
+    except Exception:
+        pass  # never block the request
 
     # --- No args → TOC + hints ---
     if not search:

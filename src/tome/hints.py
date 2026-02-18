@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from tome import advisories as _advisories
+
 _REPORT_HINT = "guide(report='describe what you expected')"
 
 
@@ -22,7 +24,13 @@ def response(data: dict[str, Any], hints: dict[str, str] | None = None) -> str:
 
     Returns:
         JSON string with ``hints`` appended (including the report hint).
+        Any accumulated advisories are drained and included automatically.
     """
+    # Drain accumulated advisories from deep code
+    advs = _advisories.drain()
+    if advs:
+        data["advisories"] = advs
+
     if hints:
         hints["report"] = _REPORT_HINT
         data["hints"] = hints
