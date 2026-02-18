@@ -390,6 +390,33 @@ def _staging_dir() -> Path:
     return _dot_tome() / "staging"
 
 
+def _rebuild_corpus_chroma() -> bool:
+    """Nuke and rebuild corpus ChromaDB. Returns True on success."""
+    try:
+        chroma = _chroma_dir()
+        if chroma.exists():
+            shutil.rmtree(chroma, ignore_errors=True)
+        cfg = _load_config()
+        _reindex_corpus(",".join(cfg.tex_globs))
+        logger.info("Auto-rebuilt corpus chroma after error")
+        return True
+    except Exception:
+        logger.warning("Corpus chroma rebuild failed", exc_info=True)
+        return False
+
+
+def _rebuild_vault_chroma() -> bool:
+    """Nuke and rebuild vault ChromaDB. Returns True on success."""
+    try:
+        _reset_vault_chroma()
+        _reindex_papers()
+        logger.info("Auto-rebuilt vault chroma after error")
+        return True
+    except Exception:
+        logger.warning("Vault chroma rebuild failed", exc_info=True)
+        return False
+
+
 def _load_bib():
     p = _bib_path()
     if not p.exists():
@@ -1455,34 +1482,38 @@ def _search_papers(
     if mode == "exact":
         return _search_papers_exact(query, resolved, n, context, paragraphs)
 
-    # Semantic mode
-    try:
-        client, embed_fn, _ = _vault_paper_col()
-        if resolved and len(resolved) == 1:
-            results = store.search_papers(
-                client,
-                query,
-                n=n,
-                key=resolved[0],
-                embed_fn=embed_fn,
-            )
-        elif resolved:
-            results = store.search_papers(
-                client,
-                query,
-                n=n,
-                keys=resolved,
-                embed_fn=embed_fn,
-            )
-        else:
-            results = store.search_papers(
-                client,
-                query,
-                n=n,
-                embed_fn=embed_fn,
-            )
-    except Exception as e:
-        raise ChromaDBError(_sanitize_exc(e))
+    # Semantic mode — auto-rebuild on chroma errors
+    for attempt in range(2):
+        try:
+            client, embed_fn, _ = _vault_paper_col()
+            if resolved and len(resolved) == 1:
+                results = store.search_papers(
+                    client,
+                    query,
+                    n=n,
+                    key=resolved[0],
+                    embed_fn=embed_fn,
+                )
+            elif resolved:
+                results = store.search_papers(
+                    client,
+                    query,
+                    n=n,
+                    keys=resolved,
+                    embed_fn=embed_fn,
+                )
+            else:
+                results = store.search_papers(
+                    client,
+                    query,
+                    n=n,
+                    embed_fn=embed_fn,
+                )
+            break
+        except Exception as e:
+            if attempt == 0 and _rebuild_vault_chroma():
+                continue
+            raise ChromaDBError(_sanitize_exc(e))
 
     response: dict[str, Any] = {
         "scope": "papers",
@@ -1597,20 +1628,24 @@ def _search_corpus(
     if mode == "exact":
         return _search_corpus_exact(query, paths, context)
 
-    # Semantic mode
-    try:
-        client, embed_fn, _ = _corpus_col()
-        results = store.search_corpus(
-            client,
-            query,
-            n=n,
-            source_file=paths or None,
-            labels_only=labels_only,
-            cites_only=cites_only,
-            embed_fn=embed_fn,
-        )
-    except Exception as e:
-        raise ChromaDBError(_sanitize_exc(e))
+    # Semantic mode — auto-rebuild on chroma errors
+    for attempt in range(2):
+        try:
+            client, embed_fn, _ = _corpus_col()
+            results = store.search_corpus(
+                client,
+                query,
+                n=n,
+                source_file=paths or None,
+                labels_only=labels_only,
+                cites_only=cites_only,
+                embed_fn=embed_fn,
+            )
+            break
+        except Exception as e:
+            if attempt == 0 and _rebuild_corpus_chroma():
+                continue
+            raise ChromaDBError(_sanitize_exc(e))
 
     response: dict[str, Any] = {
         "scope": "corpus",
@@ -1693,29 +1728,33 @@ def _search_notes(
     validate.validate_key_if_given(key)
     resolved = _resolve_keys(key=key, keys=keys, tags=tags)
 
-    try:
-        _, _, col = _vault_paper_col()
+    for attempt in range(2):
+        try:
+            _, _, col = _vault_paper_col()
 
-        where_clauses: list[dict] = [{"source_type": "note"}]
-        if resolved and len(resolved) == 1:
-            where_clauses.append({"bib_key": resolved[0]})
-        elif resolved:
-            where_clauses.append({"bib_key": {"$in": resolved}})
+            where_clauses: list[dict] = [{"source_type": "note"}]
+            if resolved and len(resolved) == 1:
+                where_clauses.append({"bib_key": resolved[0]})
+            elif resolved:
+                where_clauses.append({"bib_key": {"$in": resolved}})
 
-        where_filter: dict | None = None
-        if len(where_clauses) == 1:
-            where_filter = where_clauses[0]
-        else:
-            where_filter = {"$and": where_clauses}
+            where_filter: dict | None = None
+            if len(where_clauses) == 1:
+                where_filter = where_clauses[0]
+            else:
+                where_filter = {"$and": where_clauses}
 
-        results = col.query(
-            query_texts=[query],
-            n_results=n,
-            where=where_filter,
-        )
-        formatted = store._format_results(results)
-    except Exception as e:
-        raise ChromaDBError(_sanitize_exc(e))
+            results = col.query(
+                query_texts=[query],
+                n_results=n,
+                where=where_filter,
+            )
+            formatted = store._format_results(results)
+            break
+        except Exception as e:
+            if attempt == 0 and _rebuild_vault_chroma():
+                continue
+            raise ChromaDBError(_sanitize_exc(e))
 
     response: dict[str, Any] = {
         "scope": "notes",
@@ -1762,53 +1801,46 @@ def _search_all(
     resolved = _resolve_keys(key=key, keys=keys, tags=tags)
     all_results: list[dict[str, Any]] = []
 
-    try:
-        # Papers — vault ChromaDB
-        vault_client, embed_fn, _ = _vault_paper_col()
-        if resolved and len(resolved) == 1:
-            paper_hits = store.search_papers(
-                vault_client,
-                query,
-                n=n,
-                key=resolved[0],
-                embed_fn=embed_fn,
-            )
-        elif resolved:
-            paper_hits = store.search_papers(
-                vault_client,
-                query,
-                n=n,
-                keys=resolved,
-                embed_fn=embed_fn,
-            )
-        else:
-            paper_hits = store.search_papers(
-                vault_client,
-                query,
-                n=n,
-                embed_fn=embed_fn,
-            )
-        for r in paper_hits:
-            r["_source"] = "papers"
-        all_results.extend(paper_hits)
+    for attempt in range(2):
+        try:
+            all_results = []
+            # Papers — vault ChromaDB
+            vault_client, embed_fn, _ = _vault_paper_col()
+            if resolved and len(resolved) == 1:
+                paper_hits = store.search_papers(
+                    vault_client, query, n=n, key=resolved[0], embed_fn=embed_fn,
+                )
+            elif resolved:
+                paper_hits = store.search_papers(
+                    vault_client, query, n=n, keys=resolved, embed_fn=embed_fn,
+                )
+            else:
+                paper_hits = store.search_papers(
+                    vault_client, query, n=n, embed_fn=embed_fn,
+                )
+            for r in paper_hits:
+                r["_source"] = "papers"
+            all_results.extend(paper_hits)
 
-        # Corpus — project ChromaDB
-        corpus_client, corpus_embed_fn, _ = _corpus_col()
-        corpus_hits = store.search_corpus(
-            corpus_client,
-            query,
-            n=n,
-            source_file=paths or None,
-            labels_only=labels_only,
-            cites_only=cites_only,
-            embed_fn=corpus_embed_fn,
-        )
-        for r in corpus_hits:
-            r["_source"] = "corpus"
-        all_results.extend(corpus_hits)
-
-    except Exception as e:
-        raise ChromaDBError(_sanitize_exc(e))
+            # Corpus — project ChromaDB
+            corpus_client, corpus_embed_fn, _ = _corpus_col()
+            corpus_hits = store.search_corpus(
+                corpus_client, query, n=n,
+                source_file=paths or None,
+                labels_only=labels_only,
+                cites_only=cites_only,
+                embed_fn=corpus_embed_fn,
+            )
+            for r in corpus_hits:
+                r["_source"] = "corpus"
+            all_results.extend(corpus_hits)
+            break
+        except Exception as e:
+            if attempt == 0:
+                _rebuild_vault_chroma()
+                _rebuild_corpus_chroma()
+                continue
+            raise ChromaDBError(_sanitize_exc(e))
 
     # Sort by distance (lower = better)
     all_results.sort(key=lambda r: r.get("distance", float("inf")))
@@ -3126,11 +3158,15 @@ def _toc_locate_cite(key: str, root: str = "default") -> str:
 
 def _toc_locate_label(prefix: str = "") -> str:
     """List all \\label{} targets in the indexed .tex files."""
-    try:
-        client, embed_fn, _ = _corpus_col()
-        labels = store.get_all_labels(client, embed_fn)
-    except Exception as e:
-        raise ChromaDBError(_sanitize_exc(e))
+    for attempt in range(2):
+        try:
+            client, embed_fn, _ = _corpus_col()
+            labels = store.get_all_labels(client, embed_fn)
+            break
+        except Exception as e:
+            if attempt == 0 and _rebuild_corpus_chroma():
+                continue
+            raise ChromaDBError(_sanitize_exc(e))
 
     if prefix:
         labels = [lb for lb in labels if lb["label"].startswith(prefix)]
@@ -3637,7 +3673,7 @@ def set_root(path: str, test_vault_root: str = "") -> str:
     return hints_mod.response(response, hints={
         "guide": "guide(topic='getting-started')",
         "search": "paper(search=['your query'])",
-        "toc": "doc()",
+        "toc": "toc()",
         "ingest": "paper(path='inbox/filename.pdf')",
     })
 
@@ -4342,12 +4378,12 @@ def _route_notes(
 
 
 # ---------------------------------------------------------------------------
-# v2 API — doc()
+# v2 API — toc()
 # ---------------------------------------------------------------------------
 
 
 @mcp_server.tool()
-def doc(
+def toc(
     root: str = "default",
     search: list[str] | None = None,
     context: str = "",
@@ -4360,10 +4396,10 @@ def doc(
     context: how much to return: '3'=±3 paras, '+5'=5 after, '500c'=±500 chars
     page: result page (pagination)
     """
-    return _route_doc(root=root, search=search, context=context, page=page)
+    return _route_toc(root=root, search=search, context=context, page=page)
 
 
-def _route_doc(
+def _route_toc(
     root: str = "default",
     search: list[str] | None = None,
     context: str = "",
@@ -4377,7 +4413,7 @@ def _route_doc(
     try:
         cfg = _load_config()
         root_tex = _resolve_root(root)
-        needs_reindex = advisories.check_all_doc(
+        needs_reindex = advisories.check_all_toc(
             _project_root(), _chroma_dir(), cfg.tex_globs, root_tex,
         )
         if needs_reindex:
@@ -4401,16 +4437,16 @@ def _route_doc(
             toc_text = _paginate_toc(toc_text, page)
             return hints_mod.response(
                 {"toc": toc_text},
-                hints=hints_mod.doc_hints(),
+                hints=hints_mod.toc_hints(),
             )
         except Exception as exc:
-            return hints_mod.error(str(exc), hints=hints_mod.doc_hints())
+            return hints_mod.error(str(exc), hints=hints_mod.toc_hints())
 
     # --- Smart search ---
-    return _doc_smart_search(search, root, context, page)
+    return _toc_smart_search(search, root, context, page)
 
 
-def _doc_smart_search(search_terms: list[str], root: str, context: str, page: int) -> str:
+def _toc_smart_search(search_terms: list[str], root: str, context: str, page: int) -> str:
     """Route search terms to the appropriate search backend."""
     results = []
 
@@ -4466,13 +4502,13 @@ def _doc_smart_search(search_terms: list[str], root: str, context: str, page: in
 
     out = {"results": results, "search": search_terms}
     total_matches = sum(1 for r in results if r.get("matches"))
-    h = hints_mod.doc_search_hints(
+    h = hints_mod.toc_search_hints(
         has_context=bool(context),
         search_terms=search_terms,
         result_count=total_matches,
     )
     if context:
-        h["more_context"] = f"doc(search={search_terms!r}, context='{_bump_context(context)}')"
+        h["more_context"] = f"toc(search={search_terms!r}, context='{_bump_context(context)}')"
     return hints_mod.response(out, hints=h)
 
 

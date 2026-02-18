@@ -23,7 +23,7 @@ searches for "quantum interference".
 ## Mandatory search order
 
 1. **`paper(search=['query'])`** — vault search. **Always first.**
-2. **`doc(search=['query'])`** — find in .tex source.
+2. **`toc(search=['query'])`** — find in .tex source.
 3. **`paper(search=['query', 'online'])`** — federated online search.
 4. **Perplexity** — broad web discovery (last resort).
 

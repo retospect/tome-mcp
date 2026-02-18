@@ -1,7 +1,7 @@
 ---
 description: "The search parameter: markers, cites, labels, files, semantic"
 ---
-# doc(search=[...]) — Search Types
+# toc(search=[...]) — Search Types
 
 The `search` parameter auto-detects term type. You can mix types
 in a single call.
@@ -10,11 +10,11 @@ in a single call.
 
 | Term pattern | Detected as | Example |
 |--------------|-------------|---------|
-| `key2024...` | Citation key → find `\cite{key}` | `doc(search=['xu2022'])` |
-| `\label{...}` / `\ref{...}` | Label → find definition | `doc(search=['\label{fig:'])` |
-| `sections/file.tex` | File → show TOC for that file | `doc(search=['sections/intro.tex'])` |
-| `%TODO`, `\fixme` | Marker → grep for pattern | `doc(search=['%TODO'])` |
-| other text | Semantic search over corpus | `doc(search=['molecular switching'])` |
+| `key2024...` | Citation key → find `\cite{key}` | `toc(search=['xu2022'])` |
+| `\label{...}` / `\ref{...}` | Label → find definition | `toc(search=['\label{fig:'])` |
+| `sections/file.tex` | File → show TOC for that file | `toc(search=['sections/intro.tex'])` |
+| `%TODO`, `\fixme` | Marker → grep for pattern | `toc(search=['%TODO'])` |
+| other text | Semantic search over corpus | `toc(search=['molecular switching'])` |
 
 ## Citation key search
 
@@ -22,8 +22,8 @@ A term matching `[a-z][a-z0-9_-]*\d{4}` (starts with letter, has 4-digit
 year) is treated as a bib key. Tome finds all `\cite{key}` locations.
 
 ```
-doc(search=['xu2022'])       # where is xu2022 cited?
-doc(search=['chen2023'])     # where is chen2023 cited?
+toc(search=['xu2022'])       # where is xu2022 cited?
+toc(search=['chen2023'])     # where is chen2023 cited?
 ```
 
 ## Marker search
@@ -31,9 +31,9 @@ doc(search=['chen2023'])     # where is chen2023 cited?
 Terms starting with `%` or `\` are grepped literally:
 
 ```
-doc(search=['%TODO'])              # find TODO comments
-doc(search=['\fixme'])             # find \fixme commands
-doc(search=['%TODO', '\fixme'])    # find both at once
+toc(search=['%TODO'])              # find TODO comments
+toc(search=['\fixme'])             # find \fixme commands
+toc(search=['%TODO', '\fixme'])    # find both at once
 ```
 
 See `guide('doc-markers')` for review workflow patterns.
@@ -43,8 +43,8 @@ See `guide('doc-markers')` for review workflow patterns.
 Terms containing `.tex` show the TOC for that file:
 
 ```
-doc(search=['sections/intro.tex'])
-doc(search=['appendix/proofs.tex'])
+toc(search=['sections/intro.tex'])
+toc(search=['appendix/proofs.tex'])
 ```
 
 ## Label search
@@ -52,8 +52,8 @@ doc(search=['appendix/proofs.tex'])
 Terms starting with `\label{` or `\ref{` find label definitions:
 
 ```
-doc(search=['\label{fig:'])      # all figure labels
-doc(search=['\ref{eq:energy'])   # find equation reference
+toc(search=['\label{fig:'])      # all figure labels
+toc(search=['\ref{eq:energy'])   # find equation reference
 ```
 
 ## Semantic search
@@ -61,8 +61,8 @@ doc(search=['\ref{eq:energy'])   # find equation reference
 Any other term triggers semantic search over the `.tex` corpus:
 
 ```
-doc(search=['molecular switching'])
-doc(search=['functionally complete'])
+toc(search=['molecular switching'])
+toc(search=['functionally complete'])
 ```
 
 ## Context parameter
@@ -70,8 +70,8 @@ doc(search=['functionally complete'])
 Control how much surrounding text is returned:
 
 ```
-doc(search=['query'], context='3')     # ±3 paragraphs
-doc(search=['query'], context='+5')    # 5 paragraphs after
+toc(search=['query'], context='3')     # ±3 paragraphs
+toc(search=['query'], context='+5')    # 5 paragraphs after
 ```
 
 Response hints include `more_context` to bump the window.
@@ -81,7 +81,7 @@ Response hints include `more_context` to bump the window.
 Mix term types in one call:
 
 ```
-doc(search=['%TODO', '\fixme', 'PLACEHOLDER'])
+toc(search=['%TODO', '\fixme', 'PLACEHOLDER'])
 ```
 
 Each term is classified and searched independently. Results include

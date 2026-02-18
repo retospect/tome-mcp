@@ -17,8 +17,8 @@ LaTeX documents, and tracking research workflows.
 2. **`paper()`** — No-args returns hints for common operations.
    Use `paper(search=['*'])` to list all papers.
 
-3. **`doc()`** — See the table of contents for your LaTeX document.
-   Use `doc(search=['sections/intro.tex'])` to scope to a file.
+3. **`toc()`** — See the table of contents for your LaTeX document.
+   Use `toc(search=['sections/intro.tex'])` to scope to a file.
 
 ## Tools (5 total)
 
@@ -34,11 +34,11 @@ Every response includes **hints** for next logical actions and a **report** hint
 
 ## Typical session flow
 
-1. `set_root` → orient with `doc()` to see TOC
+1. `set_root` → orient with `toc()` to see TOC
 2. `paper(search=['topic'])` → find relevant papers
-3. `doc(search=['keyword'])` → find content in your .tex files
+3. `toc(search=['keyword'])` → find content in your .tex files
 4. Edit `.tex` files using search results
-5. `doc(search=['%TODO'])` → check for remaining markers
+5. `toc(search=['%TODO'])` → check for remaining markers
 
 ## Good habits
 
@@ -92,7 +92,7 @@ that codify these practices for your specific LaTeX document:
 3. **Git workflow** — commit discipline, review cycle
    with `\mrev{}` findings. See `guide('doc-markers')`.
 
-4. **Document analysis** — use `doc(search=['%TODO', '\fixme'])` to
+4. **Document analysis** — use `toc(search=['%TODO', '\fixme'])` to
    find markers. See `guide('doc')`.
 
 These guides contain general best practices. Project rules should

@@ -6,11 +6,11 @@ description: "Review markers: %TODO, fixme, mrev, review patterns"
 ## Finding markers
 
 ```
-doc(search=['%TODO'])                       # find TODO comments
-doc(search=['\fixme'])                      # find \fixme commands
-doc(search=['%TODO', '\fixme'])             # find both at once
-doc(search=['\mrev'])                       # find review findings
-doc(search=['RIG-CON-001'])                 # locate specific finding
+toc(search=['%TODO'])                       # find TODO comments
+toc(search=['\fixme'])                      # find \fixme commands
+toc(search=['%TODO', '\fixme'])             # find both at once
+toc(search=['\mrev'])                       # find review findings
+toc(search=['RIG-CON-001'])                 # locate specific finding
 ```
 
 ## Review → Commit cycle
@@ -25,10 +25,10 @@ doc(search=['RIG-CON-001'])                 # locate specific finding
 If your project tracks review findings via a `\mrev{}` macro:
 
 1. **Create**: Add `\mrev{RIG-CON-001}{major}{Claim unsupported}`.
-2. **Find all**: `doc(search=['\mrev'])`.
-3. **Find one**: `doc(search=['RIG-CON-001'])`.
+2. **Find all**: `toc(search=['\mrev'])`.
+3. **Find one**: `toc(search=['RIG-CON-001'])`.
 4. **Resolve**: Fix the issue, delete the `\mrev{}` marker.
-5. **Audit**: `doc(search=['\mrev'])` — confirm count decreased.
+5. **Audit**: `toc(search=['\mrev'])` — confirm count decreased.
 
 ## Configuration
 
@@ -72,7 +72,7 @@ LaTeX. Tome ships `examples/tome-deepcite.sty` with five macros:
 
 Validation is just searching the paper for the quote:
 
-1. `doc(search=['\mciteboxp'])` — find all deep cites in your .tex.
+1. `toc(search=['\mciteboxp'])` — find all deep cites in your .tex.
 2. For each hit, `paper(id='key:pageN')` — read the cited page.
 3. Compare the quote against the page text.
 

@@ -133,27 +133,27 @@ def notes_list_hints(on: str) -> dict[str, str]:
     }
 
 
-def doc_hints() -> dict[str, str]:
-    """Hints for no-args doc() call."""
+def toc_hints() -> dict[str, str]:
+    """Hints for no-args toc() call."""
     return {
-        "search": "doc(search=['your query'])",
-        "find_section": "doc(search=['§2.1'])",
-        "find_todos": "doc(search=['%TODO'])",
-        "find_cites": "doc(search=['smith2024'])",
+        "search": "toc(search=['your query'])",
+        "find_section": "toc(search=['§2.1'])",
+        "find_todos": "toc(search=['%TODO'])",
+        "find_cites": "toc(search=['smith2024'])",
         "guide": "guide('doc')",
     }
 
 
-def doc_search_hints(has_context: bool = False, search_terms: list[str] | None = None, result_count: int = 0) -> dict[str, str]:
-    """Hints for a doc search response."""
+def toc_search_hints(has_context: bool = False, search_terms: list[str] | None = None, result_count: int = 0) -> dict[str, str]:
+    """Hints for a toc search response."""
     h: dict[str, str] = {
-        "back": "doc()",
+        "back": "toc()",
         "guide": "guide('doc-search')",
     }
     if not has_context and result_count > 0:
-        h["add_context"] = "doc(search=[...], context='3')"
+        h["add_context"] = "toc(search=[...], context='3')"
     if result_count == 0:
-        h["try_semantic"] = "doc(search=['broader keywords'])"
+        h["try_semantic"] = "toc(search=['broader keywords'])"
     return h
 
 

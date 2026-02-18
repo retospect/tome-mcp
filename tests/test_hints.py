@@ -3,7 +3,7 @@
 import json
 
 from tome.hints import (
-    doc_hints,
+    toc_hints,
     error,
     figure_hints,
     ingest_commit_hints,
@@ -145,7 +145,7 @@ class TestNotesListHints:
 
 class TestDocHints:
     def test_contains_expected_keys(self):
-        h = doc_hints()
+        h = toc_hints()
         assert "search" in h
         assert "find_todos" in h
         assert "find_cites" in h

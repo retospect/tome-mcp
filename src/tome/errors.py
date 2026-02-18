@@ -311,11 +311,9 @@ class ChromaDBError(TomeError):
 
     def __init__(self, detail: str):
         super().__init__(
-            f"ChromaDB error: {detail}. "
-            f"Paper chunks live in ~/.tome-mcp/chroma/ (vault), "
-            f"corpus chunks in .tome-mcp/chroma/ (project). "
-            f"Try deleting the relevant chroma/ dir — it will be rebuilt automatically. "
-            f"If this persists, use guide(report='...') to log it."
+            f"Search index error: {detail}. "
+            f"The index will be rebuilt automatically on next use. "
+            f"If this persists, use guide(report='describe the problem') to log it."
         )
         self.detail = detail
 

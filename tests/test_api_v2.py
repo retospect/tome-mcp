@@ -7,7 +7,7 @@ Tests call internal _route_* functions directly to verify:
 4. User-story scenarios ("I want to find a paper by author", etc.)
 
 Coverage goal: every routing branch in _route_paper, _route_notes,
-_route_doc, _route_guide — success and failure.
+_route_toc, _route_guide — success and failure.
 """
 
 import json
@@ -911,97 +911,97 @@ class TestNotesOnFilename:
 
 # ###########################################################################
 #
-#   doc() — ROUTING TESTS
+#   toc() — ROUTING TESTS
 #
 # ###########################################################################
 
 
 class TestDocNoArgs:
-    """doc() → TOC + hints."""
+    """toc() → TOC + hints."""
 
     def test_returns_toc(self):
-        r = _parse(server._route_doc())
+        r = _parse(server._route_toc())
         assert "toc" in r or "error" in r  # toc may fail if no .toc file
 
     def test_has_search_hint(self):
-        h = _parse(server._route_doc())["hints"]
+        h = _parse(server._route_toc())["hints"]
         assert "search" in h
 
     def test_has_find_todos_hint(self):
-        h = _parse(server._route_doc())["hints"]
+        h = _parse(server._route_toc())["hints"]
         assert "find_todos" in h
 
     def test_has_find_cites_hint(self):
-        h = _parse(server._route_doc())["hints"]
+        h = _parse(server._route_toc())["hints"]
         assert "find_cites" in h
 
     def test_report_hint(self):
-        assert _has_report_hint(_parse(server._route_doc()))
+        assert _has_report_hint(_parse(server._route_toc()))
 
 
 class TestDocSearchMarkers:
-    """doc(search=['%TODO']) → grep for markers."""
+    """toc(search=['%TODO']) → grep for markers."""
 
     def test_finds_todo(self, fake_project):
         _setup_sections(fake_project, {"intro.tex": "Some text.\n%TODO: fix this\nMore.\n"})
-        r = _parse(server._route_doc(search=["%TODO"]))
+        r = _parse(server._route_toc(search=["%TODO"]))
         assert len(r["results"]) >= 1
         assert r["results"][0]["type"] == "marker"
 
     def test_finds_fixme(self, fake_project):
         _setup_sections(fake_project, {"intro.tex": "\\fixme{broken}\n"})
-        r = _parse(server._route_doc(search=["\\fixme"]))
+        r = _parse(server._route_toc(search=["\\fixme"]))
         assert r["results"][0]["type"] == "marker"
 
     def test_has_back_hint(self, fake_project):
         _setup_sections(fake_project, {"intro.tex": "%TODO\n"})
-        h = _parse(server._route_doc(search=["%TODO"]))["hints"]
+        h = _parse(server._route_toc(search=["%TODO"]))["hints"]
         assert "back" in h
 
     def test_report_hint(self, fake_project):
         _setup_sections(fake_project, {"intro.tex": "%TODO\n"})
-        assert _has_report_hint(_parse(server._route_doc(search=["%TODO"])))
+        assert _has_report_hint(_parse(server._route_toc(search=["%TODO"])))
 
 
 class TestDocSearchCiteKey:
-    """doc(search=['xu2022']) → find citation locations."""
+    """toc(search=['xu2022']) → find citation locations."""
 
     def test_finds_cite(self, fake_project):
         _setup_sections(fake_project, {"intro.tex": "See \\cite{xu2022} for details.\n"})
-        r = _parse(server._route_doc(search=["xu2022"]))
+        r = _parse(server._route_toc(search=["xu2022"]))
         assert any(res["type"] == "cite" for res in r["results"])
 
     def test_chen2023_cite(self, fake_project):
         _setup_sections(fake_project, {"bg.tex": "Transistor work \\cite{chen2023}.\n"})
-        r = _parse(server._route_doc(search=["chen2023"]))
+        r = _parse(server._route_toc(search=["chen2023"]))
         assert any(res["type"] == "cite" for res in r["results"])
 
 
 class TestDocSearchFile:
-    """doc(search=['sections/intro.tex']) → file TOC."""
+    """toc(search=['sections/intro.tex']) → file TOC."""
 
     def test_finds_file(self, fake_project):
         _setup_sections(fake_project, {"intro.tex": "\\section{Introduction}\n"})
-        r = _parse(server._route_doc(search=["sections/intro.tex"]))
+        r = _parse(server._route_toc(search=["sections/intro.tex"]))
         assert any(res["type"] == "file" for res in r["results"])
 
     def test_missing_file(self, fake_project):
-        r = _parse(server._route_doc(search=["sections/nope.tex"]))
+        r = _parse(server._route_toc(search=["sections/nope.tex"]))
         assert len(r["results"]) >= 1
         assert r["results"][0]["type"] == "file"
 
 
 class TestDocSearchLabel:
-    """doc(search=['\\label{fig:...}']) → label lookup."""
+    """toc(search=['\\label{fig:...}']) → label lookup."""
 
     def test_label_search(self, fake_project):
         _setup_sections(fake_project, {"intro.tex": "\\label{fig:overview}\n"})
-        r = _parse(server._route_doc(search=["\\label{fig:"]))
+        r = _parse(server._route_toc(search=["\\label{fig:"]))
         assert any(res["type"] == "label" for res in r["results"])
 
 
 class TestDocSearchSemantic:
-    """doc(search=['some topic']) → semantic corpus search."""
+    """toc(search=['some topic']) → semantic corpus search."""
 
     def test_semantic_search(self, fake_project, monkeypatch):
         monkeypatch.setattr(
@@ -1010,35 +1010,35 @@ class TestDocSearchSemantic:
                 {"count": 1, "results": [{"text": "hit", "distance": 0.2}]}
             ),
         )
-        r = _parse(server._route_doc(search=["molecular switching"]))
+        r = _parse(server._route_toc(search=["molecular switching"]))
         assert any(res["type"] == "semantic" for res in r["results"])
 
 
 class TestDocSearchMultiple:
-    """doc(search=['%TODO', '\\fixme']) → multiple terms."""
+    """toc(search=['%TODO', '\\fixme']) → multiple terms."""
 
     def test_multi_term(self, fake_project):
         _setup_sections(fake_project, {
             "intro.tex": "%TODO: fix\n\\fixme{broken}\nPLACEHOLDER\n",
         })
-        r = _parse(server._route_doc(search=["%TODO", "\\fixme"]))
+        r = _parse(server._route_toc(search=["%TODO", "\\fixme"]))
         assert len(r["results"]) == 2
         types = {res["type"] for res in r["results"]}
         assert "marker" in types
 
 
 class TestDocSearchContext:
-    """doc(search=[...], context='3') → context parameter."""
+    """toc(search=[...], context='3') → context parameter."""
 
     def test_context_hint_more(self, fake_project):
         _setup_sections(fake_project, {"intro.tex": "%TODO\n"})
-        h = _parse(server._route_doc(search=["%TODO"], context="3"))["hints"]
+        h = _parse(server._route_toc(search=["%TODO"], context="3"))["hints"]
         assert "more_context" in h
         assert "5" in h["more_context"]  # bumped from 3 to 5
 
     def test_no_context_no_more_hint(self, fake_project):
         _setup_sections(fake_project, {"intro.tex": "%TODO\n"})
-        h = _parse(server._route_doc(search=["%TODO"]))["hints"]
+        h = _parse(server._route_toc(search=["%TODO"]))["hints"]
         assert "more_context" not in h
 
 
@@ -1259,13 +1259,13 @@ class TestGuideHintsInSuccess:
 
     def test_doc_toc_has_guide(self, fake_project):
         _setup_sections(fake_project, {"intro.tex": "\\section{Intro}"})
-        r = _parse(server._route_doc())
+        r = _parse(server._route_toc())
         assert "guide" in r["hints"]
         assert "doc" in r["hints"]["guide"]
 
     def test_doc_search_has_guide(self, fake_project):
         _setup_sections(fake_project, {"intro.tex": "% TODO fix this"})
-        r = _parse(server._route_doc(search=["%TODO"]))
+        r = _parse(server._route_toc(search=["%TODO"]))
         assert "guide" in r["hints"]
         assert "doc-search" in r["hints"]["guide"]
 
@@ -1411,7 +1411,7 @@ class TestUserStoryFindTODOs:
             "intro.tex": "Introduction.\n%TODO: add motivation\nMore text.\n",
             "bg.tex": "%TODO: fix reference\nBackground.\n",
         })
-        r = _parse(server._route_doc(search=["%TODO"]))
+        r = _parse(server._route_toc(search=["%TODO"]))
         assert len(r["results"]) >= 1
         assert r["results"][0]["type"] == "marker"
 
@@ -1424,7 +1424,7 @@ class TestUserStoryFindWherePaperIsCited:
             "intro.tex": "As shown by \\cite{xu2022}, QI scales.\n",
             "bg.tex": "Prior work \\cite{chen2023, xu2022} established...\n",
         })
-        r = _parse(server._route_doc(search=["xu2022"]))
+        r = _parse(server._route_toc(search=["xu2022"]))
         assert any(res["type"] == "cite" for res in r["results"])
 
 
@@ -1629,11 +1629,11 @@ class TestHintConsistencyDoc:
     """Every doc() response includes the report hint."""
 
     def test_no_args(self):
-        assert _has_report_hint(_parse(server._route_doc()))
+        assert _has_report_hint(_parse(server._route_toc()))
 
     def test_search_marker(self, fake_project):
         _setup_sections(fake_project, {"x.tex": "%TODO\n"})
-        assert _has_report_hint(_parse(server._route_doc(search=["%TODO"])))
+        assert _has_report_hint(_parse(server._route_toc(search=["%TODO"])))
 
 
 class TestHintConsistencyGuide:
@@ -1807,9 +1807,9 @@ class TestHarebrainedDoc:
     """Confused doc() calls should give useful guidance."""
 
     def test_search_todo_without_percent(self, fake_project):
-        """doc(search=['TODO']) — forgot the % prefix."""
+        """toc(search=['TODO']) — forgot the % prefix."""
         _setup_sections(fake_project, {"intro.tex": "% TODO fix this\n"})
-        r = _parse(server._route_doc(search=["TODO"]))
+        r = _parse(server._route_toc(search=["TODO"]))
         # Treated as semantic search (no % prefix), not marker grep
         # Should still work, just different results
         assert "results" in r
@@ -1817,31 +1817,31 @@ class TestHarebrainedDoc:
         assert _guides_to(r, "doc-search")
 
     def test_search_empty_list(self):
-        """doc(search=[]) — empty search."""
-        r = _parse(server._route_doc(search=[]))
+        """toc(search=[]) — empty search."""
+        r = _parse(server._route_toc(search=[]))
         # Empty search → falls through to TOC
         assert "hints" in r
         assert _has_report_hint(r)
 
     def test_search_nonexistent_file(self, fake_project):
-        """doc(search=['sections/ghost.tex']) — file doesn't exist."""
+        """toc(search=['sections/ghost.tex']) — file doesn't exist."""
         _setup_sections(fake_project, {"intro.tex": "hello\n"})
-        r = _parse(server._route_doc(search=["sections/ghost.tex"]))
+        r = _parse(server._route_toc(search=["sections/ghost.tex"]))
         assert "results" in r or "error" in r
         assert _has_report_hint(r)
 
     def test_context_garbage(self, fake_project):
-        """doc(search=['query'], context='lots') — non-numeric context."""
+        """toc(search=['query'], context='lots') — non-numeric context."""
         _setup_sections(fake_project, {"intro.tex": "Some content\n"})
-        r = _parse(server._route_doc(search=["content"], context="lots"))
+        r = _parse(server._route_toc(search=["content"], context="lots"))
         # Should handle gracefully (parse to 0)
         assert "results" in r
         assert _has_report_hint(r)
 
     def test_search_single_char(self, fake_project):
-        """doc(search=['x']) — single character search."""
+        """toc(search=['x']) — single character search."""
         _setup_sections(fake_project, {"intro.tex": "x marks the spot\n"})
-        r = _parse(server._route_doc(search=["x"]))
+        r = _parse(server._route_toc(search=["x"]))
         assert "results" in r
         assert _has_report_hint(r)
 
@@ -1902,7 +1902,7 @@ class TestHarebrainedCrossToolConfusion:
         _setup_sections(fake_project, {
             "intro.tex": "As shown by \\cite{xu2022}, quantum interference...\n"
         })
-        r = _parse(server._route_doc(search=["xu2022"]))
+        r = _parse(server._route_toc(search=["xu2022"]))
         assert "results" in r
         # Should detect as cite key and find the citation
         results = r["results"]
@@ -2132,20 +2132,20 @@ class TestParamComboDoc:
 
     def test_context_without_search(self):
         """doc(context='3') — context without search → TOC."""
-        r = _parse(server._route_doc(context="3"))
+        r = _parse(server._route_toc(context="3"))
         # No search → TOC path, context ignored
         assert "hints" in r
         assert _has_report_hint(r)
 
     def test_page_without_search(self):
         """doc(page=2) — page without search → TOC."""
-        r = _parse(server._route_doc(page=2))
+        r = _parse(server._route_toc(page=2))
         assert "hints" in r
         assert _has_report_hint(r)
 
     def test_all_params(self, fake_project):
         """doc(root='default', search=['%TODO'], context='3', page=1)."""
         _setup_sections(fake_project, {"x.tex": "%TODO fix\n"})
-        r = _parse(server._route_doc(root="default", search=["%TODO"], context="3", page=1))
+        r = _parse(server._route_toc(root="default", search=["%TODO"], context="3", page=1))
         assert "results" in r
         assert _has_report_hint(r)

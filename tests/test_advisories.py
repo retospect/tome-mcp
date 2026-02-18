@@ -270,8 +270,8 @@ class TestCheckAll:
     def setup_method(self):
         advisories.drain()
 
-    def test_check_all_doc_bad_paths(self, tmp_path):
-        advisories.check_all_doc(
+    def test_check_all_toc_bad_paths(self, tmp_path):
+        advisories.check_all_toc(
             tmp_path / "nonexistent",
             tmp_path / "nochroma",
             ["*.tex"],

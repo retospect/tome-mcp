@@ -176,7 +176,7 @@ def check_bib_freshness(
         )
 
 
-def check_all_doc(
+def check_all_toc(
     project_root: Path,
     chroma_dir: Path,
     tex_globs: list[str],
