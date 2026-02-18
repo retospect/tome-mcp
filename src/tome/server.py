@@ -436,17 +436,12 @@ def _resolve_keys(
 
 EXCLUDE_DIRS = frozenset(
     {
-        tome_paths.DOT_DIR,
-        ".git",
+        # Dot-directories are all excluded via _is_excluded (startswith "."),
+        # so only non-dot entries need explicit listing here.
         "__pycache__",
-        ".venv",
         "venv",
         "node_modules",
         "build",
-        ".pytest_cache",
-        ".mypy_cache",
-        ".ruff_cache",
-        ".tox",
         "tome/inbox",  # PDFs handled separately by paper tools
     }
 )
@@ -483,6 +478,8 @@ def _is_excluded(rel_path: str) -> bool:
     parts = Path(rel_path).parts
     # Check each directory component and cumulative prefixes
     for i, part in enumerate(parts[:-1]):  # skip filename
+        if part.startswith("."):
+            return True
         if part in EXCLUDE_DIRS:
             return True
         prefix = str(Path(*parts[: i + 1]))

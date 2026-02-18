@@ -78,6 +78,15 @@ class TestIsExcluded:
     def test_node_modules(self):
         assert _is_excluded("node_modules/pkg/index.js") is True
 
+    def test_arbitrary_dotdir(self):
+        assert _is_excluded(".ipynb_checkpoints/nb.ipynb") is True
+
+    def test_nested_dotdir(self):
+        assert _is_excluded("code/.hidden/secret.py") is True
+
+    def test_dotfile_at_root_not_excluded(self):
+        assert _is_excluded(".gitignore") is False
+
 
 class TestDiscoverFiles:
     @pytest.fixture
