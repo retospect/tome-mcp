@@ -17,7 +17,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
@@ -29,36 +29,21 @@ from tome import (
     chunk,
     crossref,
     extract,
-    figures,
     identify,
     latex,
     manifest,
     openalex,
     store,
     summaries,
-    unpaywall,
     validate,
-)
-from tome import (
-    cite_tree as cite_tree_mod,
 )
 from tome import (
     config as tome_config,
 )
-from tome import file_meta as file_meta_mod
 from tome import hints as hints_mod
 from tome.id_parser import IdKind, parse_id
-from tome import (
-    git_diff as git_diff_mod,
-)
 from tome import guide as guide_mod
-from tome import (
-    index as index_mod,
-)
 from tome import issues as issues_mod
-from tome import (
-    needful as needful_mod,
-)
 from tome import notes as notes_mod
 from tome import paths as tome_paths
 from tome import rejected_dois as rejected_dois_mod
@@ -77,7 +62,6 @@ from tome.errors import (
     RootNotFound,
     TextNotExtracted,
     TomeError,
-    UnpaywallNotConfigured,
 )
 from tome.ingest import resolve_metadata
 
@@ -597,7 +581,6 @@ def _match_dois_to_pdf(
     Returns a list of dicts sorted by match score (best first), each with:
     doi, title, authors, year, journal, score, and any error.
     """
-    from tome import crossref
     from tome.errors import DOIResolutionFailed
 
     candidates: list[dict[str, Any]] = []
@@ -1321,7 +1304,6 @@ def _paper_list(tags: str = "", status: str = "", page: int = 1) -> str:
         all_matching.append(item)
 
     # Flag parent papers that have retraction children
-    all_keys_set = {item["key"] for item in all_matching}
     retracted_parents: set[str] = set()
     for item in all_matching:
         if item.get("related_doc_type") == "retraction" and item.get("parent_key"):

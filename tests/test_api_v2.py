@@ -11,7 +11,7 @@ _route_toc, _route_guide — success and failure.
 """
 
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -1204,7 +1204,7 @@ class TestGuideHintsInErrors:
     """Error responses should include a guide hint pointing to relevant docs."""
 
     def test_bad_id_has_guide_hint(self):
-        r = _parse(server._route_paper(id=""))
+        _parse(server._route_paper(id=""))
         # empty id → ValueError → error with guide hint
         # Actually empty id with no other args → no-args hints
         # Use a truly bad id
