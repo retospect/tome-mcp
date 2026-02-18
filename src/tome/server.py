@@ -6048,6 +6048,16 @@ def _doc_smart_search(search_terms: list[str], root: str, context: str, page: in
     results = []
 
     for term in search_terms:
+        # Detect: paragraph/section number (§2.1, ¶3, bare 2.1.3)
+        if re.match(r"^[§¶]\d", term) or re.match(r"^\d+(\.\d+)+$", term):
+            try:
+                root_tex = _resolve_root(root)
+                toc_text = toc_mod.get_toc(_project_root(), root_tex, query=term)
+                results.append({"term": term, "type": "heading", "matches": toc_text})
+            except Exception as exc:
+                results.append({"term": term, "type": "heading", "matches": str(exc)})
+            continue
+
         # Detect: cite key (looks like a bib key used in \cite{})
         if re.match(r"^[a-z][a-z0-9_-]*\d{4}", term, re.IGNORECASE) and not term.startswith("%"):
             cite_result = _toc_locate_cite(term, root)

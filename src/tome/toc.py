@@ -367,12 +367,19 @@ def _find_parent(flat: list[TocEntry], flt: FloatEntry) -> TocEntry | None:
 
 
 def _mark_query(entries: list[TocEntry], query: str, out: set[int]) -> bool:
-    """Mark entries whose title contains *query* (case-insensitive) + ancestors."""
-    q = query.lower()
+    """Mark entries whose title or number contains *query* (case-insensitive) + ancestors.
+
+    Matches against the title text, the raw section number (e.g. ``2.1``),
+    and the rendered prefix (``§2.1``).  The ``§`` and ``¶`` sigils are
+    treated as interchangeable so that ``¶3``, ``§3``, and bare ``3`` all
+    match section number ``3``.
+    """
+    # Normalise: strip leading § or ¶ so "§2.1", "¶2.1", "2.1" all match
+    q = query.lstrip("§¶").lower()
     hit = False
     for e in entries:
         child_hit = _mark_query(e.children, query, out)
-        if child_hit or q in e.title.lower():
+        if child_hit or q in e.title.lower() or (e.number and q in e.number.lower()):
             out.add(id(e))
             hit = True
     return hit

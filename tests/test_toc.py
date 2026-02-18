@@ -664,3 +664,37 @@ class TestTocNotes:
         # Don't create .tex files — should not crash
         result = get_toc(toc_project, notes="status", figures=False)
         assert "Background" in result  # TOC still renders
+
+
+# ── Paragraph / section number search ──────────────────────────────────
+
+
+class TestSectionNumberQuery:
+    """§/¶ prefixed and bare dotted numbers match entry.number in TOC query."""
+
+    def test_section_number_exact(self, toc_project: Path):
+        result = get_toc(toc_project, query="§2.1", figures=False)
+        assert "Boxel Design" in result
+
+    def test_pilcrow_prefix(self, toc_project: Path):
+        result = get_toc(toc_project, query="¶1.1", figures=False)
+        assert "Metal-Organic Frameworks" in result
+
+    def test_bare_dotted_number(self, toc_project: Path):
+        result = get_toc(toc_project, query="1.1.1", figures=False)
+        assert "Conducting" in result
+
+    def test_bare_single_number(self, toc_project: Path):
+        result = get_toc(toc_project, query="§2", figures=False)
+        assert "Architecture" in result
+
+    def test_section_number_includes_ancestors(self, toc_project: Path):
+        """Matching a subsection should also show its parent section."""
+        result = get_toc(toc_project, query="§1.2", figures=False)
+        assert "DNA Assembly" in result
+        assert "Background" in result  # ancestor
+
+    def test_no_match(self, toc_project: Path):
+        result = get_toc(toc_project, query="§99.9", figures=False)
+        # Header still present but no section content
+        assert "TOC:" in result
