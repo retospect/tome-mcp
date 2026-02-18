@@ -232,106 +232,7 @@ class TestSearchCorpus:
 
 
 # ===========================================================================
-# _search_notes
-# ===========================================================================
-
-
-class TestSearchNotes:
-    def test_returns_note_results(self, mock_store):
-        result = json.loads(server._search_notes("test", "semantic", "", "", "", 10))
-        assert result["scope"] == "notes"
-        assert result["mode"] == "semantic"
-        assert result["count"] == 1
-
-    def test_filters_by_source_type(self, mock_store):
-        server._search_notes("test", "semantic", "", "", "", 10)
-        col = mock_store["get_collection"].return_value
-        call_kw = col.query.call_args[1]
-        # Should have source_type filter
-        where = call_kw.get("where", {})
-        assert where == {"source_type": "note"} or any(
-            c == {"source_type": "note"} for c in where.get("$and", [])
-        )
-
-    def test_key_filter_added(self, mock_store):
-        server._search_notes("test", "semantic", "xu2022", "", "", 10)
-        col = mock_store["get_collection"].return_value
-        call_kw = col.query.call_args[1]
-        where = call_kw.get("where", {})
-        # Should have $and with source_type + bib_key
-        assert "$and" in where
-        clauses = where["$and"]
-        assert {"source_type": "note"} in clauses
-        assert {"bib_key": "xu2022"} in clauses
-
-
-# ===========================================================================
-# _search_all
-# ===========================================================================
-
-
-class TestSearchAll:
-    def test_semantic_merges_both(self, mock_store):
-        result = json.loads(
-            server._search_all(
-                "test",
-                "semantic",
-                "",
-                "",
-                "",
-                "",
-                False,
-                False,
-                10,
-            )
-        )
-        assert result["scope"] == "all"
-        assert result["mode"] == "semantic"
-        mock_store["search_papers"].assert_called_once()
-        mock_store["search_corpus"].assert_called_once()
-
-    def test_semantic_sorted_by_distance(self, mock_store):
-        result = json.loads(
-            server._search_all(
-                "test",
-                "semantic",
-                "",
-                "",
-                "",
-                "",
-                False,
-                False,
-                10,
-            )
-        )
-        dists = [r["distance"] for r in result["results"]]
-        assert dists == sorted(dists)
-
-    def test_exact_returns_both_sections(self, fake_project):
-        raw_dir = fake_project / ".tome-mcp" / "raw" / "xu2022"
-        raw_dir.mkdir(parents=True)
-        (raw_dir / "xu2022.p1.txt").write_text("nanoparticle synthesis method")
-        sections = fake_project / "sections"
-        sections.mkdir()
-        (sections / "a.tex").write_text("nanoparticle synthesis\n")
-
-        result = json.loads(
-            server._search_all(
-                "nanoparticle",
-                "exact",
-                "",
-                "",
-                "",
-                "",
-                False,
-                False,
-                10,
-            )
-        )
-        assert result["scope"] == "all"
-        assert result["mode"] == "exact"
-        assert "papers" in result
-        assert "corpus" in result
+# TestSearchNotes, TestSearchAll deleted (tested dead code).
 
 
 # ===========================================================================
@@ -365,41 +266,7 @@ class TestTocLocateLabel:
         assert "fig:one" in result
 
 
-class TestTocLocateIndex:
-    def _write_index(self, proj):
-        data = {
-            "total_terms": 2,
-            "total_entries": 3,
-            "terms": {
-                "molecular switch": {"pages": ["10", "15"]},
-                "assembly": {"pages": ["20"]},
-            },
-        }
-        (proj / ".tome-mcp" / "doc_index.json").write_text(json.dumps(data))
-
-    def test_search_mode(self, fake_project):
-        self._write_index(fake_project)
-        result = server._toc_locate_index("molecular")
-        assert "molecular" in result.lower()
-        assert "match" in result.lower()
-
-    def test_list_all_mode(self, fake_project):
-        self._write_index(fake_project)
-        result = server._toc_locate_index("")
-        assert "2 terms" in result
-        assert "molecular switch" in result
-        assert "assembly" in result
-
-    def test_no_index_error(self):
-        result = server._toc_locate_index("x")
-        assert "no index" in result.lower()
-
-
-class TestTocLocateTree:
-    def test_returns_file_list(self):
-        result = server._toc_locate_tree()
-        assert "File tree" in result
-        assert "files" in result.lower()
+# TestTocLocateIndex, TestTocLocateTree deleted (tested dead code).
 
 
 # ===========================================================================
