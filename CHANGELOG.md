@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.7.0 — Background valorization
+
+### New features
+- **Background valorization worker**: after ingest, a daemon thread
+  automatically chunks, embeds, and indexes the paper into ChromaDB.
+  Papers become searchable within seconds — no manual backfill needed.
+- **Startup vault scan**: `set_root` scans all `.tome` archives on a
+  background thread, enqueuing any that are missing chunks, embeddings,
+  or ChromaDB entries. Catches gaps from crashes, migrations, or new vaults.
+
+### Infrastructure
+- New `tome.valorize` module: `enqueue()`, `valorize_one()`, `scan_vault()`,
+  `pending()`, `shutdown()`.
+- Worker thread is daemon (dies with server), idempotent (safe to re-enqueue).
+- ChromaDB failure doesn't lose archive data — chunks are written to HDF5 first.
+
 ## 0.6.0 — Native HDF5 metadata (archive format v2)
 
 ### Breaking changes
