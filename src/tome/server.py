@@ -1006,6 +1006,11 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
 
     catalog_upsert(doc_meta)
 
+    # --- Background valorization (chunk + embed + ChromaDB) ---
+    from tome.valorize import enqueue as _valorize_enqueue
+
+    _valorize_enqueue(v_tome)
+
     # --- Server-specific: manifest ---
     data = _load_manifest()
     manifest.set_paper(
@@ -1067,12 +1072,12 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
         "journal": prep.journal or "",
         "pages": len(prep.page_texts),
         "searchable": False,
+        "indexing": "background",
         "next_steps": (
             f"{doi_hint}"
             f"{parent_hint}"
             f"Enrich: notes(on='{key}', title='summary', content='...'). "
-            f"To make searchable, run in shell: "
-            f"uv run python scripts/backfill_embeddings.py\n"
+            f"Indexing in background — paper will become searchable shortly.\n"
             f"See guide('paper-ingest') for the full pipeline."
         ),
     }
