@@ -3,10 +3,10 @@ description: Best practices for filing tool issues
 ---
 # Reporting Issues
 
-Use `guide(report='severity: description')` when a Tome tool
-behaves unexpectedly. Issues are stored in `tome/issues.md`
-(git-tracked) and surfaced in `set_root()`. Every tool response
-includes a `report` hint as a reminder.
+Use `guide(report='description')` when a Tome tool behaves
+unexpectedly. Issues are stored in `tome/issues.md` (git-tracked)
+and surfaced in `set_root()`. Every tool response includes an
+`mcp_issue` hint as a reminder.
 
 ## Before reporting
 
@@ -16,9 +16,9 @@ includes a `report` hint as a reminder.
 
 ## Writing the description
 
-Structure: **severity: what you did → what happened → what you expected**.
+Structure: **what you did → what happened → what you expected**.
 
-Good: `guide(report="major: paper(search=['MOF conductivity']) returned
+Good: `guide(report="paper(search=['MOF conductivity']) returned
 0 results. Expected ≥1 hit — sheberla2014 discusses conductivity on p.3.")`
 
 Bad: `guide(report="search doesn't work")`
@@ -33,7 +33,10 @@ Bad: `guide(report="search doesn't work")`
 - Speculation about the cause.
 - Lengthy context about your task.
 
-## Severity
+## Severity (optional)
+
+You can optionally prefix the description with a severity level.
+If omitted, it defaults to **minor**.
 
 | Level | When to use |
 |-------|------------|
@@ -41,5 +44,4 @@ Bad: `guide(report="search doesn't work")`
 | **major** | Wrong results. Tool runs but output can't be trusted. |
 | **blocker** | Tool crashes, hangs, or is completely unusable. |
 
-When in doubt, use **major** — wrong results are worse than crashes
-(crashes are obvious; wrong results silently corrupt work).
+Example: `guide(report='blocker: paper() hangs on large PDFs')`

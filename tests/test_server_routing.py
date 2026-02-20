@@ -286,7 +286,3 @@ class TestPaginateToc:
     def test_page_2_header(self):
         text = "\n".join(f"line {i}" for i in range(300))
         assert "(page 2" in server._paginate_toc(text, 2)
-
-
-
-

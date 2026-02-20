@@ -64,10 +64,12 @@ find /tmp/tome-smoke-vault/tome -name '*.tome' | sort   # one per ingested paper
 ```python
 import h5py
 f = h5py.File('<path>.tome', 'r')
-f.attrs['format_version']   # → 1
+f.attrs['format_version']   # → 2  (v2 native HDF5 meta)
 f.attrs['key']               # → matches filename stem
 f.attrs['content_hash']      # → non-empty
 f.attrs['embedding_model']   # → "all-MiniLM-L6-v2"
+isinstance(f['meta'], h5py.Group)  # → True (v2: group, not dataset)
+f['meta'].attrs['title']    # → non-empty string
 len(f['pages'])              # → matches page count from ingest
 'chunks' in f                # → True
 len(f['chunks/texts'])       # → matches chunk count from ingest
@@ -75,6 +77,7 @@ f['chunks/embeddings'].shape # → (N, 384) float32
 ```
 - **Verify**: pages, chunks, AND embeddings all present in archive
 - **Verify**: archive is fully self-contained (can rebuild DBs without PDF)
+- **Verify**: meta is a native HDF5 group with scalar attrs (not a JSON dataset)
 
 ### 3c: Cross-checks
 - **Catalog**: `sqlite3 /tmp/tome-smoke-vault/catalog.db "SELECT count(*) FROM documents;"` → matches ingested count
@@ -193,25 +196,29 @@ from pathlib import Path
 vault_tome = Path('/tmp/tome-smoke-vault/tome')
 vault_pdf = Path('/tmp/tome-smoke-vault/pdf')
 
+from tome.vault import read_archive_meta
+
 for tome_file in sorted(vault_tome.rglob('*.tome')):
-    f = h5py.File(tome_file, 'r')
-    meta = json.loads(f['meta'][()])
-    key = meta['key']
-    title = meta.get('title', '')
-    pages = len(f['pages']) if 'pages' in f else 0
-    has_chunks = 'chunks' in f
-    has_embeds = has_chunks and 'embeddings' in f['chunks']
+    meta = read_archive_meta(tome_file)
+    key = meta.key
+    title = meta.title or ''
+    with h5py.File(tome_file, 'r') as f:
+        ver = f.attrs.get('format_version', 1)
+        pages = len(f['pages']) if 'pages' in f else 0
+        has_chunks = 'chunks' in f
+        has_embeds = has_chunks and 'embeddings' in f['chunks']
     # Check for issues
+    assert ver == 2, f"{key}: still v1 format (not migrated)"
     assert title.strip(), f"{key}: empty title"
     assert pages > 0, f"{key}: no pages"
-    assert pages == meta.get('page_count', 0), f"{key}: page count mismatch"
+    assert pages == (meta.page_count or 0), f"{key}: page count mismatch"
     assert has_chunks, f"{key}: no chunks"
     assert has_embeds, f"{key}: no embeddings"
     # Check matching PDF exists
     shard = key[0].lower()
     pdf_path = vault_pdf / shard / f"{key}.pdf"
     assert pdf_path.exists(), f"{key}: orphaned .tome (no PDF)"
-    f.close()
+
 
 # Reverse check: PDFs without .tome
 for pdf_file in sorted(vault_pdf.rglob('*.pdf')):
@@ -223,12 +230,19 @@ for pdf_file in sorted(vault_pdf.rglob('*.pdf')):
 
 **Verify**: zero empty titles, zero orphans, zero page mismatches, all archives have chunks + embeddings
 
-## Phase 17: Filesystem Safety
+## Phase 17: DOI Lookup
+- `paper(id='10.1039/c0pp00167h')` → online lookup returns paper info
+- **Verify**: response has `found: true`, `title`, `year`, `doi`
+- **Verify**: response has `hints` with ingest suggestion
+- `paper(id='10.9999/nonexistent')` → graceful "not found" or API error
+- **Verify**: no crash, error message returned cleanly
+
+## Phase 18: Filesystem Safety
 - Ingest with key containing special chars: `paper(id='test/2024:bad*key', path='inbox/test.pdf')` → verify sanitized
 - **Verify**: resulting key has no `/\:*?"<>|` characters
 - **Verify**: shard directory is ASCII alphanumeric (non-ASCII → `_/`)
 
-## Phase 18: Test Safety
+## Phase 19: Test Safety
 Verify the pytest suite does NOT touch the live vault or project directories.
 
 ```bash

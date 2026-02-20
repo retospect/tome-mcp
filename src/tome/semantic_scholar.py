@@ -171,6 +171,12 @@ class CitationGraph:
     citations: list[S2Paper] = field(default_factory=list)
     references: list[S2Paper] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        if self.citations is None:
+            self.citations = []
+        if self.references is None:
+            self.references = []
+
 
 def get_citation_graph(paper_id: str, limit: int = 100) -> CitationGraph | None:
     """Get citations and references for a paper.
@@ -227,7 +233,7 @@ def _get_connected(
     if cached is not None:
         paper_key = "citingPaper" if direction == "citations" else "citedPaper"
         papers = []
-        for item in (cached.get("data") or []):
+        for item in cached.get("data") or []:
             paper_data = item.get(paper_key, {})
             if paper_data:
                 papers.append(_parse_paper(paper_data))

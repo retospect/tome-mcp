@@ -1,4 +1,4 @@
-"""Thread-local advisory accumulator for the v2 API.
+"""Thread-local advisory accumulator.
 
 Deep code can push non-fatal warnings, staleness notes, and status messages
 into the accumulator without raising exceptions or stopping execution.
@@ -45,6 +45,7 @@ _thread_local = threading.local()
 # Accumulator
 # ---------------------------------------------------------------------------
 
+
 def _get_store() -> list[dict[str, str]]:
     if not hasattr(_thread_local, "advisories"):
         _thread_local.advisories: list[dict[str, str]] = []
@@ -76,6 +77,7 @@ def peek() -> list[dict[str, str]]:
 # Freshness checks — cheap mtime-based, safe to call on every request
 # ---------------------------------------------------------------------------
 
+
 def check_corpus_freshness(
     project_root: Path,
     chroma_dir: Path,
@@ -92,18 +94,30 @@ def check_corpus_freshness(
     # Resolve all source files
     source_files: list[Path] = []
     for glob_pat in tex_globs:
-        source_files.extend(
-            p for p in sorted(project_root.glob(glob_pat)) if p.is_file()
-        )
+        source_files.extend(p for p in sorted(project_root.glob(glob_pat)) if p.is_file())
 
     if not source_files:
+        logger.debug("check_corpus_freshness: no source files matched globs %s", tex_globs)
         return False  # nothing to check
 
     if not chroma_db.exists():
+        logger.debug("check_corpus_freshness: chroma.sqlite3 missing → needs reindex")
         return True
 
     index_mtime = chroma_db.stat().st_mtime
     stale = [p for p in source_files if p.stat().st_mtime > index_mtime]
+    if stale:
+        logger.debug(
+            "check_corpus_freshness: %d stale file(s): %s",
+            len(stale),
+            [str(p.name) for p in stale[:5]],
+        )
+    else:
+        logger.debug(
+            "check_corpus_freshness: all %d files up to date (index_mtime=%.3f)",
+            len(source_files),
+            index_mtime,
+        )
     return bool(stale)
 
 
@@ -150,8 +164,7 @@ def check_build_freshness(
                 parts.append(f"{ext} ({delta / 3600:.1f}h behind)")
         add(
             "build_stale",
-            f"Build artifacts out of sync: {', '.join(parts)}. "
-            f"Recompile LaTeX to update.",
+            f"Build artifacts out of sync: {', '.join(parts)}. " f"Recompile LaTeX to update.",
         )
 
 
@@ -190,22 +203,31 @@ def check_all_toc(
     try:
         needs_reindex = check_corpus_freshness(project_root, chroma_dir, tex_globs)
     except Exception:
-        pass  # never crash the request
+        logger.warning("check_corpus_freshness failed", exc_info=True)
     try:
         check_build_freshness(project_root, root_tex)
     except Exception:
-        pass
+        logger.warning("check_build_freshness failed", exc_info=True)
     return needs_reindex
 
 
 def check_papers_empty(dot_tome: Path) -> None:
-    """Push advisory if no papers have been ingested yet."""
-    raw_dir = dot_tome / "raw"
-    if not raw_dir.is_dir() or not any(raw_dir.iterdir()):
-        add(
-            "papers_empty",
-            "No papers ingested yet. Use paper(path='inbox/filename.pdf') to add papers.",
-        )
+    """Push advisory if no papers have been ingested yet.
+
+    Checks the global vault catalog.db (papers are stored in ~/.tome-mcp/,
+    not per-project).
+    """
+    from tome.vault import catalog_stats
+
+    try:
+        stats = catalog_stats()
+        if stats.get("total", 0) == 0:
+            add(
+                "papers_empty",
+                "No papers ingested yet. Use paper(path='inbox/filename.pdf') to add papers.",
+            )
+    except Exception:
+        pass  # catalog.db missing or corrupt — skip advisory
 
 
 def check_inbox_pending(project_root: Path) -> None:
@@ -219,8 +241,7 @@ def check_inbox_pending(project_root: Path) -> None:
         suffix = f" (+{len(pdfs) - 3} more)" if len(pdfs) > 3 else ""
         add(
             "inbox_pending",
-            f"{len(pdfs)} PDF(s) waiting in tome/inbox/: "
-            f"{', '.join(names)}{suffix}",
+            f"{len(pdfs)} PDF(s) waiting in tome/inbox/: " f"{', '.join(names)}{suffix}",
         )
 
 

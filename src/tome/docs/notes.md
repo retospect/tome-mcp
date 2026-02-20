@@ -5,7 +5,7 @@ description: "Notes tool — free-form notes on papers and files"
 
 The `notes` tool manages free-form notes on papers or files.
 
-Notes are stored as YAML files in `tome/notes_v2/`. Each paper or
+Notes are stored as YAML files in `tome/notes/`. Each paper or
 file can have multiple titled notes.
 
 ## Parameters

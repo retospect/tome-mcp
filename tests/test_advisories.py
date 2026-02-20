@@ -8,10 +8,10 @@ import time
 
 from tome import advisories, hints
 
-
 # ---------------------------------------------------------------------------
 # Accumulator basics
 # ---------------------------------------------------------------------------
+
 
 class TestAccumulator:
     """Core add/drain/peek semantics."""
@@ -50,6 +50,7 @@ class TestAccumulator:
 # Integration with hints.response()
 # ---------------------------------------------------------------------------
 
+
 class TestHintsIntegration:
     """Advisories appear in hints.response() output automatically."""
 
@@ -86,6 +87,7 @@ class TestHintsIntegration:
 # ---------------------------------------------------------------------------
 # Corpus freshness
 # ---------------------------------------------------------------------------
+
 
 class TestCorpusFreshness:
     """check_corpus_freshness detects stale/empty/current states."""
@@ -155,6 +157,7 @@ class TestCorpusFreshness:
 # Build artifact freshness
 # ---------------------------------------------------------------------------
 
+
 class TestBuildFreshness:
     """check_build_freshness detects stale LaTeX build artifacts."""
 
@@ -215,6 +218,7 @@ class TestBuildFreshness:
 # Bib freshness
 # ---------------------------------------------------------------------------
 
+
 class TestBibFreshness:
     """check_bib_freshness detects bib edits since last manifest sync."""
 
@@ -261,6 +265,7 @@ class TestBibFreshness:
 # check_all_* wrappers
 # ---------------------------------------------------------------------------
 
+
 class TestCheckAll:
     """The check_all_* wrappers never crash, even with bad paths."""
 
@@ -289,35 +294,45 @@ class TestCheckAll:
 # Papers empty / inbox pending advisories
 # ---------------------------------------------------------------------------
 
+
 class TestPapersEmpty:
     """check_papers_empty detects when no papers have been ingested."""
 
     def setup_method(self):
         advisories.drain()
 
-    def test_no_raw_dir(self, tmp_path):
-        dot = tmp_path / ".tome-mcp"
-        dot.mkdir()
-        advisories.check_papers_empty(dot)
-        advs = advisories.drain()
-        assert any(a["category"] == "papers_empty" for a in advs)
+    def test_empty_catalog(self, tmp_path):
+        """Advisory fires when catalog.db has zero documents."""
+        from tome.vault import set_vault_root, clear_vault_root, init_catalog, catalog_path
 
-    def test_empty_raw_dir(self, tmp_path):
-        dot = tmp_path / ".tome-mcp"
-        dot.mkdir()
-        (dot / "raw").mkdir()
-        advisories.check_papers_empty(dot)
-        advs = advisories.drain()
-        assert any(a["category"] == "papers_empty" for a in advs)
+        set_vault_root(tmp_path / "vault")
+        try:
+            init_catalog(catalog_path())
+            advisories.check_papers_empty(tmp_path)  # dot_tome arg unused now
+            advs = advisories.drain()
+            assert any(a["category"] == "papers_empty" for a in advs)
+        finally:
+            clear_vault_root()
 
     def test_has_papers(self, tmp_path):
-        dot = tmp_path / ".tome-mcp"
-        dot.mkdir()
-        raw = dot / "raw"
-        raw.mkdir()
-        (raw / "smith2024").mkdir()
-        advisories.check_papers_empty(dot)
-        assert advisories.drain() == []
+        """No advisory when catalog.db has documents."""
+        from tome.vault import set_vault_root, clear_vault_root, init_catalog, catalog_path
+
+        set_vault_root(tmp_path / "vault")
+        try:
+            db = catalog_path()
+            init_catalog(db)
+            import sqlite3
+
+            with sqlite3.connect(str(db)) as conn:
+                conn.execute(
+                    "INSERT INTO documents (content_hash, key, title, status) VALUES (?, ?, ?, ?)",
+                    ("abc123", "smith2024", "Test Paper", "verified"),
+                )
+            advisories.check_papers_empty(tmp_path)
+            assert advisories.drain() == []
+        finally:
+            clear_vault_root()
 
 
 class TestInboxPending:

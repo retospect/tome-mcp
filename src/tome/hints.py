@@ -1,8 +1,8 @@
-"""Self-describing response builder for the v2 API.
+"""Self-describing response builder.
 
 Every response includes contextual ``hints`` showing the LLM what to do next,
-plus a persistent ``report`` hint for UX telemetry and a ``guide`` hint
-pointing to the most relevant documentation.
+plus a persistent ``mcp_issue`` hint for bug/feature reporting and a
+``guide`` hint pointing to the most relevant documentation.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Any
 
 from tome import advisories as _advisories
 
-_REPORT_HINT = "guide(report='describe what you expected')"
+_MCP_ISSUE_HINT = "Tome MCP not working as expected? guide(report='describe the problem')"
 
 
 def response(data: dict[str, Any], hints: dict[str, str] | None = None) -> str:
@@ -23,7 +23,7 @@ def response(data: dict[str, Any], hints: dict[str, str] | None = None) -> str:
         hints: Optional contextual hints (next actions).
 
     Returns:
-        JSON string with ``hints`` appended (including the report hint).
+        JSON string with ``hints`` appended (including the mcp_issue hint).
         Any accumulated advisories are drained and included automatically.
     """
     # Drain accumulated advisories from deep code
@@ -32,10 +32,10 @@ def response(data: dict[str, Any], hints: dict[str, str] | None = None) -> str:
         data["advisories"] = advs
 
     if hints:
-        hints["report"] = _REPORT_HINT
+        hints["mcp_issue"] = _MCP_ISSUE_HINT
         data["hints"] = hints
     else:
-        data["hints"] = {"report": _REPORT_HINT}
+        data["hints"] = {"mcp_issue": _MCP_ISSUE_HINT}
     return json.dumps(data, indent=2)
 
 
@@ -144,7 +144,9 @@ def toc_hints() -> dict[str, str]:
     }
 
 
-def toc_search_hints(has_context: bool = False, search_terms: list[str] | None = None, result_count: int = 0) -> dict[str, str]:
+def toc_search_hints(
+    has_context: bool = False, search_terms: list[str] | None = None, result_count: int = 0
+) -> dict[str, str]:
     """Hints for a toc search response."""
     h: dict[str, str] = {
         "back": "toc()",

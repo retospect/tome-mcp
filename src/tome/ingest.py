@@ -302,6 +302,11 @@ def prepare_ingest(
                 warnings.append(f"Low text quality: {gate.message}")
             elif gate.gate == "text_extractable":
                 warnings.append(f"Poor text extraction: {gate.message}")
+            elif gate.gate == "doi_duplicate":
+                warnings.append(
+                    f"DOI already in vault: {gate.message}. "
+                    "SI PDFs often carry the parent paper's DOI — verify."
+                )
 
     # DOI status
     title_gate_passed = any(g.passed for g in validation.results if g.gate == "doi_title_match")

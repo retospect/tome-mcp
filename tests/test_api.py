@@ -17,7 +17,6 @@ import pytest
 
 from tome import server
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -28,7 +27,7 @@ def _parse(result: str) -> dict:
 
 
 def _has_report_hint(r: dict) -> bool:
-    return "hints" in r and "report" in r["hints"]
+    return "hints" in r and "mcp_issue" in r["hints"]
 
 
 def _hint_keys(r: dict) -> set[str]:
@@ -291,7 +290,8 @@ class TestPaperGetByDOI:
 
     def test_doi_not_in_vault_online_lookup(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_lookup",
+            server,
+            "_discover_lookup",
             lambda doi, s2_id: {"source": "crossref", "title": "Unknown Paper"},
         )
         r = _parse(server._route_paper(id="10.9999/nonexistent"))
@@ -300,7 +300,8 @@ class TestPaperGetByDOI:
 
     def test_doi_not_in_vault_lookup_fails(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_lookup",
+            server,
+            "_discover_lookup",
             MagicMock(side_effect=Exception("API down")),
         )
         r = _parse(server._route_paper(id="10.9999/nonexistent"))
@@ -354,9 +355,7 @@ class TestPaperUpdateMeta:
         assert "example" in h
 
     def test_report_hint(self):
-        assert _has_report_hint(
-            _parse(server._route_paper(id="xu2022", meta='{"title": "X"}'))
-        )
+        assert _has_report_hint(_parse(server._route_paper(id="xu2022", meta='{"title": "X"}')))
 
 
 class TestPaperDelete:
@@ -364,7 +363,8 @@ class TestPaperDelete:
 
     def test_delete_paper(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_paper_remove",
+            server,
+            "_paper_remove",
             lambda key: json.dumps({"status": "removed", "key": key}),
         )
         r = _parse(server._route_paper(id="xu2022", delete=True))
@@ -372,7 +372,8 @@ class TestPaperDelete:
 
     def test_has_search_hint(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_paper_remove",
+            server,
+            "_paper_remove",
             lambda key: json.dumps({"status": "removed", "key": key}),
         )
         h = _parse(server._route_paper(id="xu2022", delete=True))["hints"]
@@ -380,12 +381,11 @@ class TestPaperDelete:
 
     def test_report_hint(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_paper_remove",
+            server,
+            "_paper_remove",
             lambda key: json.dumps({"status": "removed", "key": key}),
         )
-        assert _has_report_hint(
-            _parse(server._route_paper(id="xu2022", delete=True))
-        )
+        assert _has_report_hint(_parse(server._route_paper(id="xu2022", delete=True)))
 
 
 # ---------------------------------------------------------------------------
@@ -409,9 +409,7 @@ class TestPaperFigureRegister:
         assert "back" in h
 
     def test_report_hint(self, fake_project):
-        assert _has_report_hint(
-            _parse(server._route_paper(id="xu2022:fig3", path="s/fig3.png"))
-        )
+        assert _has_report_hint(_parse(server._route_paper(id="xu2022:fig3", path="s/fig3.png")))
 
 
 class TestPaperFigureGet:
@@ -484,10 +482,17 @@ class TestPaperSearchVault:
         monkeypatch.setattr(server.store, "get_client", MagicMock())
         monkeypatch.setattr(server.store, "get_embed_fn", MagicMock())
         monkeypatch.setattr(
-            server.store, "search_papers",
-            MagicMock(return_value=[
-                {"text": "quantum interference in molecules", "distance": 0.1, "bib_key": "xu2022"},
-            ]),
+            server.store,
+            "search_papers",
+            MagicMock(
+                return_value=[
+                    {
+                        "text": "quantum interference in molecules",
+                        "distance": 0.1,
+                        "bib_key": "xu2022",
+                    },
+                ]
+            ),
         )
         r = _parse(server._route_paper(search=["quantum interference"]))
         assert "results" in r or "count" in r
@@ -502,7 +507,8 @@ class TestPaperSearchVault:
         monkeypatch.setattr(server.store, "get_client", MagicMock())
         monkeypatch.setattr(server.store, "get_embed_fn", MagicMock())
         monkeypatch.setattr(
-            server.store, "search_papers",
+            server.store,
+            "search_papers",
             MagicMock(side_effect=Exception("ChromaDB broke")),
         )
         r = _parse(server._route_paper(search=["anything"]))
@@ -525,9 +531,11 @@ class TestPaperSearchCitedBy:
 
     def test_returns_citations(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_graph",
+            server,
+            "_discover_graph",
             lambda key, doi, s2_id: {
-                "citations_count": 5, "references_count": 10,
+                "citations_count": 5,
+                "references_count": 10,
                 "citations": [{"title": "Paper A"}, {"title": "Paper B"}],
                 "references": [],
             },
@@ -539,10 +547,13 @@ class TestPaperSearchCitedBy:
 
     def test_has_reverse_hint(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_graph",
+            server,
+            "_discover_graph",
             lambda key, doi, s2_id: {
-                "citations_count": 0, "references_count": 0,
-                "citations": [], "references": [],
+                "citations_count": 0,
+                "references_count": 0,
+                "citations": [],
+                "references": [],
             },
         )
         h = _parse(server._route_paper(search=["cited_by:xu2022"]))["hints"]
@@ -551,7 +562,8 @@ class TestPaperSearchCitedBy:
 
     def test_error_returns_error(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_graph",
+            server,
+            "_discover_graph",
             MagicMock(side_effect=Exception("S2 down")),
         )
         r = _parse(server._route_paper(search=["cited_by:xu2022"]))
@@ -563,9 +575,11 @@ class TestPaperSearchCites:
 
     def test_returns_references(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_graph",
+            server,
+            "_discover_graph",
             lambda key, doi, s2_id: {
-                "citations_count": 5, "references_count": 3,
+                "citations_count": 5,
+                "references_count": 3,
                 "citations": [],
                 "references": [{"title": "Ref 1"}, {"title": "Ref 2"}, {"title": "Ref 3"}],
             },
@@ -577,10 +591,13 @@ class TestPaperSearchCites:
 
     def test_has_reverse_hint(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_graph",
+            server,
+            "_discover_graph",
             lambda key, doi, s2_id: {
-                "citations_count": 0, "references_count": 0,
-                "citations": [], "references": [],
+                "citations_count": 0,
+                "references_count": 0,
+                "citations": [],
+                "references": [],
             },
         )
         h = _parse(server._route_paper(search=["cites:xu2022"]))["hints"]
@@ -593,7 +610,8 @@ class TestPaperSearchOnline:
 
     def test_online_search(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_search",
+            server,
+            "_discover_search",
             lambda query, n: {"results": [{"title": "Online Paper"}]},
         )
         r = _parse(server._route_paper(search=["MOF conductivity", "online"]))
@@ -601,7 +619,8 @@ class TestPaperSearchOnline:
 
     def test_online_search_error(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_search",
+            server,
+            "_discover_search",
             MagicMock(side_effect=Exception("API timeout")),
         )
         r = _parse(server._route_paper(search=["MOF", "online"]))
@@ -609,12 +628,11 @@ class TestPaperSearchOnline:
 
     def test_report_hint(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_search",
+            server,
+            "_discover_search",
             lambda query, n: {"results": []},
         )
-        assert _has_report_hint(
-            _parse(server._route_paper(search=["anything", "online"]))
-        )
+        assert _has_report_hint(_parse(server._route_paper(search=["anything", "online"])))
 
 
 class TestPaperSearchPagination:
@@ -644,7 +662,8 @@ class TestPaperIngestPropose:
 
     def test_propose_calls_through(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_propose_ingest",
+            server,
+            "_propose_ingest",
             lambda pdf_path, **kw: {"suggested_key": "smith2024", "title": "A Paper"},
         )
         r = _parse(server._route_paper(path="inbox/smith2024.pdf"))
@@ -652,7 +671,8 @@ class TestPaperIngestPropose:
 
     def test_propose_has_confirm_hint(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_propose_ingest",
+            server,
+            "_propose_ingest",
             lambda pdf_path, **kw: {"suggested_key": "smith2024"},
         )
         h = _parse(server._route_paper(path="inbox/smith2024.pdf"))["hints"]
@@ -660,7 +680,8 @@ class TestPaperIngestPropose:
 
     def test_propose_failure(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_propose_ingest",
+            server,
+            "_propose_ingest",
             MagicMock(side_effect=FileNotFoundError("No such file")),
         )
         r = _parse(server._route_paper(path="inbox/nope.pdf"))
@@ -672,7 +693,8 @@ class TestPaperIngestCommit:
 
     def test_commit(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_commit_ingest",
+            server,
+            "_commit_ingest",
             lambda pdf, key, tags, dois="": {"status": "ingested", "key": key},
         )
         r = _parse(server._route_paper(id="smith2024new", path="inbox/s.pdf"))
@@ -680,7 +702,8 @@ class TestPaperIngestCommit:
 
     def test_commit_has_view_hint(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_commit_ingest",
+            server,
+            "_commit_ingest",
             lambda pdf, key, tags, dois="": {"status": "ingested", "key": key},
         )
         h = _parse(server._route_paper(id="smith2024new", path="inbox/s.pdf"))["hints"]
@@ -688,7 +711,8 @@ class TestPaperIngestCommit:
 
     def test_commit_failure(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_commit_ingest",
+            server,
+            "_commit_ingest",
             MagicMock(side_effect=Exception("Duplicate key")),
         )
         r = _parse(server._route_paper(id="smith2024dup", path="inbox/s.pdf"))
@@ -700,7 +724,8 @@ class TestPaperDOIPlusPath:
 
     def test_doi_path_proposes(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_propose_ingest",
+            server,
+            "_propose_ingest",
             lambda pdf_path, dois="": {"suggested_key": "jones2024", "doi": dois},
         )
         r = _parse(server._route_paper(id="10.1234/x", path="inbox/f.pdf"))
@@ -755,9 +780,7 @@ class TestNotesWrite:
         assert r["content"] == "Updated."
 
     def test_report_hint(self, fake_project):
-        assert _has_report_hint(
-            _parse(server._route_notes(on="xu2022", title="S", content="C"))
-        )
+        assert _has_report_hint(_parse(server._route_notes(on="xu2022", title="S", content="C")))
 
 
 class TestNotesRead:
@@ -866,18 +889,20 @@ class TestNotesDOIResolution:
         assert "error" in r
 
     def test_doi_not_in_vault_report_hint(self, fake_project):
-        assert _has_report_hint(
-            _parse(server._route_notes(on="10.9999/no-such-doi"))
-        )
+        assert _has_report_hint(_parse(server._route_notes(on="10.9999/no-such-doi")))
 
 
 class TestNotesOnFile:
     """notes(on='sections/intro.tex', ...) → notes on tex files."""
 
     def test_write_file_note(self, fake_project):
-        r = _parse(server._route_notes(
-            on="sections/intro.tex", title="Intent", content="Establish background.",
-        ))
+        r = _parse(
+            server._route_notes(
+                on="sections/intro.tex",
+                title="Intent",
+                content="Establish background.",
+            )
+        )
         assert r["status"] == "saved"
 
     def test_read_file_note(self, fake_project):
@@ -1005,7 +1030,8 @@ class TestDocSearchSemantic:
 
     def test_semantic_search(self, fake_project, monkeypatch):
         monkeypatch.setattr(
-            server, "_search_corpus",
+            server,
+            "_search_corpus",
             lambda query, mode, paths, lo, co, n, paras: json.dumps(
                 {"count": 1, "results": [{"text": "hit", "distance": 0.2}]}
             ),
@@ -1018,9 +1044,12 @@ class TestDocSearchMultiple:
     """toc(search=['%TODO', '\\fixme']) → multiple terms."""
 
     def test_multi_term(self, fake_project):
-        _setup_sections(fake_project, {
-            "intro.tex": "%TODO: fix\n\\fixme{broken}\nPLACEHOLDER\n",
-        })
+        _setup_sections(
+            fake_project,
+            {
+                "intro.tex": "%TODO: fix\n\\fixme{broken}\nPLACEHOLDER\n",
+            },
+        )
         r = _parse(server._route_toc(search=["%TODO", "\\fixme"]))
         assert len(r["results"]) == 2
         types = {res["type"] for res in r["results"]}
@@ -1129,7 +1158,8 @@ class TestGuideReport:
 
     def test_report_failure(self, monkeypatch):
         monkeypatch.setattr(
-            server.issues_mod, "append_issue",
+            server.issues_mod,
+            "append_issue",
             MagicMock(side_effect=Exception("write failed")),
         )
         r = _parse(server._route_guide(report="test"))
@@ -1151,11 +1181,20 @@ class TestGuideTopicHierarchy:
     """All expected guide topics should resolve to content."""
 
     EXPECTED_TOPICS = [
-        "paper", "paper-id", "paper-search", "paper-ingest",
-        "paper-cite-graph", "paper-figures", "paper-metadata",
-        "doc", "doc-search", "doc-markers",
+        "paper",
+        "paper-id",
+        "paper-search",
+        "paper-ingest",
+        "paper-cite-graph",
+        "paper-figures",
+        "paper-metadata",
+        "doc",
+        "doc-search",
+        "doc-markers",
         "notes",
-        "getting-started", "configuration", "directory-layout",
+        "getting-started",
+        "configuration",
+        "directory-layout",
         "reporting-issues",
     ]
 
@@ -1164,6 +1203,7 @@ class TestGuideTopicHierarchy:
         """Each guide topic should load without error."""
         from tome import guide as guide_mod
         from pathlib import Path
+
         # Use the built-in docs directory
         docs_dir = Path(__file__).parent.parent / "src" / "tome" / "docs"
         p = guide_mod.find_topic(docs_dir.parent, topic)
@@ -1174,6 +1214,7 @@ class TestGuideTopicHierarchy:
         """guide() index should list all expected slugs."""
         from tome import guide as guide_mod
         from pathlib import Path
+
         docs_dir = Path(__file__).parent.parent / "src" / "tome" / "docs"
         topics = guide_mod.list_topics(docs_dir.parent)
         slugs = {t["slug"] for t in topics}
@@ -1184,16 +1225,24 @@ class TestGuideTopicHierarchy:
         """paper.md should mention all paper sub-guides."""
         from tome import guide as guide_mod
         from pathlib import Path
+
         docs_dir = Path(__file__).parent.parent / "src" / "tome" / "docs"
         content = guide_mod.get_topic(docs_dir.parent, "paper")
-        for sub in ["paper-id", "paper-search", "paper-ingest",
-                     "paper-cite-graph", "paper-figures", "paper-metadata"]:
+        for sub in [
+            "paper-id",
+            "paper-search",
+            "paper-ingest",
+            "paper-cite-graph",
+            "paper-figures",
+            "paper-metadata",
+        ]:
             assert sub in content, f"paper.md missing link to {sub}"
 
     def test_doc_overview_links_sub_guides(self):
         """doc.md should mention all doc sub-guides."""
         from tome import guide as guide_mod
         from pathlib import Path
+
         docs_dir = Path(__file__).parent.parent / "src" / "tome" / "docs"
         content = guide_mod.get_topic(docs_dir.parent, "doc")
         for sub in ["doc-search", "doc-markers"]:
@@ -1218,9 +1267,9 @@ class TestGuideHintsInErrors:
         assert "paper-id" in r["hints"]["guide"]
 
     def test_paper_not_found_has_guide(self, monkeypatch):
-        monkeypatch.setattr(server.bib, "get_entry", MagicMock(
-            side_effect=server.PaperNotFound("nope")
-        ))
+        monkeypatch.setattr(
+            server.bib, "get_entry", MagicMock(side_effect=server.PaperNotFound("nope"))
+        )
         r = _parse(server._route_paper(id="nonexistent2024"))
         assert "error" in r
         assert "guide" in r["hints"]
@@ -1276,7 +1325,8 @@ class TestGuideHintsInSuccess:
 
     def test_cited_by_has_guide(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_graph",
+            server,
+            "_discover_graph",
             lambda key, doi, s2_id: {"citations": [], "citations_count": 0, "references": []},
         )
         r = _parse(server._route_paper(search=["cited_by:xu2022"]))
@@ -1298,10 +1348,17 @@ class TestUserStoryFindPaperByAuthor:
         monkeypatch.setattr(server.store, "get_client", MagicMock())
         monkeypatch.setattr(server.store, "get_embed_fn", MagicMock())
         monkeypatch.setattr(
-            server.store, "search_papers",
-            MagicMock(return_value=[
-                {"text": "quantum interference scaling", "distance": 0.05, "bib_key": "xu2022"},
-            ]),
+            server.store,
+            "search_papers",
+            MagicMock(
+                return_value=[
+                    {
+                        "text": "quantum interference scaling",
+                        "distance": 0.05,
+                        "bib_key": "xu2022",
+                    },
+                ]
+            ),
         )
         r = _parse(server._route_paper(search=["quantum interference Xu"]))
         assert "results" in r or "count" in r
@@ -1340,9 +1397,11 @@ class TestUserStoryWhoCitesThisPaper:
 
     def test_cited_by(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_graph",
+            server,
+            "_discover_graph",
             lambda key, doi, s2_id: {
-                "citations_count": 2, "references_count": 15,
+                "citations_count": 2,
+                "references_count": 15,
                 "citations": [
                     {"title": "Follow-up study A", "year": 2023},
                     {"title": "Follow-up study B", "year": 2024},
@@ -1364,8 +1423,12 @@ class TestUserStoryIngestNewPaper:
     def test_propose_then_commit(self, monkeypatch):
         # Step 1: propose
         monkeypatch.setattr(
-            server, "_propose_ingest",
-            lambda pdf_path, **kw: {"suggested_key": "jones2024mobility", "title": "Mobility in MOFs"},
+            server,
+            "_propose_ingest",
+            lambda pdf_path, **kw: {
+                "suggested_key": "jones2024mobility",
+                "title": "Mobility in MOFs",
+            },
         )
         r1 = _parse(server._route_paper(path="inbox/jones2024.pdf"))
         assert "suggested_key" in r1
@@ -1373,7 +1436,8 @@ class TestUserStoryIngestNewPaper:
 
         # Step 2: commit
         monkeypatch.setattr(
-            server, "_commit_ingest",
+            server,
+            "_commit_ingest",
             lambda pdf, key, tags, dois="": {"status": "ingested", "key": "jones2024mobility"},
         )
         r2 = _parse(server._route_paper(id="jones2024mobility", path="inbox/jones2024.pdf"))
@@ -1387,10 +1451,13 @@ class TestUserStoryTakeNotesAfterReading:
 
     def test_write_then_verify(self, fake_project):
         # Write
-        r1 = _parse(server._route_notes(
-            on="xu2022", title="Summary",
-            content="Demonstrates QI scaling in single-molecule junctions at room temp.",
-        ))
+        r1 = _parse(
+            server._route_notes(
+                on="xu2022",
+                title="Summary",
+                content="Demonstrates QI scaling in single-molecule junctions at room temp.",
+            )
+        )
         assert r1["status"] == "saved"
 
         # Verify via notes list
@@ -1407,10 +1474,13 @@ class TestUserStoryFindTODOs:
     """'Show me all TODOs in my document.'"""
 
     def test_find_todos(self, fake_project):
-        _setup_sections(fake_project, {
-            "intro.tex": "Introduction.\n%TODO: add motivation\nMore text.\n",
-            "bg.tex": "%TODO: fix reference\nBackground.\n",
-        })
+        _setup_sections(
+            fake_project,
+            {
+                "intro.tex": "Introduction.\n%TODO: add motivation\nMore text.\n",
+                "bg.tex": "%TODO: fix reference\nBackground.\n",
+            },
+        )
         r = _parse(server._route_toc(search=["%TODO"]))
         assert len(r["results"]) >= 1
         assert r["results"][0]["type"] == "marker"
@@ -1420,10 +1490,13 @@ class TestUserStoryFindWherePaperIsCited:
     """'Where do I cite xu2022 in my document?'"""
 
     def test_find_citation(self, fake_project):
-        _setup_sections(fake_project, {
-            "intro.tex": "As shown by \\cite{xu2022}, QI scales.\n",
-            "bg.tex": "Prior work \\cite{chen2023, xu2022} established...\n",
-        })
+        _setup_sections(
+            fake_project,
+            {
+                "intro.tex": "As shown by \\cite{xu2022}, QI scales.\n",
+                "bg.tex": "Prior work \\cite{chen2023, xu2022} established...\n",
+            },
+        )
         r = _parse(server._route_toc(search=["xu2022"]))
         assert any(res["type"] == "cite" for res in r["results"])
 
@@ -1438,7 +1511,8 @@ class TestUserStoryLookupByDOI:
 
     def test_doi_not_in_vault(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_discover_lookup",
+            server,
+            "_discover_lookup",
             lambda doi, s2_id: {"title": "Novel paper", "source": "crossref"},
         )
         r = _parse(server._route_paper(id="10.9999/unknown"))
@@ -1451,9 +1525,11 @@ class TestUserStoryReportBug:
 
     def test_report_bug(self, monkeypatch):
         monkeypatch.setattr(server.issues_mod, "append_issue", lambda *a, **kw: None)
-        r = _parse(server._route_guide(
-            report="major: paper(search=['MOF']) returned xu2022 which is not about MOFs"
-        ))
+        r = _parse(
+            server._route_guide(
+                report="major: paper(search=['MOF']) returned xu2022 which is not about MOFs"
+            )
+        )
         assert r["status"] == "reported"
         assert r["severity"] == "major"
 
@@ -1476,9 +1552,9 @@ class TestUserStoryRegisterFigureThenCaption:
         assert r1["status"] == "figure_ingested"
 
         # Add caption
-        r2 = _parse(server._route_paper(
-            id="xu2022:fig3", meta='{"caption": "Band structure showing QI"}'
-        ))
+        r2 = _parse(
+            server._route_paper(id="xu2022:fig3", meta='{"caption": "Band structure showing QI"}')
+        )
         assert r2["status"] == "updated"
         assert r2["meta"]["caption"] == "Band structure showing QI"
 
@@ -1510,7 +1586,9 @@ class TestUserStoryGetHelp:
         assert "start" in r1["hints"]
 
         # Step 2: get specific topic
-        monkeypatch.setattr(server.guide_mod, "get_topic", lambda root, t: "Paper workflow guide...")
+        monkeypatch.setattr(
+            server.guide_mod, "get_topic", lambda root, t: "Paper workflow guide..."
+        )
         r2 = _parse(server._route_guide(topic="paper"))
         assert "guide" in r2
         assert "index" in r2["hints"]
@@ -1543,47 +1621,34 @@ class TestHintConsistencyPaper:
         assert _has_report_hint(_parse(server._route_paper(id="nope999")))
 
     def test_doi_resolve(self):
-        assert _has_report_hint(
-            _parse(server._route_paper(id="10.1038/s41586-022-04435-4"))
-        )
+        assert _has_report_hint(_parse(server._route_paper(id="10.1038/s41586-022-04435-4")))
 
     def test_s2_not_found(self):
         assert _has_report_hint(_parse(server._route_paper(id="a" * 40)))
 
     def test_meta_update(self):
-        assert _has_report_hint(
-            _parse(server._route_paper(id="xu2022", meta='{"title": "X"}'))
-        )
+        assert _has_report_hint(_parse(server._route_paper(id="xu2022", meta='{"title": "X"}')))
 
     def test_meta_bad_json(self):
-        assert _has_report_hint(
-            _parse(server._route_paper(id="xu2022", meta="bad"))
-        )
+        assert _has_report_hint(_parse(server._route_paper(id="xu2022", meta="bad")))
 
     def test_delete(self, monkeypatch):
         monkeypatch.setattr(
-            server, "_paper_remove",
+            server,
+            "_paper_remove",
             lambda key: json.dumps({"status": "removed"}),
         )
-        assert _has_report_hint(
-            _parse(server._route_paper(id="xu2022", delete=True))
-        )
+        assert _has_report_hint(_parse(server._route_paper(id="xu2022", delete=True)))
 
     def test_figure_missing(self):
-        assert _has_report_hint(
-            _parse(server._route_paper(id="xu2022:fig99"))
-        )
+        assert _has_report_hint(_parse(server._route_paper(id="xu2022:fig99")))
 
     def test_figure_register(self, fake_project):
-        assert _has_report_hint(
-            _parse(server._route_paper(id="xu2022:fig1", path="s.png"))
-        )
+        assert _has_report_hint(_parse(server._route_paper(id="xu2022:fig1", path="s.png")))
 
     def test_figure_delete(self, fake_project):
         server._route_paper(id="xu2022:fig1", path="s.png")
-        assert _has_report_hint(
-            _parse(server._route_paper(id="xu2022:fig1", delete=True))
-        )
+        assert _has_report_hint(_parse(server._route_paper(id="xu2022:fig1", delete=True)))
 
     def test_search_star(self):
         assert _has_report_hint(_parse(server._route_paper(search=["*"])))
@@ -1599,30 +1664,20 @@ class TestHintConsistencyNotes:
         assert _has_report_hint(_parse(server._route_notes(on="xu2022")))
 
     def test_write(self, fake_project):
-        assert _has_report_hint(
-            _parse(server._route_notes(on="xu2022", title="T", content="C"))
-        )
+        assert _has_report_hint(_parse(server._route_notes(on="xu2022", title="T", content="C")))
 
     def test_read(self, fake_project):
         server._route_notes(on="xu2022", title="T", content="C")
-        assert _has_report_hint(
-            _parse(server._route_notes(on="xu2022", title="T"))
-        )
+        assert _has_report_hint(_parse(server._route_notes(on="xu2022", title="T")))
 
     def test_read_missing(self, fake_project):
-        assert _has_report_hint(
-            _parse(server._route_notes(on="xu2022", title="Nope"))
-        )
+        assert _has_report_hint(_parse(server._route_notes(on="xu2022", title="Nope")))
 
     def test_delete(self, fake_project):
-        assert _has_report_hint(
-            _parse(server._route_notes(on="xu2022", delete=True))
-        )
+        assert _has_report_hint(_parse(server._route_notes(on="xu2022", delete=True)))
 
     def test_doi_error(self, fake_project):
-        assert _has_report_hint(
-            _parse(server._route_notes(on="10.9999/no"))
-        )
+        assert _has_report_hint(_parse(server._route_notes(on="10.9999/no")))
 
 
 class TestHintConsistencyDoc:
@@ -1899,9 +1954,9 @@ class TestHarebrainedCrossToolConfusion:
 
     def test_doc_search_for_paper_slug(self, fake_project):
         """User searches doc() for a paper slug — should find citations."""
-        _setup_sections(fake_project, {
-            "intro.tex": "As shown by \\cite{xu2022}, quantum interference...\n"
-        })
+        _setup_sections(
+            fake_project, {"intro.tex": "As shown by \\cite{xu2022}, quantum interference...\n"}
+        )
         r = _parse(server._route_toc(search=["xu2022"]))
         assert "results" in r
         # Should detect as cite key and find the citation
@@ -1961,9 +2016,15 @@ class TestParamComboSearchOverrides:
 
     def test_search_plus_everything(self):
         """paper(id='xu2022', search=['*'], path='x', meta='{}', delete=True)"""
-        r = _parse(server._route_paper(
-            id="xu2022", search=["*"], path="x", meta="{}", delete=True,
-        ))
+        r = _parse(
+            server._route_paper(
+                id="xu2022",
+                search=["*"],
+                path="x",
+                meta="{}",
+                delete=True,
+            )
+        )
         # Search still wins
         assert "papers" in r or "results" in r
         assert _has_report_hint(r)
@@ -1994,9 +2055,14 @@ class TestParamComboDeletePriority:
 
     def test_delete_plus_meta_plus_path(self):
         """All three mutation params — delete still wins."""
-        r = _parse(server._route_paper(
-            id="xu2022", path="x.pdf", meta='{"title":"X"}', delete=True,
-        ))
+        r = _parse(
+            server._route_paper(
+                id="xu2022",
+                path="x.pdf",
+                meta='{"title":"X"}',
+                delete=True,
+            )
+        )
         assert r.get("status") == "removed" or "error" in r
         assert _has_report_hint(r)
 
@@ -2007,9 +2073,13 @@ class TestParamComboPathPriority:
     def test_id_plus_path_plus_meta(self, fake_project):
         """paper(id='xu2022', path='inbox/x.pdf', meta='{"tags":"test"}')
         — path wins (ingest commit), meta may be passed along."""
-        r = _parse(server._route_paper(
-            id="xu2022", path="inbox/x.pdf", meta='{"tags":"test"}',
-        ))
+        r = _parse(
+            server._route_paper(
+                id="xu2022",
+                path="inbox/x.pdf",
+                meta='{"tags":"test"}',
+            )
+        )
         # Ingest commit path fires
         assert "hints" in r
         assert _has_report_hint(r)
@@ -2017,9 +2087,13 @@ class TestParamComboPathPriority:
     def test_figure_path_plus_meta(self):
         """paper(id='xu2022:fig1', path='shot.png', meta='{"caption":"X"}')
         — path wins → register figure, meta ignored."""
-        r = _parse(server._route_paper(
-            id="xu2022:fig1", path="shot.png", meta='{"caption":"X"}',
-        ))
+        r = _parse(
+            server._route_paper(
+                id="xu2022:fig1",
+                path="shot.png",
+                meta='{"caption":"X"}',
+            )
+        )
         assert "hints" in r or "error" in r
         assert _has_report_hint(r)
 
@@ -2149,3 +2223,96 @@ class TestParamComboDoc:
         r = _parse(server._route_toc(root="default", search=["%TODO"], context="3", page=1))
         assert "results" in r
         assert _has_report_hint(r)
+
+
+class TestAutoReindexOnTouch:
+    """Verify that touching a .tex file triggers auto-reindex on next toc() call."""
+
+    def test_touch_triggers_reindex(self, fake_project):
+        """Index exists → touch file → toc() → reindex should fire."""
+        import time
+
+        _setup_sections(fake_project, {"intro.tex": "\\section{Intro}\nHello world.\n"})
+
+        # Build initial index so chroma.sqlite3 exists
+        server._reindex_corpus("sections/*.tex")
+
+        chroma_db = fake_project / ".tome-mcp" / "chroma" / "chroma.sqlite3"
+        assert chroma_db.exists(), "chroma.sqlite3 should exist after initial reindex"
+
+        # Wait to ensure mtime difference is detectable
+        time.sleep(0.1)
+
+        # Touch the file (modify content so mtime changes)
+        tex = fake_project / "sections" / "intro.tex"
+        tex.write_text("\\section{Intro}\nHello world.\nNew line added.\n")
+
+        assert (
+            tex.stat().st_mtime > chroma_db.stat().st_mtime
+        ), "Touched file should be newer than chroma.sqlite3"
+
+        # Call toc — should trigger auto-reindex
+        r = _parse(server._route_toc())
+
+        # Verify reindex happened: check the advisory
+        advisories = r.get("advisories", [])
+        categories = [a["category"] for a in advisories]
+        assert (
+            "corpus_auto_reindexed" in categories
+        ), f"Expected auto-reindex advisory, got: {advisories}"
+
+    def test_no_reindex_when_current(self, fake_project):
+        """Index exists and up-to-date → toc() → no reindex advisory."""
+        _setup_sections(fake_project, {"intro.tex": "\\section{Intro}\nHello.\n"})
+
+        # Build initial index
+        server._reindex_corpus("sections/*.tex")
+
+        # Call toc immediately — nothing changed, no reindex expected
+        r = _parse(server._route_toc())
+        advisories = r.get("advisories", [])
+        categories = [a["category"] for a in advisories]
+        assert (
+            "corpus_auto_reindexed" not in categories
+        ), f"Should NOT reindex when up to date, got: {advisories}"
+
+    def test_touch_after_search_triggers_reindex(self, fake_project):
+        """Reindex → toc search (opens ChromaDB) → touch → toc → reindex should fire.
+
+        This reproduces the real scenario where a previous search call may
+        bump chroma.sqlite3 mtime via PersistentClient access.
+        """
+        import time
+
+        _setup_sections(fake_project, {"intro.tex": "\\section{Intro}\nContent here.\n"})
+
+        # Build initial index
+        server._reindex_corpus("sections/*.tex")
+
+        chroma_db = fake_project / ".tome-mcp" / "chroma" / "chroma.sqlite3"
+        assert chroma_db.exists()
+
+        # Simulate a search call that opens ChromaDB (like a previous toc search)
+        try:
+            server._route_toc(search=["Content"])
+        except Exception:
+            pass  # search may fail in test env, that's OK — we just need the ChromaDB open
+
+        mtime_after_search = chroma_db.stat().st_mtime
+
+        # Wait then touch the file
+        time.sleep(0.1)
+        tex = fake_project / "sections" / "intro.tex"
+        tex.write_text("\\section{Intro}\nContent here.\nEdited line.\n")
+
+        assert (
+            tex.stat().st_mtime > mtime_after_search
+        ), "Touched file should be newer than chroma.sqlite3 even after search"
+
+        # Call toc — should trigger auto-reindex
+        r = _parse(server._route_toc())
+        advisories = r.get("advisories", [])
+        categories = [a["category"] for a in advisories]
+        assert (
+            "corpus_auto_reindexed" in categories
+        ), f"Expected auto-reindex advisory after touch-after-search, got: {advisories}"

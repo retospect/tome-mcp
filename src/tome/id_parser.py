@@ -1,4 +1,4 @@
-"""Unified ID parser for the v2 API.
+"""Unified ID parser.
 
 Parses a single ``id`` string into its components. The format supports:
 

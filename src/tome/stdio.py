@@ -1,21 +1,21 @@
-"""
-Stdio Server Transport Module
+"""Non-blocking stdio transport for MCP with write timeout.
 
-This module provides functionality for creating an stdio-based transport layer
-that can be used to communicate with an MCP client through standard input/output
-streams.
+Drop-in replacement for ``mcp.server.stdio.stdio_server`` that:
 
-Example usage:
-```
-    async def run_server():
-        async with stdio_server() as (read_stream, write_stream):
-            # read_stream contains incoming JSONRPCMessages from stdin
-            # write_stream allows sending JSONRPCMessages to stdout
-            server = await create_my_server()
-            await server.run(read_stream, write_stream, init_options)
+1. Sets stdout fd non-blocking and writes in small chunks (4 KB) so the
+   async event loop stays responsive even when the OS pipe buffer fills.
+2. Detects a stalled pipe (client not reading) and calls ``sys.exit(1)``
+   after ``_WRITE_TIMEOUT_S`` seconds so the IDE can respawn a fresh
+   server with a clean pipe.
 
-    anyio.run(run_server)
-```
+Usage (in server.py)::
+
+    from tome.stdio import stdio_server
+
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(read_stream, write_stream, init_options)
+
+Upstream issue: https://github.com/modelcontextprotocol/python-sdk/issues/547
 """
 
 import logging
@@ -61,7 +61,7 @@ async def _write_nonblocking(fd: int, data: bytes) -> None:
         try:
             n = os.write(fd, mv[:_WRITE_CHUNK])
             mv = mv[n:]
-            stall_start = None          # progress — reset timer
+            stall_start = None  # progress — reset timer
         except BlockingIOError:
             now = time.monotonic()
             if stall_start is None:
@@ -92,14 +92,13 @@ async def stdio_server(
     stdin: anyio.AsyncFile[str] | None = None,
     stdout: anyio.AsyncFile[str] | None = None,
 ):
+    """Server transport for stdio with non-blocking writes and timeout.
+
+    Communicates with an MCP client by reading from stdin and writing to
+    stdout.  The stdout fd is set non-blocking so writes never block the
+    event loop; if the client stops reading, the server exits after
+    ``_WRITE_TIMEOUT_S`` seconds.
     """
-    Server transport for stdio: this communicates with an MCP client by reading
-    from the current process' stdin and writing to stdout.
-    """
-    # Purposely not using context managers for these, as we don't want to close
-    # standard process handles. Encoding of stdin/stdout as text streams on
-    # python is platform-dependent (Windows is particularly problematic), so we
-    # re-wrap the underlying binary stream to ensure UTF-8.
     if not stdin:
         stdin = anyio.wrap_file(TextIOWrapper(sys.stdin.buffer, encoding="utf-8"))
 
@@ -110,7 +109,6 @@ async def stdio_server(
     if not stdout:
         stdout_fd = sys.stdout.buffer.fileno()
         os.set_blocking(stdout_fd, False)
-        # Still create the wrapped stdout for the type signature / fallback
         stdout = anyio.wrap_file(TextIOWrapper(sys.stdout.buffer, encoding="utf-8"))
 
     read_stream: MemoryObjectReceiveStream[SessionMessage | Exception]
@@ -147,9 +145,7 @@ async def stdio_server(
                     if stdout_fd is not None:
                         # Non-blocking write directly to fd — never blocks
                         # the event loop, yields on pipe-full (EAGAIN).
-                        await _write_nonblocking(
-                            stdout_fd, (json_str + "\n").encode("utf-8")
-                        )
+                        await _write_nonblocking(stdout_fd, (json_str + "\n").encode("utf-8"))
                     else:
                         # Custom stdout provided — use original path.
                         await stdout.write(json_str + "\n")

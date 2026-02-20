@@ -45,7 +45,7 @@ CATALOG_DB_NAME = "catalog.db"
 CHROMA_DIR_NAME = "chroma"
 CONFIG_NAME = "config.yaml"
 
-ARCHIVE_FORMAT_VERSION = 1
+ARCHIVE_FORMAT_VERSION = 2
 ARCHIVE_EXTENSION = ".tome"
 
 SUPPLEMENT_PATTERN_RE = r"_sup\d+$"
@@ -310,6 +310,76 @@ def _sanitize_str(s: str) -> str:
     return s.replace("\x00", "") if "\x00" in s else s
 
 
+# Fields stored as JSON string attrs (nested dicts that aren't worth flattening)
+_META_JSON_FIELDS = frozenset(
+    {
+        "pdf_metadata",
+        "xmp_metadata",
+        "title_sources",
+        "type_metadata",
+        "chunk_params",
+    }
+)
+
+
+def _write_meta_native(f: h5py.File, meta: PaperMeta) -> None:
+    """Write DocumentMeta as a native HDF5 group (format v2).
+
+    - Scalar fields → attrs on ``meta`` group
+    - ``authors`` → vlen-string dataset under ``meta/``
+    - Nested dicts → JSON string attrs on ``meta`` group
+    - None values → attr absent (read back as None)
+    """
+    g = f.create_group("meta")
+    d = asdict(meta)
+    for key, val in d.items():
+        if key == "authors":
+            g.create_dataset("authors", data=[_sanitize_str(a) for a in val], dtype=_VLEN_STR)
+        elif key in _META_JSON_FIELDS:
+            if val:  # skip empty dicts
+                g.attrs[key] = json.dumps(val, ensure_ascii=False)
+        elif val is None:
+            pass  # absent attr = None on read
+        elif isinstance(val, bool):
+            g.attrs[key] = int(val)  # HDF5 bool compat
+        elif isinstance(val, str):
+            g.attrs[key] = _sanitize_str(val)
+        elif isinstance(val, (int, float)):
+            g.attrs[key] = val
+        # else: skip unknown types silently
+
+
+def _read_meta_native(f: h5py.File) -> dict[str, Any]:
+    """Read DocumentMeta from a native HDF5 meta group (format v2)."""
+    g = f["meta"]
+    data: dict[str, Any] = {}
+    for key, val in g.attrs.items():
+        if key in _META_JSON_FIELDS:
+            data[key] = json.loads(val)
+        else:
+            # Convert numpy scalars to Python types
+            if hasattr(val, "item"):
+                data[key] = val.item()
+            elif isinstance(val, bytes):
+                data[key] = val.decode("utf-8")
+            else:
+                data[key] = val
+    # Bool fields stored as int
+    for bf in ("doi_verified", "has_abstract"):
+        if bf in data:
+            data[bf] = bool(data[bf])
+    # Authors dataset
+    if "authors" in g:
+        data["authors"] = [a if isinstance(a, str) else a.decode("utf-8") for a in g["authors"][:]]
+    return data
+
+
+def _read_meta_v1(f: h5py.File) -> dict[str, Any]:
+    """Read DocumentMeta from a v1 JSON dataset (backward compat)."""
+    raw = f["meta"][()]
+    return json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
+
+
 def write_archive(
     archive_path: Path,
     meta: PaperMeta,
@@ -321,6 +391,8 @@ def write_archive(
     chunk_char_ends: list[int] | None = None,
 ) -> Path:
     """Write a .tome archive (HDF5) containing paper data.
+
+    Format v2: metadata stored as native HDF5 attrs on a ``meta`` group.
 
     Args:
         archive_path: Destination path (e.g. ~/.tome-mcp/tome/t/tinti2017.tome).
@@ -338,7 +410,7 @@ def write_archive(
     archive_path.parent.mkdir(parents=True, exist_ok=True)
 
     with h5py.File(archive_path, "w") as f:
-        # Root attrs — quick access without reading datasets
+        # Root attrs — quick access without opening the meta group
         f.attrs["format_version"] = ARCHIVE_FORMAT_VERSION
         f.attrs["key"] = meta.key
         f.attrs["content_hash"] = meta.content_hash
@@ -346,8 +418,8 @@ def write_archive(
         f.attrs["embedding_dim"] = EMBEDDING_DIM
         f.attrs["created_at"] = datetime.now(UTC).isoformat()
 
-        # Meta — full DocumentMeta as JSON string (complex nested dicts)
-        f.create_dataset("meta", data=_sanitize_str(meta.to_json()), dtype=_VLEN_STR)
+        # Meta — native HDF5 group with attrs + datasets
+        _write_meta_native(f, meta)
 
         # Pages — variable-length string array (index 0 = page 1)
         if page_texts:
@@ -380,16 +452,64 @@ class CorruptArchive(Exception):
         self.reason = reason
 
 
+def update_archive_meta(archive_path: Path, **fields: Any) -> PaperMeta:
+    """Patch metadata fields in a .tome archive and return the updated meta.
+
+    Works with both v1 (JSON dataset) and v2 (native group) archives.
+    For v1 files, reads JSON, patches, rewrites as v2 native group.
+    For v2 files, patches individual attrs/datasets in-place.
+
+    Args:
+        archive_path: Path to the .tome archive.
+        **fields: Key-value pairs to set (e.g. ``doi='10.1234/x'``).
+
+    Returns:
+        The updated :class:`PaperMeta`.
+
+    Raises:
+        CorruptArchive: If the file is unreadable.
+    """
+    try:
+        with h5py.File(archive_path, "r+") as f:
+            # Read current meta (v1 or v2)
+            is_v1 = isinstance(f["meta"], h5py.Dataset)
+            if is_v1:
+                data = _read_meta_v1(f)
+            else:
+                data = _read_meta_native(f)
+
+            data.update(fields)
+
+            # Rewrite meta group (delete old, write new as v2)
+            del f["meta"]
+            meta = PaperMeta.from_json(data)
+            _write_meta_native(f, meta)
+            f.attrs["format_version"] = ARCHIVE_FORMAT_VERSION
+
+            # Keep root attrs in sync
+            if "key" in fields:
+                f.attrs["key"] = fields["key"]
+            if "content_hash" in fields:
+                f.attrs["content_hash"] = fields["content_hash"]
+    except (OSError, KeyError, json.JSONDecodeError) as exc:
+        raise CorruptArchive(archive_path, str(exc)) from exc
+    return meta
+
+
 def read_archive_meta(archive_path: Path) -> PaperMeta:
-    """Read metadata from a .tome archive. Fast — reads one dataset.
+    """Read metadata from a .tome archive.
+
+    Supports both v1 (JSON dataset) and v2 (native HDF5 group) formats.
 
     Raises:
         CorruptArchive: If the file is not a valid HDF5 archive or lacks metadata.
     """
     try:
         with h5py.File(archive_path, "r") as f:
-            raw = f["meta"][()]
-            data = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
+            if isinstance(f["meta"], h5py.Dataset):
+                data = _read_meta_v1(f)
+            else:
+                data = _read_meta_native(f)
     except (OSError, KeyError, json.JSONDecodeError) as exc:
         raise CorruptArchive(archive_path, str(exc)) from exc
     return PaperMeta.from_json(data)
@@ -427,7 +547,9 @@ def read_archive_chunks(archive_path: Path) -> dict[str, Any]:
             result: dict[str, Any] = {}
             if "texts" in g:
                 raw = g["texts"][:]
-                result["chunk_texts"] = [t if isinstance(t, str) else t.decode("utf-8") for t in raw]
+                result["chunk_texts"] = [
+                    t if isinstance(t, str) else t.decode("utf-8") for t in raw
+                ]
             if "embeddings" in g:
                 result["chunk_embeddings"] = g["embeddings"][:]
             if "pages" in g:

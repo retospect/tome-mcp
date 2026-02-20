@@ -49,6 +49,36 @@ def get_embed_fn() -> EmbeddingFunction | None:
     return None
 
 
+_EMBED_THREADS = 2  # ~35% faster than serial; more threads add contention
+
+
+def compute_embeddings(texts: list[str]) -> list[list[float]]:
+    """Compute embeddings independently of any ChromaDB collection.
+
+    Uses the same model as ChromaDB's default (all-MiniLM-L6-v2 via ONNX)
+    so vectors are identical and can be inserted directly.
+
+    Splits work across ``_EMBED_THREADS`` threads for parallelism.
+    """
+    if not texts:
+        return []
+    from concurrent.futures import ThreadPoolExecutor
+
+    from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+
+    ef = DefaultEmbeddingFunction()
+
+    if len(texts) <= 32 or _EMBED_THREADS <= 1:
+        return ef(texts)
+
+    batch_size = (len(texts) + _EMBED_THREADS - 1) // _EMBED_THREADS
+    batches = [texts[i : i + batch_size] for i in range(0, len(texts), batch_size)]
+    results: list[list[list[float]]] = []
+    with ThreadPoolExecutor(max_workers=_EMBED_THREADS) as pool:
+        results = list(pool.map(ef, batches))
+    return [vec for batch in results for vec in batch]
+
+
 def get_collection(
     client: chromadb.ClientAPI,
     name: str,

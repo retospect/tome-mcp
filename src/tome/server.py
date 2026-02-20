@@ -68,6 +68,13 @@ from tome.ingest import resolve_metadata
 mcp_server = FastMCP("Tome")
 
 # ---------------------------------------------------------------------------
+# Cache schema version — bump this when derived data formats change.
+# set_root checks .tome-mcp/version and wipes derived caches on mismatch.
+# ---------------------------------------------------------------------------
+
+CACHE_SCHEMA_VERSION = 2  # mtime-based corpus reindex
+
+# ---------------------------------------------------------------------------
 # Logging — stderr always, file handler added once project root is known
 # ---------------------------------------------------------------------------
 
@@ -220,8 +227,7 @@ def _logging_tool(**kwargs):
                         _TOOL_TIMEOUT,
                     )
                     raise TomeError(
-                        f"Tool {name} timed out after {int(dt)}s. "
-                        f"The operation was cancelled."
+                        f"Tool {name} timed out after {int(dt)}s. " f"The operation was cancelled."
                     )
 
                 dt = time.monotonic() - t0
@@ -534,9 +540,6 @@ def _paper_summary(entry) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-
-
-
 def _detect_related_doc_type(api_title: str | None, pdf_title: str | None) -> str | None:
     """Detect if a paper is an erratum, corrigendum, retraction, or addendum from its title.
 
@@ -837,8 +840,14 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
 
     lib = _load_bib()
     existing_keys = set(bib.list_keys(lib))
+    _preexisting_placeholder = False
     if key in existing_keys:
-        key = _disambiguate_key(key, existing_keys)
+        _entry = bib.get_entry(lib, key)
+        if bib.get_x_field(_entry, "x-pdf") == "false":
+            # LLM pre-created this entry via paper(meta=...) — reuse it
+            _preexisting_placeholder = True
+        else:
+            key = _disambiguate_key(key, existing_keys)
 
     # --- Resolve DOI from candidate list if provided ---
     override_doi: str | None = None
@@ -892,10 +901,10 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
                     result["existing_key"] = gate.data["existing_key"]
                 return result
             elif gate.gate == "doi_duplicate":
-                result = {"error": f"Duplicate DOI: {gate.message}"}
-                if gate.data.get("existing_key"):
-                    result["existing_key"] = gate.data["existing_key"]
-                return result
+                # Downgraded to warning: SI PDFs often extract the parent
+                # paper's DOI or a DOI from their references section, causing
+                # false positives.  Content-hash dedup is the real guard.
+                pass
             elif gate.gate == "prompt_injection":
                 return {
                     "error": f"Blocked: {gate.message}",
@@ -949,65 +958,17 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
     lib = _load_bib()
     existing_keys = set(bib.list_keys(lib))
     if key in existing_keys:
-        key = _disambiguate_key(key, existing_keys)
-    bib.add_entry(lib, key, "article", fields)
+        if _preexisting_placeholder:
+            # Update the placeholder entry the LLM pre-created
+            entry = bib.get_entry(lib, key)
+            for k, v in fields.items():
+                bib.set_field(entry, k, v)
+        else:
+            key = _disambiguate_key(key, existing_keys)
+            bib.add_entry(lib, key, "article", fields)
+    else:
+        bib.add_entry(lib, key, "article", fields)
     bib.write_bib(lib, _bib_path(), backup_dir=_dot_tome())
-
-    # --- Server-specific: extract raw text ---
-    # Write raw page text files for project use
-    staging = _staging_dir() / key
-    staging.mkdir(parents=True, exist_ok=True)
-    try:
-        extract.extract_pdf_pages(pdf_path, staging / "raw", key, force=True)
-    except Exception as e:
-        return {"error": f"Text extraction failed: {e}"}
-
-    raw_dest = _raw_dir() / key
-    raw_dest.parent.mkdir(parents=True, exist_ok=True)
-    if (staging / "raw" / key).exists():
-        if raw_dest.exists():
-            shutil.rmtree(raw_dest)
-        shutil.copytree(staging / "raw" / key, raw_dest)
-
-    # --- Server-specific: chunk + ChromaDB ---
-    all_chunks: list[str] = []
-    page_map: list[int] = []
-    for page_num, page_text in enumerate(prep.page_texts, start=1):
-        page_chunks = chunk.chunk_text(page_text)
-        for c in page_chunks:
-            all_chunks.append(c)
-            page_map.append(page_num)
-
-    embedded = False
-    chunk_embeddings = None
-    chunks_col = None
-    for _attempt in range(2):
-        try:
-            _, _, chunks_col = _vault_paper_col()
-            sha = checksum.sha256_file(pdf_path)
-            store.upsert_paper_chunks(chunks_col, key, all_chunks, page_map, sha)
-            embedded = True
-            break
-        except Exception:
-            if _attempt == 0:
-                _reset_vault_chroma()  # retry once after reset
-            # else: ChromaDB failures are non-fatal
-
-    # Retrieve embeddings from ChromaDB for archive storage
-    if embedded and chunks_col is not None and all_chunks:
-        try:
-            import numpy as np
-
-            ids = [f"{key}::chunk_{i}" for i in range(len(all_chunks))]
-            result = chunks_col.get(ids=ids, include=["embeddings"])
-            embeds = result.get("embeddings") if result else None
-            if embeds is not None and len(embeds) > 0:
-                chunk_embeddings = np.array(embeds, dtype=np.float32)
-                logger.info("Retrieved %d embeddings for %s", len(embeds), key)
-            else:
-                logger.warning("No embeddings returned for %s (ids=%d)", key, len(ids))
-        except Exception as exc:
-            logger.warning("Failed to retrieve embeddings for %s: %s", key, exc)
 
     # --- Shared: write to vault — PDF + .tome archive + catalog.db ---
     from tome.vault import (
@@ -1041,9 +1002,6 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
         v_tome,
         doc_meta,
         page_texts=prep.page_texts,
-        chunk_texts=all_chunks if all_chunks else None,
-        chunk_embeddings=chunk_embeddings,
-        chunk_pages=page_map if all_chunks else None,
     )
 
     catalog_upsert(doc_meta)
@@ -1061,15 +1019,14 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
             "doi_status": prep.doi_status,
             "file_sha256": content_hash,
             "pages_extracted": len(prep.page_texts),
-            "embedded": embedded,
+            "embedded": False,
             "doi_history": [],
             "figures": {},
         },
     )
     _save_manifest(data)
 
-    # Cleanup staging and inbox
-    shutil.rmtree(staging, ignore_errors=True)
+    # Cleanup inbox
     try:
         pdf_path.unlink()
     except Exception:
@@ -1109,12 +1066,13 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
         "year": str(prep.year or ""),
         "journal": prep.journal or "",
         "pages": len(prep.page_texts),
-        "chunks": len(all_chunks),
-        "embedded": embedded,
+        "searchable": False,
         "next_steps": (
             f"{doi_hint}"
             f"{parent_hint}"
             f"Enrich: notes(on='{key}', title='summary', content='...'). "
+            f"To make searchable, run in shell: "
+            f"uv run python scripts/backfill_embeddings.py\n"
             f"See guide('paper-ingest') for the full pipeline."
         ),
     }
@@ -1229,7 +1187,7 @@ def _paper_remove(key: str) -> str:
         if doc:
             catalog_delete(doc["content_hash"])
     except Exception:
-        pass  # best-effort: vault may not exist yet
+        logger.warning("catalog delete failed during paper removal", exc_info=True)
 
     from tome.vault import vault_pdf_path, vault_tome_path
 
@@ -1245,7 +1203,7 @@ def _paper_remove(key: str) -> str:
         client, embed_fn, _ = _vault_paper_col()
         store.delete_paper(client, key, embed_fn=embed_fn)
     except Exception:
-        pass  # best-effort: ChromaDB cleanup non-fatal
+        logger.warning("ChromaDB delete failed during paper removal", exc_info=True)
 
     # Remove from manifest
     data = _load_manifest()
@@ -1336,9 +1294,6 @@ def _paper_list(tags: str = "", status: str = "", page: int = 1) -> str:
 # ---------------------------------------------------------------------------
 # Unified Search
 # ---------------------------------------------------------------------------
-
-
-
 
 
 def _search_papers(
@@ -1531,8 +1486,7 @@ def _search_corpus(
     }
     if not results:
         response["hint"] = (
-            "No results. Check that tex_globs in tome/config.yaml "
-            "covers your source files."
+            "No results. Check that tex_globs in tome/config.yaml " "covers your source files."
         )
     return json.dumps(response, indent=2)
 
@@ -1592,23 +1546,46 @@ def _search_corpus_exact(query: str, paths: str, context: int) -> str:
     )
 
 
-# _search_notes, _search_all deleted (dead code — v2 routing uses _search_papers/_search_corpus directly).
+# _search_notes, _search_all deleted (dead code — routing uses _search_papers/_search_corpus directly).
 
 
 # list_labels → toc(search=['\label{prefix}'])
 # find_cites → toc(search=['key2024'])
 
 
+def _load_corpus_mtime_cache() -> dict[str, Any]:
+    """Load the corpus mtime cache from .tome-mcp/corpus_mtimes.json."""
+    cache_path = _dot_tome() / "corpus_mtimes.json"
+    if cache_path.exists():
+        try:
+            return json.loads(cache_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
 
+
+def _save_corpus_mtime_cache(data: dict[str, Any]) -> None:
+    """Save the corpus mtime cache atomically."""
+    dot = _dot_tome()
+    dot.mkdir(parents=True, exist_ok=True)
+    cache_path = dot / "corpus_mtimes.json"
+    tmp = cache_path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(cache_path)
 
 
 def _reindex_corpus(paths: str) -> dict[str, Any]:
-    """Re-index .tex/.py files into the corpus search index."""
+    """Re-index .tex/.py files into the corpus search index.
+
+    Uses mtime comparison for fast skip detection — only computes SHA256
+    and re-indexes files whose mtime has changed since the last run.
+    """
     root = _project_root()
     patterns = [p.strip() for p in paths.split(",") if p.strip()]
 
-    # Resolve globs relative to project root
-    current_files: dict[str, str] = {}  # rel_path → sha256
+    # Phase 1: Stat all files (fast — no hashing)
+    current_mtimes: dict[str, int] = {}  # rel_path → mtime_ns
+    current_paths: dict[str, Path] = {}  # rel_path → abs Path
     for pattern in patterns:
         for p in sorted(root.glob(pattern)):
             if not p.is_file():
@@ -1616,59 +1593,76 @@ def _reindex_corpus(paths: str) -> dict[str, Any]:
             rel = str(p.relative_to(root))
             if _is_excluded(rel):
                 continue
-            current_files[rel] = checksum.sha256_file(p)
+            current_mtimes[rel] = p.stat().st_mtime_ns
+            current_paths[rel] = p
+
+    # Phase 2: Load mtime cache + ChromaDB indexed set (source of truth)
+    mtime_cache = _load_corpus_mtime_cache()
 
     try:
         client, embed_fn, col = _corpus_col()
-        indexed = store.get_indexed_files(client, store.CORPUS_CHUNKS, embed_fn)
+        indexed_set = set(store.get_indexed_files(client, store.CORPUS_CHUNKS, embed_fn))
     except Exception as e:
         raise ChromaDBError(_sanitize_exc(e))
 
     added, changed, removed, unchanged = [], [], [], []
 
-    for f, sha in current_files.items():
-        if f not in indexed:
+    for f, mtime_ns in current_mtimes.items():
+        if f not in indexed_set:
+            # Not in ChromaDB — must index (handles interrupted previous runs)
             added.append(f)
-        elif indexed[f] != sha:
+        elif mtime_cache.get(f, {}).get("mtime_ns") != mtime_ns:
+            # In ChromaDB but mtime changed on disk — re-index
             changed.append(f)
         else:
             unchanged.append(f)
-    for f in indexed:
-        if f not in current_files:
+
+    # Files in ChromaDB or cache but no longer on disk — remove
+    for f in indexed_set:
+        if f not in current_mtimes:
             removed.append(f)
+    for f in list(mtime_cache):
+        if f not in current_mtimes:
+            mtime_cache.pop(f)
 
     for f in removed:
         logger.info("reindex corpus: removing %s", f)
         store.delete_corpus_file(client, f, embed_fn)
 
+    # Phase 3: Index added/changed files, saving cache after each success
     to_index = changed + added
-    for i, f in enumerate(to_index, 1):
-        logger.info("reindex corpus: indexing %s (%d/%d)", f, i, len(to_index))
-        store.delete_corpus_file(client, f, embed_fn)
-        abs_path = root / f
-        text = abs_path.read_text(encoding="utf-8")
-        chunks = chunk.chunk_text(text)
-        ft = _file_type(f)
-        # Extract LaTeX markers for .tex files
-        markers = None
-        if f.endswith(".tex") or f.endswith(".sty") or f.endswith(".cls"):
-            markers = [latex.extract_markers(c).to_metadata() for c in chunks]
-        store.upsert_corpus_chunks(
-            col,
-            f,
-            chunks,
-            current_files[f],
-            chunk_markers=markers,
-            file_type=ft,
-        )
+    try:
+        for i, f in enumerate(to_index, 1):
+            logger.info("reindex corpus: indexing %s (%d/%d)", f, i, len(to_index))
+            store.delete_corpus_file(client, f, embed_fn)
+            abs_path = current_paths[f]
+            text = abs_path.read_text(encoding="utf-8")
+            file_sha = checksum.sha256_file(abs_path)
+            chunks = chunk.chunk_text(text)
+            ft = _file_type(f)
+            # Extract LaTeX markers for .tex files
+            markers = None
+            if f.endswith(".tex") or f.endswith(".sty") or f.endswith(".cls"):
+                markers = [latex.extract_markers(c).to_metadata() for c in chunks]
+            store.upsert_corpus_chunks(
+                col,
+                f,
+                chunks,
+                file_sha,
+                chunk_markers=markers,
+                file_type=ft,
+            )
+            mtime_cache[f] = {"mtime_ns": current_mtimes[f], "sha256": file_sha}
+    finally:
+        # Save cache even on partial failure — preserves progress
+        for f in unchanged:
+            if f not in mtime_cache:
+                mtime_cache[f] = {"mtime_ns": current_mtimes[f], "sha256": ""}
+        _save_corpus_mtime_cache(mtime_cache)
 
     # Detect orphaned .tex/.sty/.cls files (exist on disk but not referenced)
     orphans: list[str] = []
-    tex_files_indexed = [
-        f
-        for f in current_files
-        if current_files[f] == "tex" or f.endswith((".tex", ".sty", ".cls"))
-    ]
+    tex_files_indexed = [f for f in current_mtimes if f.endswith((".tex", ".sty", ".cls"))]
     if tex_files_indexed:
         try:
             cfg = tome_config.load_config(_tome_dir())
@@ -1681,16 +1675,16 @@ def _reindex_corpus(paths: str) -> dict[str, Any]:
             referenced = tree_files | pkg_files
             orphans = sorted(f for f in tex_files_indexed if f not in referenced)
         except Exception:
-            pass  # Don't fail sync over orphan detection
+            logger.debug("Orphan detection failed", exc_info=True)
 
     # Check for stale/missing summaries (git-based)
     sum_data = summaries.load_summaries(_dot_tome())
-    stale_list = summaries.check_staleness_git(sum_data, root, list(current_files.keys()))
+    stale_list = summaries.check_staleness_git(sum_data, root, list(current_mtimes.keys()))
     stale = {e["file"]: e["status"] for e in stale_list if e["status"] != "fresh"}
 
     # Count by file type
     type_counts: dict[str, int] = {}
-    for f in current_files:
+    for f in current_mtimes:
         ft = _file_type(f)
         type_counts[ft] = type_counts.get(ft, 0) + 1
 
@@ -1699,7 +1693,7 @@ def _reindex_corpus(paths: str) -> dict[str, Any]:
         "changed": len(changed),
         "removed": len(removed),
         "unchanged": len(unchanged),
-        "total_indexed": len(current_files),
+        "total_indexed": len(current_mtimes),
         "by_type": type_counts,
     }
     if orphans:
@@ -1747,7 +1741,7 @@ def _get_library_ids() -> tuple[set[str], set[str]]:
             if sid:
                 lib_s2_ids.add(sid)
     except Exception:
-        pass  # best-effort: empty sets degrade gracefully
+        logger.debug("Library ID collection failed", exc_info=True)
     return lib_dois, lib_s2_ids
 
 
@@ -1907,7 +1901,7 @@ def _discover_graph(key: str, doi: str, s2_id: str) -> dict[str, Any]:
                     "local_references": len(db.get_references(rec.corpus_id)),
                 }
     except Exception:
-        pass  # best-effort: S2AG local cache optional
+        logger.debug("S2AG local cache lookup failed", exc_info=True)
 
     result: dict[str, Any] = {"scope": "graph"}
     if "error" in s2_data and not s2_data.get("paper"):
@@ -1954,7 +1948,7 @@ def _discover_lookup(doi: str, s2_id: str) -> dict[str, Any]:
                 result["local_references"] = len(refs)
                 return result
     except Exception:
-        pass  # best-effort: falls through to S2 API
+        logger.debug("S2AG local graph lookup failed, falling back to API", exc_info=True)
 
     # --- Fall back to S2 API ---
     paper_id = s2_id or (f"DOI:{doi}" if doi else "")
@@ -1970,8 +1964,8 @@ def _discover_lookup(doi: str, s2_id: str) -> dict[str, Any]:
             result["year"] = graph.paper.year
             result["doi"] = graph.paper.doi
             result["citation_count"] = graph.paper.citation_count
-            result["citations_count"] = len(graph.citations)
-            result["references_count"] = len(graph.references)
+            result["citations_count"] = len(graph.citations or [])
+            result["references_count"] = len(graph.references or [])
             return result
     except APIError as e:
         return {"scope": "lookup", "error": str(e)}
@@ -1980,20 +1974,12 @@ def _discover_lookup(doi: str, s2_id: str) -> dict[str, Any]:
     return result
 
 
-
-
-
-
 # _doi_fetch deleted (dead code — OA download now handled in _paper_doi_lookup).
-
 
 
 # ---------------------------------------------------------------------------
 # Figure Tools
 # ---------------------------------------------------------------------------
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -2006,7 +1992,7 @@ def _discover_lookup(doi: str, s2_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-# _doi_reject, _doi_list_rejected deleted (dead code — rejected DOI lists removed in v2).
+# _doi_reject, _doi_list_rejected deleted (dead code — rejected DOI lists removed).
 
 
 # ---------------------------------------------------------------------------
@@ -2092,10 +2078,7 @@ def _match_score(
     return 0.6 * title_score + 0.25 * author_score + 0.15 * year_score
 
 
-# _doi_resolve deleted (dead code — replaced by _paper_doi_lookup in v2 routing).
-
-
-
+# _doi_resolve deleted (dead code — replaced by _paper_doi_lookup).
 
 
 # ---------------------------------------------------------------------------
@@ -2276,9 +2259,6 @@ def _resolve_root(root: str) -> str:
     return tex_path
 
 
-
-
-
 def _paginate_toc(result: str, page: int) -> str:
     """Paginate TOC output into _TOC_MAX_LINES-line pages."""
     lines = result.split("\n")
@@ -2363,18 +2343,6 @@ def _toc_locate_label(prefix: str = "") -> str:
 # _toc_locate_index, _toc_locate_tree deleted (dead code — not wired into toc() routing).
 
 
-
-
-
-
-
-
-
-
-
-
-
-
 # find_text, grep_raw — internal helpers for paper(search=[...]) and toc(search=[...]).
 
 
@@ -2383,12 +2351,6 @@ def _toc_locate_label(prefix: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 # Citation exploration: _explore_fetch/_mark/_list/_dismiss/_clear deleted (dead code).
-
-
-
-
-
-
 
 
 _EMPTY_BIB = """\
@@ -2436,6 +2398,67 @@ def _scaffold_tome(project_root: Path) -> list[str]:
     return created
 
 
+# Derived caches wiped on version mismatch (rebuildable).
+# User data (tome.json, server.log, logs/, llm-requests/) is preserved.
+_DERIVED_CACHE_ITEMS = [
+    "chroma",
+    "corpus_mtimes.json",
+    "doc_analysis.json",
+    "doc_index.json",
+    "doc_index.json.bak",
+    "cache",
+    "raw",
+    "staging",
+]
+
+
+def _check_cache_version(dot_tome: Path) -> list[str]:
+    """Check .tome-mcp/version against CACHE_SCHEMA_VERSION.
+
+    If missing or stale, wipes derived caches and writes the new version.
+    Returns list of items wiped (empty if version matched).
+    """
+    version_file = dot_tome / "version"
+    current = None
+    if version_file.exists():
+        try:
+            current = int(version_file.read_text().strip())
+        except (ValueError, OSError):
+            pass
+
+    if current == CACHE_SCHEMA_VERSION:
+        return []
+
+    # Version mismatch or missing — wipe derived caches
+    wiped: list[str] = []
+    for name in _DERIVED_CACHE_ITEMS:
+        target = dot_tome / name
+        if not target.exists():
+            continue
+        try:
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
+            wiped.append(name)
+        except OSError as e:
+            logger.warning("cache wipe: failed to remove %s: %s", name, e)
+
+    # Write new version
+    dot_tome.mkdir(parents=True, exist_ok=True)
+    version_file.write_text(str(CACHE_SCHEMA_VERSION))
+
+    old_label = f"v{current}" if current else "unversioned"
+    logger.info(
+        "Cache schema %s → v%d: wiped %d derived items %s",
+        old_label,
+        CACHE_SCHEMA_VERSION,
+        len(wiped),
+        wiped,
+    )
+    return wiped
+
+
 @mcp_server.tool()
 def set_root(path: str, test_vault_root: str = "") -> str:
     """Switch Tome's project root directory at runtime."""
@@ -2457,7 +2480,12 @@ def set_root(path: str, test_vault_root: str = "") -> str:
         clear_vault_root()
 
     _runtime_root = p
-    _attach_file_log(tome_paths.project_dir(p))
+    dot_tome = tome_paths.project_dir(p)
+
+    # Check cache schema version FIRST — wipe stale caches before anything reads them
+    cache_wiped = _check_cache_version(dot_tome)
+
+    _attach_file_log(dot_tome)
     logger.info("Project root set to %s", p)
     tome_dir = p / "tome"
 
@@ -2529,6 +2557,13 @@ def set_root(path: str, test_vault_root: str = "") -> str:
             "by_type": type_counts,
         },
     }
+    if cache_wiped:
+        response["cache_wiped"] = cache_wiped
+        response["cache_version"] = CACHE_SCHEMA_VERSION
+        response["cache_hint"] = (
+            "Derived caches were wiped due to schema version upgrade. "
+            "They will rebuild automatically on next use."
+        )
     if scaffolded:
         response["scaffolded"] = scaffolded
         response["scaffold_hint"] = (
@@ -2586,13 +2621,16 @@ def set_root(path: str, test_vault_root: str = "") -> str:
             "Review and resolve by deleting entries or prefixing with [RESOLVED]."
         )
 
-    # v2 self-describing hints — use hints_mod.response() to drain advisories
-    return hints_mod.response(response, hints={
-        "guide": "guide(topic='getting-started')",
-        "search": "paper(search=['your query'])",
-        "toc": "toc()",
-        "ingest": "paper(path='inbox/filename.pdf')",
-    })
+    # Self-describing hints — use hints_mod.response() to drain advisories
+    return hints_mod.response(
+        response,
+        hints={
+            "guide": "guide(topic='getting-started')",
+            "search": "paper(search=['your query'])",
+            "toc": "toc()",
+            "ingest": "paper(path='inbox/filename.pdf')",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2600,22 +2638,13 @@ def set_root(path: str, test_vault_root: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 
-
-
-
-
-
-
 # ---------------------------------------------------------------------------
 # Vault: paper link/unlink (project ↔ vault)
 # ---------------------------------------------------------------------------
 
 
-
-
-
 # ---------------------------------------------------------------------------
-# v2 API — Internal helpers
+# Internal helpers
 # ---------------------------------------------------------------------------
 
 
@@ -2659,8 +2688,8 @@ def _get_paper_figures(key: str) -> list[str]:
 
 
 def _get_paper_note_titles(key: str) -> list[str]:
-    """Get note titles for a paper (v2 free-form notes)."""
-    notes_dir = _tome_dir() / "notes_v2"
+    """Get note titles for a paper."""
+    notes_dir = _tome_dir() / "notes"
     if not notes_dir.exists():
         return []
     pattern = f"{key}__*.yaml"
@@ -2671,7 +2700,7 @@ def _get_paper_note_titles(key: str) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# v2 API — paper()
+# paper()
 # ---------------------------------------------------------------------------
 
 
@@ -2711,7 +2740,7 @@ def _route_paper(
     try:
         advisories.check_all_paper(_project_root(), _dot_tome())
     except Exception:
-        pass
+        logger.warning("Paper freshness check failed", exc_info=True)
 
     # --- No args → hints ---
     if not id and not search and not path:
@@ -2796,7 +2825,9 @@ def _paper_get(key: str) -> str:
         lib = _load_bib()
         entry = bib.get_entry(lib, key)
     except (PaperNotFound, NoBibFile) as exc:
-        return hints_mod.error(str(exc), hints={"search": "paper(search=['...'])", "guide": "guide('paper')"})
+        return hints_mod.error(
+            str(exc), hints={"search": "paper(search=['...'])", "guide": "guide('paper')"}
+        )
 
     result = _paper_summary(entry)
     result["id"] = key
@@ -2804,7 +2835,7 @@ def _paper_get(key: str) -> str:
     # Figures
     result["has_figures"] = _get_paper_figures(key)
 
-    # Notes (v2 titles)
+    # Notes
     note_titles = _get_paper_note_titles(key)
     # Also check legacy notes
     legacy_note = notes_mod.load_note(_tome_dir(), key)
@@ -2833,9 +2864,8 @@ def _paper_get(key: str) -> str:
             r for r in related if r["relation"] == "retraction" and r["direction"] == "child"
         ]
         if retraction_children:
-            result["warning"] = (
-                "⚠ RETRACTED — retraction notice: "
-                + ", ".join(r["key"] for r in retraction_children)
+            result["warning"] = "⚠ RETRACTED — retraction notice: " + ", ".join(
+                r["key"] for r in retraction_children
             )
 
     h = hints_mod.paper_hints(key)
@@ -2852,17 +2882,44 @@ def _paper_get(key: str) -> str:
 
 def _paper_get_page(key: str, page: int) -> str:
     """Get page text for a paper."""
-    try:
-        text = extract.read_page(_raw_dir(), key, page)
-    except TextNotExtracted:
+    from tome.vault import read_archive_pages, vault_tome_path
+
+    text: str | None = None
+    total_pages = 0
+
+    # Primary: read from .tome archive
+    tome_path = vault_tome_path(key)
+    if tome_path.exists():
+        try:
+            pages = read_archive_pages(tome_path)
+            total_pages = len(pages)
+            if 1 <= page <= total_pages:
+                text = pages[page - 1]
+        except Exception:
+            pass  # fall through to raw files
+
+    # Fallback: raw text files
+    if text is None:
+        try:
+            text = extract.read_page(_raw_dir(), key, page)
+            if not total_pages:
+                total_pages = _count_raw_pages(key)
+        except TextNotExtracted:
+            return hints_mod.error(
+                f"Text not extracted for '{key}'. Re-ingest the PDF to extract text.",
+                hints={"view": f"paper(id='{key}')", "guide": "guide('paper-id')"},
+            )
+        except Exception as exc:
+            return hints_mod.error(
+                str(exc), hints={"view": f"paper(id='{key}')", "guide": "guide('paper-id')"}
+            )
+
+    if text is None:
         return hints_mod.error(
-            f"Text not extracted for '{key}'. Re-ingest the PDF to extract text.",
+            f"Page {page} out of range (1–{total_pages}) for '{key}'.",
             hints={"view": f"paper(id='{key}')", "guide": "guide('paper-id')"},
         )
-    except Exception as exc:
-        return hints_mod.error(str(exc), hints={"view": f"paper(id='{key}')", "guide": "guide('paper-id')"})
 
-    total_pages = _count_raw_pages(key)
     result = {"id": key, "page": page, "total_pages": total_pages, "text": text}
     return hints_mod.response(result, hints=hints_mod.page_hints(key, page, total_pages))
 
@@ -2925,7 +2982,12 @@ def _paper_search(search_terms: list[str]) -> str:
         # Federated search
         try:
             result = _discover_search(query, n=20)
-            return hints_mod.response(result, hints=hints_mod.search_hints(search_terms, has_more=len(result.get("results", [])) >= 20))
+            return hints_mod.response(
+                result,
+                hints=hints_mod.search_hints(
+                    search_terms, has_more=len(result.get("results", [])) >= 20
+                ),
+            )
         except Exception as exc:
             return hints_mod.error(f"Online search failed: {exc}")
 
@@ -2934,7 +2996,9 @@ def _paper_search(search_terms: list[str]) -> str:
         raw = _search_papers(query, "semantic", "", "", "", 20, 0, page_offset)
         result = json.loads(raw)
         has_more = result.get("count", 0) >= 20
-        return hints_mod.response(result, hints=hints_mod.search_hints(search_terms, has_more=has_more))
+        return hints_mod.response(
+            result, hints=hints_mod.search_hints(search_terms, has_more=has_more)
+        )
     except Exception as exc:
         return hints_mod.error(f"Search failed: {exc}")
 
@@ -2959,7 +3023,9 @@ def _paper_cited_by(key: str, search_terms: list[str]) -> str:
             },
         )
     except Exception as exc:
-        return hints_mod.error(f"Citation graph failed: {exc}", hints={"guide": "guide('paper-cite-graph')"})
+        return hints_mod.error(
+            f"Citation graph failed: {exc}", hints={"guide": "guide('paper-cite-graph')"}
+        )
 
 
 def _paper_cites(key: str, search_terms: list[str]) -> str:
@@ -2981,7 +3047,9 @@ def _paper_cites(key: str, search_terms: list[str]) -> str:
             },
         )
     except Exception as exc:
-        return hints_mod.error(f"Reference graph failed: {exc}", hints={"guide": "guide('paper-cite-graph')"})
+        return hints_mod.error(
+            f"Reference graph failed: {exc}", hints={"guide": "guide('paper-cite-graph')"}
+        )
 
 
 def _paper_ingest_propose(path_str: str) -> str:
@@ -2995,7 +3063,9 @@ def _paper_ingest_propose(path_str: str) -> str:
             hints=hints_mod.ingest_propose_hints(suggested, path_str),
         )
     except Exception as exc:
-        return hints_mod.error(f"Ingest proposal failed: {exc}", hints={"guide": "guide('paper-ingest')"})
+        return hints_mod.error(
+            f"Ingest proposal failed: {exc}", hints={"guide": "guide('paper-ingest')"}
+        )
 
 
 def _paper_ingest_commit(key: str, path_str: str, meta: str) -> str:
@@ -3016,14 +3086,19 @@ def _paper_ingest_commit(key: str, path_str: str, meta: str) -> str:
         # If dedup error, point hints to the existing paper, not the rejected key
         if isinstance(result, dict) and "error" in result and "existing_key" in result:
             existing = result["existing_key"]
-            return hints_mod.response(result, hints={
-                "view_existing": f"paper(id='{existing}')",
-                "notes": f"notes(on='{existing}')",
-                "guide": "guide('paper-ingest')",
-            })
+            return hints_mod.response(
+                result,
+                hints={
+                    "view_existing": f"paper(id='{existing}')",
+                    "notes": f"notes(on='{existing}')",
+                    "guide": "guide('paper-ingest')",
+                },
+            )
         return hints_mod.response(result, hints=hints_mod.ingest_commit_hints(key))
     except Exception as exc:
-        return hints_mod.error(f"Ingest commit failed: {exc}", hints={"guide": "guide('paper-ingest')"})
+        return hints_mod.error(
+            f"Ingest commit failed: {exc}", hints={"guide": "guide('paper-ingest')"}
+        )
 
 
 def _paper_update_meta(key: str, meta_str: str) -> str:
@@ -3033,7 +3108,10 @@ def _paper_update_meta(key: str, meta_str: str) -> str:
     except json.JSONDecodeError:
         return hints_mod.error(
             f"meta must be valid JSON. Got: {meta_str[:100]}",
-            hints={"example": f"paper(id='{key}', meta='{{\"title\": \"New Title\"}}')" , "guide": "guide('paper-metadata')"},
+            hints={
+                "example": f"paper(id='{key}', meta='{{\"title\": \"New Title\"}}')",
+                "guide": "guide('paper-metadata')",
+            },
         )
 
     try:
@@ -3052,7 +3130,9 @@ def _paper_update_meta(key: str, meta_str: str) -> str:
         r = json.loads(result)
         return hints_mod.response(r, hints={"view": f"paper(id='{key}')"})
     except Exception as exc:
-        return hints_mod.error(str(exc), hints={"view": f"paper(id='{key}')", "guide": "guide('paper-metadata')"})
+        return hints_mod.error(
+            str(exc), hints={"view": f"paper(id='{key}')", "guide": "guide('paper-metadata')"}
+        )
 
 
 def _paper_update_figure(slug: str, figure: str, meta_str: str) -> str:
@@ -3060,7 +3140,9 @@ def _paper_update_figure(slug: str, figure: str, meta_str: str) -> str:
     try:
         m = json.loads(meta_str)
     except json.JSONDecodeError:
-        return hints_mod.error("meta must be valid JSON.", hints={"guide": "guide('paper-figures')"})
+        return hints_mod.error(
+            "meta must be valid JSON.", hints={"guide": "guide('paper-figures')"}
+        )
 
     data = _load_manifest()
     paper_meta = manifest.get_paper(data, slug) or {}
@@ -3084,7 +3166,9 @@ def _paper_delete(key: str) -> str:
         result = json.loads(_paper_remove(key))
         return hints_mod.response(result, hints={"search": "paper(search=['...'])"})
     except Exception as exc:
-        return hints_mod.error(str(exc), hints={"search": "paper(search=['...'])", "guide": "guide('paper')"})
+        return hints_mod.error(
+            str(exc), hints={"search": "paper(search=['...'])", "guide": "guide('paper')"}
+        )
 
 
 def _paper_delete_figure(slug: str, figure: str) -> str:
@@ -3154,13 +3238,13 @@ def _paper_ingest_propose_with_doi(doi_str: str, path_str: str, meta: str) -> st
 
 
 # ---------------------------------------------------------------------------
-# v2 API — notes()
+# notes()
 # ---------------------------------------------------------------------------
 
 
 def _notes_dir() -> Path:
-    """Return the v2 notes directory, creating it if needed."""
-    d = _tome_dir() / "notes_v2"
+    """Return the notes directory, creating it if needed."""
+    d = _tome_dir() / "notes"
     d.mkdir(exist_ok=True)
     return d
 
@@ -3219,7 +3303,9 @@ def _route_notes(
         if resolved:
             on = resolved
         else:
-            return hints_mod.error(f"No paper with DOI '{on}' in vault.", hints={"guide": "guide('notes')"})
+            return hints_mod.error(
+                f"No paper with DOI '{on}' in vault.", hints={"guide": "guide('notes')"}
+            )
 
     # --- Delete ---
     if delete:
@@ -3284,7 +3370,9 @@ def _route_notes(
     for p in sorted(notes_dir.glob(f"{_notes_safe_on(on)}__*.yaml")):
         try:
             d = yaml.safe_load(p.read_text(encoding="utf-8"))
-            notes_list.append({"title": d.get("title", p.stem), "preview": d.get("content", "")[:80]})
+            notes_list.append(
+                {"title": d.get("title", p.stem), "preview": d.get("content", "")[:80]}
+            )
         except Exception:
             notes_list.append({"title": p.stem, "preview": "(unreadable)"})
 
@@ -3295,7 +3383,7 @@ def _route_notes(
 
 
 # ---------------------------------------------------------------------------
-# v2 API — toc()
+# toc()
 # ---------------------------------------------------------------------------
 
 
@@ -3331,20 +3419,32 @@ def _route_toc(
         cfg = _load_config()
         root_tex = _resolve_root(root)
         needs_reindex = advisories.check_all_toc(
-            _project_root(), _chroma_dir(), cfg.tex_globs, root_tex,
+            _project_root(),
+            _chroma_dir(),
+            cfg.tex_globs,
+            root_tex,
         )
         if needs_reindex:
             try:
                 result = _reindex_corpus(",".join(cfg.tex_globs))
-                n = result.get("indexed", 0)
+                n = result.get("added", 0) + result.get("changed", 0)
+                logger.info(
+                    "Auto-reindex: added=%s changed=%s removed=%s unchanged=%s",
+                    result.get("added"),
+                    result.get("changed"),
+                    result.get("removed"),
+                    result.get("unchanged"),
+                )
                 advisories.add(
                     "corpus_auto_reindexed",
                     f"Auto-reindexed {n} file(s) to bring corpus up to date.",
                 )
             except Exception:
-                pass  # best-effort: don't block the request
+                logger.warning("Auto-reindex failed", exc_info=True)
+        else:
+            logger.debug("Freshness check: corpus up to date")
     except Exception:
-        pass  # never block the request
+        logger.warning("Freshness check failed", exc_info=True)
 
     # --- No args → TOC + hints ---
     if not search:
@@ -3454,7 +3554,7 @@ def _bump_context(context: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# v2 API — guide()
+# guide()
 # ---------------------------------------------------------------------------
 
 
@@ -3478,7 +3578,7 @@ def _route_guide(topic: str = "", report: str = "") -> str:
             for sev in ("blocker:", "major:", "minor:"):
                 if report.lower().startswith(sev):
                     severity = sev.rstrip(":")
-                    description = report[len(sev):].strip()
+                    description = report[len(sev) :].strip()
                     break
             issues_mod.append_issue(_tome_dir(), "api", description, severity)
             return hints_mod.response(
@@ -3532,7 +3632,7 @@ async def _safe_run_stdio() -> None:
     so that **no** stray ``print()`` or library output can write to the MCP
     pipe and block the event loop (macOS pipe buffer is only 64 KB).
     """
-    from mcp.server.stdio import stdio_server
+    from tome.stdio import stdio_server
 
     async with stdio_server() as (read_stream, write_stream):
         # stdio_server has captured the raw fd and set it non-blocking.

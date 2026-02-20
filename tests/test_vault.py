@@ -156,9 +156,11 @@ class TestArchive:
 
         assert h5py.is_hdf5(archive)
         with h5py.File(archive, "r") as f:
-            assert f.attrs["format_version"] == 1
+            assert f.attrs["format_version"] == 2
             assert f.attrs["key"] == "k"
             assert "meta" in f
+            assert isinstance(f["meta"], h5py.Group)  # v2: group, not dataset
+            assert f["meta"].attrs["title"] == "T"
             assert "pages" in f
 
     def test_page_ordering(self, tmp_path):

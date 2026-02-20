@@ -31,9 +31,7 @@ class Cancelled(Exception):
 
 
 # Per-invocation token, set by the _logging_tool wrapper before dispatch.
-_current_token: ContextVar[threading.Event | None] = ContextVar(
-    "_current_token", default=None
-)
+_current_token: ContextVar[threading.Event | None] = ContextVar("_current_token", default=None)
 
 
 def new_token() -> threading.Event:

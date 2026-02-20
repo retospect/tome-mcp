@@ -22,24 +22,24 @@ class TestResponse:
         r = json.loads(response({"status": "ok"}))
         assert r["status"] == "ok"
         assert "hints" in r
-        assert "report" in r["hints"]
+        assert "mcp_issue" in r["hints"]
 
     def test_with_hints(self):
         r = json.loads(response({"status": "ok"}, hints={"next": "do_this()"}))
         assert r["hints"]["next"] == "do_this()"
-        assert "report" in r["hints"]
+        assert "mcp_issue" in r["hints"]
 
-    def test_report_always_present(self):
+    def test_mcp_issue_always_present(self):
         r = json.loads(response({"x": 1}))
-        assert "report" in r["hints"]
-        assert "guide(report=" in r["hints"]["report"]
+        assert "mcp_issue" in r["hints"]
+        assert "guide(report=" in r["hints"]["mcp_issue"]
 
-    def test_report_not_overwritten(self):
-        """Custom hints don't clobber the report hint."""
+    def test_mcp_issue_not_overwritten(self):
+        """Custom hints don't clobber the mcp_issue hint."""
         r = json.loads(response({"x": 1}, hints={"a": "b", "c": "d"}))
         assert r["hints"]["a"] == "b"
         assert r["hints"]["c"] == "d"
-        assert "report" in r["hints"]
+        assert "mcp_issue" in r["hints"]
 
 
 class TestError:
@@ -47,7 +47,7 @@ class TestError:
         r = json.loads(error("something broke"))
         assert r["error"] == "something broke"
         assert "hints" in r
-        assert "report" in r["hints"]
+        assert "mcp_issue" in r["hints"]
 
     def test_error_with_hints(self):
         r = json.loads(error("not found", hints={"try": "paper(search=['...'])"}))

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6.0 — Native HDF5 metadata (archive format v2)
+
+### Breaking changes
+- **Archive format v2**: metadata stored as native HDF5 group with scalar
+  attributes, author dataset, and JSON-string attrs for nested dicts.
+  Old v1 JSON-dataset archives are read transparently (backwards compatible).
+  `update_archive_meta` auto-upgrades v1→v2 on first patch.
+
+### Bug fixes
+- **Placeholder collision**: `_commit_ingest` now detects `x-pdf=false` bib
+  entries (pre-created by the LLM via `paper(meta=...)`) and reuses them
+  instead of appending `a`/`b`/`c` suffixes.
+- **DOI lookup crash**: `CitationGraph.__post_init__` coerces `None`
+  citations/references to empty lists, fixing "'NoneType' object is not
+  iterable" when S2 API returns incomplete data.
+- **Defensive guards**: `_discover_lookup` uses `or []` on graph fields.
+
+### Improvements
+- Smoke test protocol updated for v2 format, added DOI lookup phase (Phase 17).
+- `ARCHIVE_FORMAT_VERSION` bumped to 2.
+- `_write_meta_native` / `_read_meta_native` for v2 read/write.
+- `_read_meta_v1` for backwards-compatible reading of old JSON-dataset archives.
+
 ## 0.1.0 — Initial release
 
 First public release of Tome as `tome-mcp` on PyPI.
