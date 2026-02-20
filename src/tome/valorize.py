@@ -91,6 +91,84 @@ def _worker_loop() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Startup scan — enqueue archives that need valorization
+# ---------------------------------------------------------------------------
+
+
+def scan_vault() -> None:
+    """Scan all .tome archives and enqueue any that need valorization.
+
+    Checks two conditions for each archive:
+        1. Archive has chunks + embeddings in HDF5 (fast local check).
+        2. Archive key is present in vault ChromaDB.
+
+    Any archive failing either check is enqueued for background processing.
+    Runs on a background thread so it doesn't block ``set_root``.
+    """
+    t = threading.Thread(target=_scan_vault_sync, name="tome-vault-scan", daemon=True)
+    t.start()
+
+
+def _scan_vault_sync() -> None:
+    """Synchronous vault scan — called on a background thread."""
+    from tome.store import PAPER_CHUNKS, get_client, get_collection, get_embed_fn
+    from tome.vault import ARCHIVE_EXTENSION, VAULT_TOME_DIR, vault_chroma_dir, vault_root
+
+    tome_dir = vault_root() / VAULT_TOME_DIR
+    if not tome_dir.exists():
+        return
+
+    archives = sorted(tome_dir.rglob(f"*{ARCHIVE_EXTENSION}"))
+    if not archives:
+        return
+
+    # Get keys already in ChromaDB (extract from IDs like "key::chunk_0")
+    chroma_keys: set[str] = set()
+    try:
+        chroma_dir = vault_chroma_dir()
+        client = get_client(chroma_dir)
+        collection = get_collection(client, PAPER_CHUNKS, get_embed_fn())
+        all_ids = collection.get(include=[])["ids"]
+        for doc_id in all_ids:
+            if "::" in doc_id:
+                chroma_keys.add(doc_id.split("::")[0])
+    except Exception:
+        logger.debug("Could not read ChromaDB — will check archives only")
+
+    # Check each archive
+    enqueued = 0
+    for archive_path in archives:
+        try:
+            key = archive_path.stem
+
+            # Fast check: is the key already in ChromaDB?
+            in_chroma = key in chroma_keys
+
+            # Fast check: does archive have chunks + embeddings?
+            has_chunks = False
+            with h5py.File(archive_path, "r") as f:
+                if "chunks" in f and "embeddings" in f["chunks"]:
+                    has_chunks = len(f["chunks/embeddings"]) > 0
+
+            if has_chunks and in_chroma:
+                continue  # fully valorized
+
+            enqueue(archive_path)
+            enqueued += 1
+        except Exception:
+            logger.debug("Scan error for %s — enqueuing", archive_path.name)
+            enqueue(archive_path)
+            enqueued += 1
+
+    if enqueued:
+        logger.info(
+            "Vault scan: enqueued %d / %d archives for valorization", enqueued, len(archives)
+        )
+    else:
+        logger.info("Vault scan: all %d archives up to date", len(archives))
+
+
+# ---------------------------------------------------------------------------
 # Core: valorize a single archive
 # ---------------------------------------------------------------------------
 

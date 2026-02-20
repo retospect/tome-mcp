@@ -10,7 +10,7 @@ import h5py
 import numpy as np
 import pytest
 
-from tome.valorize import _queue, enqueue, pending, shutdown, valorize_one
+from tome.valorize import _queue, _scan_vault_sync, enqueue, pending, shutdown, valorize_one
 
 
 @pytest.fixture()
@@ -178,3 +178,110 @@ class TestWorkerQueue:
 
         assert calls == ["good1.tome", "good2.tome"]
         shutdown()
+
+
+def _make_archive(path: Path, key: str, *, with_chunks: bool = False) -> None:
+    """Helper to create a .tome archive for scan tests."""
+    with h5py.File(path, "w") as f:
+        f.attrs["format_version"] = 2
+        f.attrs["key"] = key
+        f.attrs["content_hash"] = f"hash_{key}"
+        f.attrs["embedding_model"] = "all-MiniLM-L6-v2"
+        f.attrs["embedding_dim"] = 384
+        g = f.create_group("meta")
+        g.attrs["key"] = key
+        g.attrs["title"] = f"Title {key}"
+        g.attrs["content_hash"] = f"hash_{key}"
+        g.attrs["first_author"] = "author"
+        g.attrs["page_count"] = 1
+        f.create_dataset("pages", data=["Some text."], dtype=h5py.string_dtype())
+        if with_chunks:
+            cg = f.create_group("chunks")
+            cg.create_dataset("texts", data=["Some text."], dtype=h5py.string_dtype())
+            cg.create_dataset("embeddings", data=np.random.rand(1, 384).astype(np.float32))
+
+
+class TestScanVault:
+    """Tests for _scan_vault_sync."""
+
+    def test_enqueues_archive_without_chunks(self, tmp_path: Path) -> None:
+        """Archive missing chunks gets enqueued."""
+        shutdown()
+        tome_dir = tmp_path / "tome" / "a"
+        tome_dir.mkdir(parents=True)
+        _make_archive(tome_dir / "alpha2024.tome", "alpha2024", with_chunks=False)
+
+        enqueued: list[str] = []
+
+        with (
+            patch("tome.vault.vault_root", return_value=tmp_path),
+            patch("tome.vault.vault_chroma_dir", return_value=tmp_path / "chroma"),
+            patch("tome.valorize.enqueue", side_effect=lambda p: enqueued.append(p.stem)),
+        ):
+            _scan_vault_sync()
+
+        assert "alpha2024" in enqueued
+
+    def test_skips_fully_valorized(self, tmp_path: Path) -> None:
+        """Archive with chunks + in ChromaDB is skipped."""
+        shutdown()
+        tome_dir = tmp_path / "tome" / "b"
+        tome_dir.mkdir(parents=True)
+        _make_archive(tome_dir / "beta2024.tome", "beta2024", with_chunks=True)
+
+        # Fake ChromaDB returning this key
+        mock_collection = MagicMock()
+        mock_collection.get.return_value = {"ids": ["beta2024::chunk_0"]}
+
+        enqueued: list[str] = []
+
+        with (
+            patch("tome.vault.vault_root", return_value=tmp_path),
+            patch("tome.vault.vault_chroma_dir", return_value=tmp_path / "chroma"),
+            patch("tome.store.get_client", return_value=MagicMock()),
+            patch("tome.store.get_collection", return_value=mock_collection),
+            patch("tome.valorize.enqueue", side_effect=lambda p: enqueued.append(p.stem)),
+        ):
+            _scan_vault_sync()
+
+        assert enqueued == []
+
+    def test_enqueues_archive_not_in_chroma(self, tmp_path: Path) -> None:
+        """Archive with chunks but missing from ChromaDB gets enqueued."""
+        shutdown()
+        tome_dir = tmp_path / "tome" / "g"
+        tome_dir.mkdir(parents=True)
+        _make_archive(tome_dir / "gamma2024.tome", "gamma2024", with_chunks=True)
+
+        # ChromaDB has no keys
+        mock_collection = MagicMock()
+        mock_collection.get.return_value = {"ids": []}
+
+        enqueued: list[str] = []
+
+        with (
+            patch("tome.vault.vault_root", return_value=tmp_path),
+            patch("tome.vault.vault_chroma_dir", return_value=tmp_path / "chroma"),
+            patch("tome.store.get_client", return_value=MagicMock()),
+            patch("tome.store.get_collection", return_value=mock_collection),
+            patch("tome.valorize.enqueue", side_effect=lambda p: enqueued.append(p.stem)),
+        ):
+            _scan_vault_sync()
+
+        assert "gamma2024" in enqueued
+
+    def test_empty_vault_is_noop(self, tmp_path: Path) -> None:
+        """No archives → no enqueues, no errors."""
+        shutdown()
+        tome_dir = tmp_path / "tome"
+        tome_dir.mkdir(parents=True)
+
+        enqueued: list[str] = []
+
+        with (
+            patch("tome.vault.vault_root", return_value=tmp_path),
+            patch("tome.valorize.enqueue", side_effect=lambda p: enqueued.append(p.stem)),
+        ):
+            _scan_vault_sync()
+
+        assert enqueued == []

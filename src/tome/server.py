@@ -2499,6 +2499,11 @@ def set_root(path: str, test_vault_root: str = "") -> str:
 
     ensure_vault_dirs()
 
+    # Background scan: enqueue any archives needing chunk/embed/ChromaDB
+    from tome.valorize import scan_vault as _scan_vault
+
+    _scan_vault()
+
     call_log.set_project(str(p))
 
     # Scaffold standard directories + files if missing (idempotent)
