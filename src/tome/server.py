@@ -11,6 +11,7 @@ import json
 import logging
 import logging.handlers
 import os
+import queue as queue_mod
 import re
 import shutil
 import sys
@@ -75,11 +76,18 @@ mcp_server = FastMCP("Tome")
 CACHE_SCHEMA_VERSION = 2  # mtime-based corpus reindex
 
 # ---------------------------------------------------------------------------
-# Logging — stderr always, file handler added once project root is known
+# Logging — non-blocking via QueueHandler so worker threads never deadlock
+# on a full stderr pipe.  A dedicated QueueListener thread drains the queue
+# and writes to the actual handlers; if *it* blocks, no other thread is
+# affected.
 # ---------------------------------------------------------------------------
 
 logger = logging.getLogger("tome")
 logger.setLevel(logging.DEBUG)
+
+_log_queue: queue_mod.Queue[logging.LogRecord] = queue_mod.Queue(-1)  # unbounded
+_queue_handler = logging.handlers.QueueHandler(_log_queue)
+logger.addHandler(_queue_handler)
 
 # Stderr handler (WARNING+) — visible in MCP client logs
 _stderr_handler = logging.StreamHandler(sys.stderr)
@@ -89,7 +97,12 @@ _stderr_handler.setFormatter(
         "%(asctime)s [%(process)d] %(levelname)s %(name)s: %(message)s", datefmt="%H:%M:%S"
     )
 )
-logger.addHandler(_stderr_handler)
+
+# QueueListener drains _log_queue → _stderr_handler (and later file handler)
+_log_listener = logging.handlers.QueueListener(
+    _log_queue, _stderr_handler, respect_handler_level=True
+)
+_log_listener.start()
 
 _file_handler: logging.Handler | None = None
 
@@ -111,7 +124,8 @@ def _attach_file_log(dot_tome: Path) -> None:
     fh.setFormatter(
         logging.Formatter("%(asctime)s [%(process)d] %(levelname)s %(name)s: %(message)s")
     )
-    logger.addHandler(fh)
+    # Add to the listener (not the logger) so writes go through the queue
+    _log_listener.handlers = (*_log_listener.handlers, fh)
     _file_handler = fh
     logger.info("Tome server started — log attached to %s", log_path)
 
