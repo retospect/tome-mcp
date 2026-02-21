@@ -7,19 +7,30 @@ dies with the server process (daemon=True).
 
 The work is idempotent: re-enqueueing an already-valorized archive is a
 cheap no-op (detected by checking whether chunks already exist).
+
+Concurrency safety:
+- A file lock (``<vault>/.valorize.lock``) ensures only one process
+  valorizes at a time, even when multiple MCP server instances run.
+- The scan only checks local HDF5 files (no ChromaDB query), so it
+  stays fast even with thousands of archives.
 """
 
 from __future__ import annotations
 
+import fcntl
 import logging
 import queue
 import threading
+import time
 from pathlib import Path
 
 import h5py
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# Seconds to sleep between valorize_one calls during scan backfill
+_SCAN_THROTTLE_SECS = 0.1
 
 # ---------------------------------------------------------------------------
 # Module-level queue and thread
@@ -28,6 +39,8 @@ logger = logging.getLogger(__name__)
 _queue: queue.Queue[Path | None] = queue.Queue()
 _worker_thread: threading.Thread | None = None
 _lock = threading.Lock()
+_pause_event = threading.Event()  # clear = paused, set = running
+_pause_event.set()  # start unpaused
 
 
 def enqueue(archive_path: Path) -> None:
@@ -38,6 +51,20 @@ def enqueue(archive_path: Path) -> None:
     _ensure_worker()
     _queue.put(archive_path)
     logger.info("Enqueued for valorization: %s", archive_path.name)
+
+
+def pause() -> None:
+    """Pause the worker thread (it will finish the current item first).
+
+    Call this before HDF5-heavy operations on the main thread to avoid
+    contention on the HDF5 global lock.
+    """
+    _pause_event.clear()
+
+
+def resume() -> None:
+    """Resume the worker thread after a pause."""
+    _pause_event.set()
 
 
 def pending() -> int:
@@ -88,6 +115,10 @@ def _worker_loop() -> None:
             logger.exception("Valorize failed for %s", item)
         finally:
             _queue.task_done()
+        # Yield to main thread: wait if paused, then throttle between items
+        _pause_event.wait()  # blocks while paused
+        if _queue.qsize() > 0:
+            time.sleep(_SCAN_THROTTLE_SECS)
 
 
 # ---------------------------------------------------------------------------
@@ -98,11 +129,10 @@ def _worker_loop() -> None:
 def scan_vault() -> None:
     """Scan all .tome archives and enqueue any that need valorization.
 
-    Checks two conditions for each archive:
-        1. Archive has chunks + embeddings in HDF5 (fast local check).
-        2. Archive key is present in vault ChromaDB.
+    Only checks local HDF5 files (no ChromaDB query) so this stays fast
+    even with thousands of archives.  Uses a file lock to prevent multiple
+    MCP server instances from scanning simultaneously.
 
-    Any archive failing either check is enqueued for background processing.
     Runs on a background thread so it doesn't block ``set_root``.
     """
     t = threading.Thread(target=_scan_vault_sync, name="tome-vault-scan", daemon=True)
@@ -111,61 +141,57 @@ def scan_vault() -> None:
 
 def _scan_vault_sync() -> None:
     """Synchronous vault scan — called on a background thread."""
-    from tome.store import PAPER_CHUNKS, get_client, get_collection, get_embed_fn
-    from tome.vault import ARCHIVE_EXTENSION, VAULT_TOME_DIR, vault_chroma_dir, vault_root
+    from tome.vault import ARCHIVE_EXTENSION, VAULT_TOME_DIR, vault_root
 
-    tome_dir = vault_root() / VAULT_TOME_DIR
+    root = vault_root()
+    tome_dir = root / VAULT_TOME_DIR
     if not tome_dir.exists():
         return
 
-    archives = sorted(tome_dir.rglob(f"*{ARCHIVE_EXTENSION}"))
-    if not archives:
+    # File lock: only one process scans/valorizes at a time
+    lock_path = root / ".valorize.lock"
+    try:
+        lock_fd = open(lock_path, "w")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, IOError):
+        logger.info("Vault scan skipped — another process holds the lock")
         return
 
-    # Get keys already in ChromaDB (extract from IDs like "key::chunk_0")
-    chroma_keys: set[str] = set()
     try:
-        chroma_dir = vault_chroma_dir()
-        client = get_client(chroma_dir)
-        collection = get_collection(client, PAPER_CHUNKS, get_embed_fn())
-        all_ids = collection.get(include=[])["ids"]
-        for doc_id in all_ids:
-            if "::" in doc_id:
-                chroma_keys.add(doc_id.split("::")[0])
-    except Exception:
-        logger.debug("Could not read ChromaDB — will check archives only")
+        archives = sorted(tome_dir.rglob(f"*{ARCHIVE_EXTENSION}"))
+        if not archives:
+            return
 
-    # Check each archive
-    enqueued = 0
-    for archive_path in archives:
-        try:
-            key = archive_path.stem
+        # Fast local check: does each archive have chunks + embeddings?
+        enqueued = 0
+        for archive_path in archives:
+            try:
+                has_chunks = False
+                with h5py.File(archive_path, "r") as f:
+                    if "chunks" in f and "embeddings" in f["chunks"]:
+                        has_chunks = len(f["chunks/embeddings"]) > 0
 
-            # Fast check: is the key already in ChromaDB?
-            in_chroma = key in chroma_keys
+                if has_chunks:
+                    continue  # archive is valorized
 
-            # Fast check: does archive have chunks + embeddings?
-            has_chunks = False
-            with h5py.File(archive_path, "r") as f:
-                if "chunks" in f and "embeddings" in f["chunks"]:
-                    has_chunks = len(f["chunks/embeddings"]) > 0
+                enqueue(archive_path)
+                enqueued += 1
+            except Exception:
+                logger.debug("Scan error for %s — enqueuing", archive_path.name)
+                enqueue(archive_path)
+                enqueued += 1
 
-            if has_chunks and in_chroma:
-                continue  # fully valorized
-
-            enqueue(archive_path)
-            enqueued += 1
-        except Exception:
-            logger.debug("Scan error for %s — enqueuing", archive_path.name)
-            enqueue(archive_path)
-            enqueued += 1
-
-    if enqueued:
-        logger.info(
-            "Vault scan: enqueued %d / %d archives for valorization", enqueued, len(archives)
-        )
-    else:
-        logger.info("Vault scan: all %d archives up to date", len(archives))
+        if enqueued:
+            logger.info(
+                "Vault scan: enqueued %d / %d archives for valorization",
+                enqueued,
+                len(archives),
+            )
+        else:
+            logger.info("Vault scan: all %d archives up to date", len(archives))
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 # ---------------------------------------------------------------------------

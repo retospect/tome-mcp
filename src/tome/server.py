@@ -978,6 +978,9 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
         vault_tome_path,
         write_archive,
     )
+    from tome.valorize import enqueue as _valorize_enqueue
+    from tome.valorize import pause as _valorize_pause
+    from tome.valorize import resume as _valorize_resume
 
     content_hash = checksum.sha256_file(pdf_path)
     doc_meta = DocumentMeta(
@@ -996,19 +999,23 @@ def _commit_ingest(pdf_path: Path, key: str, tags: str, *, dois: str = "") -> di
     v_pdf.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(pdf_path, v_pdf)
 
-    v_tome = vault_tome_path(key)
-    v_tome.parent.mkdir(parents=True, exist_ok=True)
-    write_archive(
-        v_tome,
-        doc_meta,
-        page_texts=prep.page_texts,
-    )
+    # Pause the background worker to avoid HDF5 global lock contention
+    # (h5py serializes ALL HDF5 ops across threads via a process-wide lock)
+    _valorize_pause()
+    try:
+        v_tome = vault_tome_path(key)
+        v_tome.parent.mkdir(parents=True, exist_ok=True)
+        write_archive(
+            v_tome,
+            doc_meta,
+            page_texts=prep.page_texts,
+        )
 
-    catalog_upsert(doc_meta)
+        catalog_upsert(doc_meta)
+    finally:
+        _valorize_resume()
 
     # --- Background valorization (chunk + embed + ChromaDB) ---
-    from tome.valorize import enqueue as _valorize_enqueue
-
     _valorize_enqueue(v_tome)
 
     # --- Server-specific: manifest ---
