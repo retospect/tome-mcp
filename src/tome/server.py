@@ -76,10 +76,11 @@ mcp_server = FastMCP("Tome")
 CACHE_SCHEMA_VERSION = 2  # mtime-based corpus reindex
 
 # ---------------------------------------------------------------------------
-# Logging — non-blocking via QueueHandler so worker threads never deadlock
-# on a full stderr pipe.  A dedicated QueueListener thread drains the queue
-# and writes to the actual handlers; if *it* blocks, no other thread is
-# affected.
+# Logging — non-blocking via QueueHandler on the ROOT logger so ALL log
+# output (including third-party: ChromaDB, h5py, httpx …) goes through the
+# queue.  A dedicated QueueListener thread drains the queue and writes to
+# the actual handlers; if *it* blocks on a full stderr pipe, no other
+# thread is affected.
 # ---------------------------------------------------------------------------
 
 logger = logging.getLogger("tome")
@@ -87,7 +88,12 @@ logger.setLevel(logging.DEBUG)
 
 _log_queue: queue_mod.Queue[logging.LogRecord] = queue_mod.Queue(-1)  # unbounded
 _queue_handler = logging.handlers.QueueHandler(_log_queue)
-logger.addHandler(_queue_handler)
+
+# Install on ROOT logger — catches all libraries, not just tome.*
+_root_logger = logging.getLogger()
+_root_logger.handlers.clear()  # remove any default StreamHandlers
+_root_logger.addHandler(_queue_handler)
+_root_logger.setLevel(logging.DEBUG)
 
 # Stderr handler (WARNING+) — visible in MCP client logs
 _stderr_handler = logging.StreamHandler(sys.stderr)
