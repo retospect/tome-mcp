@@ -30,8 +30,11 @@ CORPUS_CHUNKS = "corpus_chunks"
 PAPER_PAGES = "paper_pages"
 
 
+_client_cache: dict[str, chromadb.ClientAPI] = {}
+
+
 def get_client(chroma_dir: Path) -> chromadb.ClientAPI:
-    """Get or create a persistent ChromaDB client.
+    """Get or create a persistent ChromaDB client (cached per directory).
 
     Args:
         chroma_dir: Path to .tome-mcp/chroma/ directory.
@@ -39,8 +42,13 @@ def get_client(chroma_dir: Path) -> chromadb.ClientAPI:
     Returns:
         ChromaDB persistent client.
     """
+    key = str(chroma_dir)
+    if key in _client_cache:
+        return _client_cache[key]
     chroma_dir.mkdir(parents=True, exist_ok=True)
-    return chromadb.PersistentClient(path=str(chroma_dir))
+    client = chromadb.PersistentClient(path=key)
+    _client_cache[key] = client
+    return client
 
 
 def get_embed_fn() -> EmbeddingFunction | None:
