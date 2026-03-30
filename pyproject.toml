@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tome-mcp"
-version = "0.7.0"
-description = "MCP server for managing a research paper library"
+version = "0.8.0"
+description = "DEPRECATED — use precis-mcp instead. Final release."
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "AGPL-3.0-or-later"}
@@ -46,18 +46,7 @@ classifiers = [
     "Environment :: Plugins",
     "Framework :: FastAPI",
 ]
-dependencies = [
-    "chromadb>=0.5.0",
-    "PyMuPDF>=1.24.0",
-    "bibtexparser>=2.0.0b1",
-    "httpx>=0.27.0,<1.0",
-    "mcp>=1.0.0",
-    "PyYAML>=6.0",
-    "rapidfuzz>=3.0.0",
-    "chonkie[model2vec]>=1.0.0",
-    "stop-words>=2024.1.1",
-    "h5py>=3.10.0",
-]
+dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/retospect/tome-mcp"
@@ -98,7 +87,7 @@ line-length = 99
 target-version = ["py311"]
 
 [tool.bumpversion]
-current_version = "0.7.0"
+current_version = "0.8.0"
 commit = true
 tag = true
 tag_name = "v{new_version}"

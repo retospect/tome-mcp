@@ -1,3 +1,11 @@
-"""Tome — MCP server for managing a research paper library."""
+"""Tome — DEPRECATED. Use precis-mcp instead."""
 
-__version__ = "0.7.0"
+import warnings
+
+__version__ = "0.8.0"
+
+warnings.warn(
+    "tome-mcp is deprecated. Use precis-mcp instead: pip install precis-mcp",
+    DeprecationWarning,
+    stacklevel=2,
+)

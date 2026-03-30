@@ -1,4 +1,16 @@
-# Tome
+# ⚠️ Tome — DEPRECATED
+
+**This package is deprecated. Use [`precis-mcp`](https://pypi.org/project/precis-mcp/) instead.**
+
+`precis-mcp` unifies paper reading (formerly tome-mcp / acatome-mcp) and manuscript editing into a single MCP server with 4 tools: `search()`, `get()`, `put()`, `move()`.
+
+```bash
+pip install precis-mcp
+```
+
+---
+
+# Tome (archived)
 
 [![PyPI version](https://img.shields.io/pypi/v/tome-mcp)](https://pypi.org/project/tome-mcp/)
 [![Python](https://img.shields.io/pypi/pyversions/tome-mcp)](https://pypi.org/project/tome-mcp/)
